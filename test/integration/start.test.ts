@@ -1,20 +1,28 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execa } from "execa";
 import { createTempRepo, makeDirty } from "../helpers/tempRepo.js";
+import {
+  nonExistentOpenSpecBin,
+  setupFakeOpenSpec,
+  teardownFakeOpenSpec,
+  type FakeOpenSpecEnv,
+} from "../helpers/fakeOpenSpec.js";
 
 describe("ce start (integration)", () => {
   let harnessHomeDir: string;
   let repoDir: string;
+  let fakeOpenSpec: FakeOpenSpecEnv;
   const originalEnv = process.env.CE_HARNESS_HOME;
 
   beforeEach(async () => {
     harnessHomeDir = await mkdtemp(join(tmpdir(), "ce-harness-home-"));
     process.env.CE_HARNESS_HOME = harnessHomeDir;
     repoDir = await createTempRepo();
+    fakeOpenSpec = await setupFakeOpenSpec();
   });
 
   afterEach(async () => {
@@ -23,6 +31,7 @@ describe("ce start (integration)", () => {
     } else {
       process.env.CE_HARNESS_HOME = originalEnv;
     }
+    await teardownFakeOpenSpec(fakeOpenSpec);
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });
@@ -45,6 +54,49 @@ describe("ce start (integration)", () => {
     const { readActivePointer } = await import("../../src/core/workspace.js");
     const pointer = await readActivePointer();
     expect(pointer).toEqual({ project: basenameOf(repoDir), sanitizedIssue: "fix-bug-42" });
+  });
+
+  it("creates and registers an external OpenSpec store, and persists its metadata", async () => {
+    const { startCommand } = await import("../../src/commands/start.js");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+
+    const { readWorkspace } = await import("../../src/core/workspace.js");
+    const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+    expect(workspace.openSpec).toBeDefined();
+    expect(workspace.openSpec?.storeId).toMatch(/^ce-/);
+    expect(workspace.openSpec?.root).toBe(join(workspace.workspacePath, "openspec"));
+    expect(existsSync(workspace.openSpec!.root)).toBe(true);
+
+    const registry = JSON.parse(await (await import("node:fs/promises")).readFile(
+      fakeOpenSpec.registryFile,
+      "utf8",
+    ));
+    expect(registry[workspace.openSpec!.storeId].root).toBe(workspace.openSpec!.root);
+  });
+
+  it("never creates OpenSpec files in the target repository or the temporary worktree", async () => {
+    const { startCommand } = await import("../../src/commands/start.js");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+
+    const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+    expect(existsSync(join(worktreePath, "openspec"))).toBe(false);
+    expect(existsSync(join(repoDir, "openspec"))).toBe(false);
+    expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
+  });
+
+  it("prints the OpenSpec store id in the success output", async () => {
+    const { startCommand } = await import("../../src/commands/start.js");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+
+    const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toMatch(/OpenSpec store: ce-/);
   });
 
   it("refuses to start when the source repository has uncommitted changes", async () => {
@@ -81,6 +133,104 @@ describe("ce start (integration)", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  describe("OpenSpec integration", () => {
+    it("fails cleanly, before creating any persistent resource, when openspec is unavailable", async () => {
+      process.env.CE_OPENSPEC_BIN = nonExistentOpenSpecBin(fakeOpenSpec.dir);
+      const { startCommand } = await import("../../src/commands/start.js");
+
+      await expect(startCommand({ repo: repoDir, issue: "issue-1" })).rejects.toThrow(
+        /openspec.*not installed|could not be run/i,
+      );
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+      expect(existsSync(worktreePath)).toBe(false);
+      expect(existsSync(workspacePath)).toBe(false);
+
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      expect(await readActivePointer()).toBeNull();
+    });
+
+    it("rolls back the worktree, branch, and workspace when store setup fails", async () => {
+      process.env.FAKE_OPENSPEC_FAIL_SETUP = "1";
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      await expect(startCommand({ repo: repoDir, issue: "issue-1" })).rejects.toThrow(
+        /failed to create and register openspec store/i,
+      );
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+      expect(existsSync(worktreePath)).toBe(false);
+      expect(existsSync(workspacePath)).toBe(false);
+
+      const branches = await execa("git", ["-C", repoDir, "branch", "--list", "ce-harness/issue-1"]);
+      expect(branches.stdout.trim()).toBe("");
+
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      expect(await readActivePointer()).toBeNull();
+    });
+
+    it("rolls back the created store, worktree, branch, and workspace when doctor reports unhealthy", async () => {
+      process.env.FAKE_OPENSPEC_FAIL_DOCTOR = "1";
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      await expect(startCommand({ repo: repoDir, issue: "issue-1" })).rejects.toThrow(
+        /failed its health check/i,
+      );
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+      expect(existsSync(worktreePath)).toBe(false);
+      expect(existsSync(workspacePath)).toBe(false);
+
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      expect(await readActivePointer()).toBeNull();
+
+      // The store must have been unregistered as part of rollback.
+      const { readFile } = await import("node:fs/promises");
+      const registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+      expect(Object.keys(registry)).toHaveLength(0);
+    });
+
+    it("refuses to start when the generated store id is already registered, without adopting it", async () => {
+      const { generateStoreId } = await import("../../src/core/openspecId.js");
+      const { resolveRepoRoot } = await import("../../src/core/git.js");
+      const { deriveProjectName, sanitizeIssue } = await import("../../src/core/sanitize.js");
+      const { setupStore } = await import("../../src/core/openspec.js");
+      const { realpath } = await import("node:fs/promises");
+
+      const repoRoot = await resolveRepoRoot(await realpath(repoDir));
+      const project = deriveProjectName(repoRoot);
+      const sanitizedIssue = sanitizeIssue("issue-1");
+      const storeId = generateStoreId(project, sanitizedIssue, repoRoot);
+
+      // Pre-register a store under the exact id ce-harness would generate,
+      // simulating a stale/leftover registration from a previous run.
+      const preExistingRoot = join(fakeOpenSpec.dir, "pre-existing-store");
+      await setupStore(fakeOpenSpec.dir, storeId, preExistingRoot);
+
+      const { startCommand } = await import("../../src/commands/start.js");
+      await expect(startCommand({ repo: repoDir, issue: "issue-1" })).rejects.toThrow(
+        /already registered/i,
+      );
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+      expect(existsSync(worktreePath)).toBe(false);
+      expect(existsSync(workspacePath)).toBe(false);
+
+      // The pre-existing store must be untouched (not adopted/overwritten).
+      const { readFile } = await import("node:fs/promises");
+      const registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+      expect(registry[storeId].root).toBe(preExistingRoot);
+    });
   });
 });
 

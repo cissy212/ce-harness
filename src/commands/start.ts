@@ -13,6 +13,7 @@ import {
   deleteBranch,
   detectBaseBranch,
   isDirty,
+  pruneWorktrees,
   removeWorktree,
   resolveRepoRoot,
 } from "../core/git.js";
@@ -25,6 +26,15 @@ import {
   writeWorkspace,
   type Workspace,
 } from "../core/workspace.js";
+import { expectedOpenSpecRoot, generateStoreId } from "../core/openspecId.js";
+import {
+  describeOpenSpecStatus,
+  isOpenSpecAvailable,
+  isStoreRegistered,
+  setupStore,
+  storeDoctor,
+  unregisterStore,
+} from "../core/openspec.js";
 
 export interface StartOptions {
   repo: string;
@@ -63,6 +73,17 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
   const internalBranch = `ce-harness/${sanitizedIssue}`;
   const worktreePath = buildWorktreePath(project, sanitizedIssue);
   const workspacePath = buildWorkspacePath(project, sanitizedIssue);
+  const openSpecStoreId = generateStoreId(project, sanitizedIssue, repoRoot);
+  const openSpecRoot = expectedOpenSpecRoot(workspacePath);
+
+  // Fail before creating any persistent resource (worktree, branch,
+  // workspace) whenever possible.
+  if (!(await isOpenSpecAvailable(repoRoot))) {
+    throw new CeError(
+      `The "openspec" executable is not installed or could not be run.`,
+      "Install OpenSpec (e.g. `npm install -g @fission-ai/openspec`) and ensure it is on your PATH, then try again.",
+    );
+  }
 
   const existingActive = await readActivePointer();
   if (existingActive) {
@@ -89,15 +110,40 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
       `Delete the branch (git -C "${repoRoot}" branch -D ${internalBranch}) or run \`ce cleanup\`, then try again.`,
     );
   }
+  if (await isStoreRegistered(repoRoot, openSpecStoreId)) {
+    throw new CeError(
+      `OpenSpec store "${openSpecStoreId}" is already registered.`,
+      `Run \`openspec store unregister ${openSpecStoreId}\` first if this store is stale, then try again.`,
+    );
+  }
 
   let worktreeCreated = false;
   let workspaceDirCreated = false;
+  let storeRegistered = false;
   let activePointerWritten = false;
 
   try {
     await mkdir(dirname(worktreePath), { recursive: true });
     await addWorktree(repoRoot, worktreePath, internalBranch, baseBranch);
     worktreeCreated = true;
+
+    await mkdir(workspacePath, { recursive: true });
+    workspaceDirCreated = true;
+
+    const setupResult = await setupStore(workspacePath, openSpecStoreId, openSpecRoot);
+    if (!setupResult.success) {
+      throw new CeError(
+        `Failed to create and register OpenSpec store "${openSpecStoreId}": ${describeOpenSpecStatus(setupResult.status, setupResult.stderr)}`,
+      );
+    }
+    storeRegistered = true;
+
+    const doctorResult = await storeDoctor(workspacePath, openSpecStoreId);
+    if (!doctorResult.found || !doctorResult.healthy) {
+      throw new CeError(
+        `OpenSpec store "${openSpecStoreId}" failed its health check: ${describeOpenSpecStatus(doctorResult.status, doctorResult.stderr)}`,
+      );
+    }
 
     const workspace: Workspace = {
       project,
@@ -109,9 +155,12 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
       worktreePath,
       workspacePath,
       createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: openSpecStoreId,
+        root: openSpecRoot,
+      },
     };
     await writeWorkspace(workspace);
-    workspaceDirCreated = true;
 
     await writeActivePointer({ project, sanitizedIssue });
     activePointerWritten = true;
@@ -122,14 +171,18 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
       internalBranch,
       project,
       sanitizedIssue,
+      workspacePath,
+      openSpecStoreId,
       worktreeCreated,
       workspaceDirCreated,
+      storeRegistered,
       activePointerWritten,
     });
     throw error;
   }
 
   console.log(`Workspace ready for project "${project}", issue "${issue}".`);
+  console.log(`OpenSpec store: ${openSpecStoreId}`);
   console.log("");
   console.log("Next step:");
   console.log(`  cd "${worktreePath}" && opencode`);
@@ -141,20 +194,51 @@ interface RollbackContext {
   internalBranch: string;
   project: string;
   sanitizedIssue: string;
+  workspacePath: string;
+  openSpecStoreId: string;
   worktreeCreated: boolean;
   workspaceDirCreated: boolean;
+  storeRegistered: boolean;
   activePointerWritten: boolean;
 }
 
 async function rollback(ctx: RollbackContext): Promise<void> {
+  const rollbackErrors: string[] = [];
+  const attempt = async (label: string, fn: () => Promise<void>) => {
+    try {
+      await fn();
+    } catch (error) {
+      rollbackErrors.push(`${label}: ${(error as Error).message}`);
+    }
+  };
+
   if (ctx.activePointerWritten) {
-    await clearActivePointer().catch(() => undefined);
+    await attempt("clear active pointer", () => clearActivePointer());
+  }
+  if (ctx.storeRegistered) {
+    await attempt("unregister OpenSpec store", async () => {
+      const result = await unregisterStore(ctx.workspacePath, ctx.openSpecStoreId);
+      if (!result.success && !result.notFound) {
+        throw new Error(describeOpenSpecStatus(result.status, result.stderr));
+      }
+    });
   }
   if (ctx.workspaceDirCreated) {
-    await removeWorkspaceDir(ctx.project, ctx.sanitizedIssue).catch(() => undefined);
+    await attempt("remove workspace directory", () =>
+      removeWorkspaceDir(ctx.project, ctx.sanitizedIssue),
+    );
   }
   if (ctx.worktreeCreated) {
-    await removeWorktree(ctx.repoRoot, ctx.worktreePath, true).catch(() => undefined);
-    await deleteBranch(ctx.repoRoot, ctx.internalBranch).catch(() => undefined);
+    await attempt("remove Git worktree", () => removeWorktree(ctx.repoRoot, ctx.worktreePath, true));
+    await attempt("delete internal branch", () => deleteBranch(ctx.repoRoot, ctx.internalBranch));
+    await attempt("prune worktree metadata", () => pruneWorktrees(ctx.repoRoot));
+  }
+
+  if (rollbackErrors.length > 0) {
+    console.error("Warning: cleanup after the failed `ce start` was incomplete:");
+    for (const message of rollbackErrors) {
+      console.error(`  - ${message}`);
+    }
+    console.error("Run `ce cleanup --force` to finish removing any leftover resources.");
   }
 }

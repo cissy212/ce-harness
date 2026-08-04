@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { branchExists, statusPorcelain } from "../core/git.js";
-import { readActivePointer, readWorkspace } from "../core/workspace.js";
+import { readActivePointer, readWorkspace, resolveTrustedOpenSpec } from "../core/workspace.js";
+import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
 
 export async function statusCommand(): Promise<void> {
   const pointer = await readActivePointer();
@@ -31,4 +32,29 @@ export async function statusCommand(): Promise<void> {
   console.log(`Worktree exists:  ${worktreeExists ? "yes" : "no"}`);
   console.log(`Branch exists:    ${branchStillExists ? "yes" : "no"}`);
   console.log(`Worktree changes: ${changesSummary}`);
+
+  // Legacy (v0.1) workspaces have no OpenSpec metadata; leave their
+  // status output unchanged rather than printing placeholder lines.
+  if (!workspace.openSpec) return;
+
+  const trusted = resolveTrustedOpenSpec(workspace);
+  if (!trusted) {
+    console.log(`OpenSpec store:   (invalid or corrupted metadata)`);
+    console.log(`OpenSpec root:    (invalid or corrupted metadata)`);
+    console.log(`OpenSpec healthy: unavailable`);
+    return;
+  }
+
+  console.log(`OpenSpec store:   ${trusted.storeId}`);
+  console.log(`OpenSpec root:    ${trusted.root}`);
+
+  const available = await isOpenSpecAvailable(workspace.workspacePath);
+  if (!available) {
+    console.log(`OpenSpec healthy: unavailable`);
+    return;
+  }
+
+  const doctor = await storeDoctor(workspace.workspacePath, trusted.storeId);
+  const healthy = doctor.found && doctor.healthy;
+  console.log(`OpenSpec healthy: ${healthy ? "yes" : "no"}`);
 }

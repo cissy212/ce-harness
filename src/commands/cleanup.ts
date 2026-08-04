@@ -21,7 +21,14 @@ import {
   readActivePointer,
   readWorkspace,
   removeWorkspaceDir,
+  resolveTrustedOpenSpec,
 } from "../core/workspace.js";
+import {
+  describeOpenSpecStatus,
+  isOpenSpecAvailable,
+  isStoreRegistered,
+  unregisterStore,
+} from "../core/openspec.js";
 
 export interface CleanupOptions {
   force?: boolean;
@@ -52,6 +59,50 @@ export async function cleanupCommand({ force = false }: CleanupOptions): Promise
         `The current directory is inside the worktree being cleaned up ("${workspace.worktreePath}").`,
         `Run \`cd "${workspace.repositoryPath}"\` (or anywhere outside the worktree) and then re-run \`ce cleanup\`.`,
       );
+    }
+  }
+
+  // OpenSpec store: unregister before touching any harness-owned files,
+  // so a failure here (without --force) refuses cleanup entirely rather
+  // than leaving things half torn-down.
+  const trustedOpenSpec = resolveTrustedOpenSpec(workspace);
+  if (workspace.openSpec && !trustedOpenSpec) {
+    console.error(
+      "Warning: OpenSpec metadata in workspace.yml does not match this workspace and will be ignored.",
+    );
+  }
+
+  if (trustedOpenSpec) {
+    const available = await isOpenSpecAvailable(workspace.workspacePath);
+    if (!available) {
+      if (!force) {
+        throw new CeError(
+          `Cannot verify or unregister OpenSpec store "${trustedOpenSpec.storeId}" because the "openspec" executable is not available.`,
+          "Install or restore the openspec executable, or re-run with `ce cleanup --force` to remove harness-owned files anyway.",
+        );
+      }
+      console.error(
+        `Warning: proceeding without unregistering OpenSpec store "${trustedOpenSpec.storeId}" because the "openspec" executable is not available.`,
+      );
+    } else {
+      // Idempotent: if the store was already manually unregistered (or
+      // its root manually deleted), there is nothing left to do here.
+      const registered = await isStoreRegistered(workspace.workspacePath, trustedOpenSpec.storeId);
+      if (registered) {
+        const result = await unregisterStore(workspace.workspacePath, trustedOpenSpec.storeId);
+        if (!result.success && !result.notFound) {
+          const detail = describeOpenSpecStatus(result.status, result.stderr);
+          if (!force) {
+            throw new CeError(
+              `Failed to unregister OpenSpec store "${trustedOpenSpec.storeId}": ${detail}`,
+              "Re-run with `ce cleanup --force` to remove harness-owned files anyway.",
+            );
+          }
+          console.error(
+            `Warning: failed to unregister OpenSpec store "${trustedOpenSpec.storeId}": ${detail}`,
+          );
+        }
+      }
     }
   }
 

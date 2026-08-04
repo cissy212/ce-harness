@@ -64,6 +64,157 @@ describe("workspace serialization and validation", () => {
     await expect(readWorkspace("demo", "broken")).rejects.toThrow(CeError);
   });
 
+  it("round-trips a workspace that includes OpenSpec metadata", async () => {
+    const { writeWorkspace, readWorkspace } = await import("../../src/core/workspace.js");
+    const workspacePath = join(tempHome, "workspaces", "demo", "issue-1");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "Issue #1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: join(tempHome, "worktrees", "demo", "issue-1"),
+      workspacePath,
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: "ce-demo-issue-1-abcd1234",
+        root: join(workspacePath, "openspec"),
+      },
+    };
+
+    await writeWorkspace(workspace);
+    const loaded = await readWorkspace("demo", "issue-1");
+    expect(loaded).toEqual(workspace);
+  });
+
+  it("rejects OpenSpec metadata with a missing storeId or root", async () => {
+    const { WorkspaceSchema } = await import("../../src/core/workspace.js");
+    const base = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "Issue #1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws",
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(WorkspaceSchema.safeParse({ ...base, openSpec: {} }).success).toBe(false);
+    expect(WorkspaceSchema.safeParse({ ...base, openSpec: { storeId: "x" } }).success).toBe(false);
+    expect(
+      WorkspaceSchema.safeParse({ ...base, openSpec: { storeId: "x", root: "/tmp/ws/openspec" } })
+        .success,
+    ).toBe(true);
+  });
+
+  it("still parses a legacy (v0.1) workspace file with no openSpec field", async () => {
+    const { readWorkspace } = await import("../../src/core/workspace.js");
+    const dir = join(tempHome, "workspaces", "demo", "legacy");
+    await mkdir(dir, { recursive: true });
+    const legacyYaml = [
+      "project: demo",
+      "repositoryPath: /tmp/demo",
+      "issue: issue-1",
+      "sanitizedIssue: issue-1",
+      "baseBranch: main",
+      "internalBranch: ce-harness/issue-1",
+      `worktreePath: ${join(tempHome, "worktrees", "demo", "legacy")}`,
+      `workspacePath: ${dir}`,
+      "createdAt: '2024-01-01T00:00:00.000Z'",
+      "",
+    ].join("\n");
+    await writeFile(join(dir, "workspace.yml"), legacyYaml, "utf8");
+
+    const loaded = await readWorkspace("demo", "legacy");
+    expect(loaded.openSpec).toBeUndefined();
+  });
+
+  it("resolveTrustedOpenSpec returns null for a legacy workspace with no openSpec block", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws",
+      createdAt: new Date().toISOString(),
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toBeNull();
+  });
+
+  it("resolveTrustedOpenSpec trusts metadata that matches the deterministic id and expected root", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateStoreId, expectedOpenSpecRoot } = await import("../../src/core/openspecId.js");
+    const workspacePath = "/tmp/ws/demo/issue-1";
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath,
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: generateStoreId("demo", "issue-1", "/tmp/demo"),
+        root: expectedOpenSpecRoot(workspacePath),
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toEqual(workspace.openSpec);
+  });
+
+  it("resolveTrustedOpenSpec rejects metadata with a storeId that doesn't match the deterministic id", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { expectedOpenSpecRoot } = await import("../../src/core/openspecId.js");
+    const workspacePath = "/tmp/ws/demo/issue-1";
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath,
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        // Attacker-controlled/corrupted: some unrelated, real store id.
+        storeId: "someones-important-real-store",
+        root: expectedOpenSpecRoot(workspacePath),
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toBeNull();
+  });
+
+  it("resolveTrustedOpenSpec rejects metadata whose root does not match <workspacePath>/openspec", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateStoreId } = await import("../../src/core/openspecId.js");
+    const workspacePath = "/tmp/ws/demo/issue-1";
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath,
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: generateStoreId("demo", "issue-1", "/tmp/demo"),
+        root: "/etc/somewhere-else",
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toBeNull();
+  });
+
   it("round-trips the active workspace pointer", async () => {
     const { writeActivePointer, readActivePointer, clearActivePointer } = await import(
       "../../src/core/workspace.js"

@@ -5,6 +5,14 @@ import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { CeError } from "./errors.js";
 import { activePointerFile, workspaceFile, workspacePath } from "./paths.js";
+import { expectedOpenSpecRoot, generateStoreId, isValidStoreId } from "./openspecId.js";
+
+export const OpenSpecMetadataSchema = z.object({
+  storeId: z.string().min(1),
+  root: z.string().min(1),
+});
+
+export type OpenSpecMetadata = z.infer<typeof OpenSpecMetadataSchema>;
 
 export const WorkspaceSchema = z.object({
   project: z.string().min(1),
@@ -16,6 +24,9 @@ export const WorkspaceSchema = z.object({
   worktreePath: z.string().min(1),
   workspacePath: z.string().min(1),
   createdAt: z.string().min(1),
+  // Absent on legacy (v0.1) workspace files; ce-harness remains
+  // backward-compatible with those.
+  openSpec: OpenSpecMetadataSchema.optional(),
 });
 
 export type Workspace = z.infer<typeof WorkspaceSchema>;
@@ -113,4 +124,36 @@ export async function readActivePointer(): Promise<ActivePointer | null> {
 
 export async function clearActivePointer(): Promise<void> {
   await rm(activePointerFile(), { force: true });
+}
+
+/**
+ * Returns the workspace's OpenSpec metadata only if it can be trusted,
+ * or `null` otherwise (legacy workspace with no `openSpec` block, or a
+ * workspace file whose `openSpec` block does not match what ce-harness
+ * would itself have generated for this project/issue/repository).
+ *
+ * Treats persisted YAML as untrusted input: the persisted `storeId` and
+ * `root` are only ever acted on (unregistered, displayed as healthy,
+ * etc.) after being cross-checked against values deterministically
+ * recomputed from the workspace's other trusted fields. This is what
+ * prevents a corrupted or tampered workspace.yml from causing ce to
+ * unregister or otherwise act on an unrelated OpenSpec store.
+ */
+export function resolveTrustedOpenSpec(workspace: Workspace): OpenSpecMetadata | null {
+  const persisted = workspace.openSpec;
+  if (!persisted) return null;
+
+  if (!isValidStoreId(persisted.storeId)) return null;
+
+  const expectedStoreId = generateStoreId(
+    workspace.project,
+    workspace.sanitizedIssue,
+    workspace.repositoryPath,
+  );
+  const expectedRoot = expectedOpenSpecRoot(workspace.workspacePath);
+
+  if (persisted.storeId !== expectedStoreId) return null;
+  if (persisted.root !== expectedRoot) return null;
+
+  return persisted;
 }
