@@ -1,6 +1,15 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { CeError } from "../core/errors.js";
-import { assertInsideHarnessHome } from "../core/paths.js";
+import {
+  assertInsideHarnessHome,
+  canonicalCwd,
+  isPathInside,
+  removeEmptyProjectDir,
+  resolveCanonical,
+  worktreesRoot,
+  workspacesRoot,
+} from "../core/paths.js";
 import {
   deleteBranch,
   pruneWorktrees,
@@ -31,6 +40,21 @@ export async function cleanupCommand({ force = false }: CleanupOptions): Promise
   await assertInsideHarnessHome(workspace.worktreePath);
   await assertInsideHarnessHome(workspace.workspacePath);
 
+  // Refuse (even with --force) if the shell running this command is
+  // sitting inside the worktree we're about to delete: removing it out
+  // from under the current process leaves the shell in a dead directory
+  // and causes getcwd/pyenv-style errors.
+  if (existsSync(workspace.worktreePath)) {
+    const canonicalWorktree = await resolveCanonical(workspace.worktreePath);
+    const cwd = await canonicalCwd();
+    if (isPathInside(cwd, canonicalWorktree)) {
+      throw new CeError(
+        `The current directory is inside the worktree being cleaned up ("${workspace.worktreePath}").`,
+        `Run \`cd "${workspace.repositoryPath}"\` (or anywhere outside the worktree) and then re-run \`ce cleanup\`.`,
+      );
+    }
+  }
+
   if (existsSync(workspace.worktreePath)) {
     const changes = await statusPorcelain(workspace.worktreePath);
     if (changes.length > 0 && !force) {
@@ -49,6 +73,11 @@ export async function cleanupCommand({ force = false }: CleanupOptions): Promise
   await removeWorkspaceDir(workspace.project, workspace.sanitizedIssue);
   await clearActivePointer();
   await pruneWorktrees(workspace.repositoryPath);
+
+  // Tidy up now-empty project-level directories, but never the top-level
+  // worktrees/workspaces/state roots themselves.
+  await removeEmptyProjectDir(join(worktreesRoot(), workspace.project));
+  await removeEmptyProjectDir(join(workspacesRoot(), workspace.project));
 
   console.log(
     `Cleaned up workspace for project "${workspace.project}", issue "${workspace.issue}".`,

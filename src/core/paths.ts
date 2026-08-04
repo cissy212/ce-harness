@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { realpath } from "node:fs/promises";
+import { readdir, realpath, rmdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { CeError } from "./errors.js";
 
@@ -66,10 +66,66 @@ export async function assertInsideHarnessHome(target: string): Promise<void> {
 }
 
 /**
- * Resolves symlinks for the closest existing ancestor of `target` and
- * reattaches any non-existent trailing segments, so paths that don't
- * exist yet can still be validated safely.
+ * Resolves symlinks/`..` segments for `target` where it exists, falling
+ * back to plain path resolution otherwise. Exported so callers (e.g. the
+ * cwd-inside-worktree guard) can compare canonical paths consistently
+ * with the safety checks above.
  */
+export async function resolveCanonical(target: string): Promise<string> {
+  return safeRealpath(target);
+}
+
+/**
+ * Resolves the current working directory to a canonical path, with a
+ * clear error if it can no longer be read (e.g. it was deleted out from
+ * under the process).
+ */
+export async function canonicalCwd(): Promise<string> {
+  try {
+    return await realpath(process.cwd());
+  } catch (error) {
+    throw new CeError(
+      `Failed to resolve the current working directory: ${(error as Error).message}`,
+      "cd into a directory that still exists and try again.",
+    );
+  }
+}
+
+/** True if `candidate` is exactly `ancestor`, or a descendant of it. */
+export function isPathInside(candidate: string, ancestor: string): boolean {
+  if (candidate === ancestor) return true;
+  const ancestorWithSep = ancestor.endsWith(sep) ? ancestor : ancestor + sep;
+  return candidate.startsWith(ancestorWithSep);
+}
+
+/**
+ * Removes `dir` if (and only if) it resolves inside the harness runtime
+ * root, is not one of the top-level runtime directories themselves, it
+ * exists, and it is empty. Used to tidy up empty project-level
+ * directories (e.g. worktrees/<project>) after the last issue under
+ * that project has been cleaned up. Silently does nothing otherwise.
+ */
+export async function removeEmptyProjectDir(dir: string): Promise<void> {
+  await assertInsideHarnessHome(dir);
+
+  const resolvedDir = resolve(dir);
+  const protectedTopLevelDirs = new Set([harnessHome(), worktreesRoot(), workspacesRoot(), stateRoot()]);
+  if (protectedTopLevelDirs.has(resolvedDir)) {
+    return;
+  }
+
+  if (!existsSync(resolvedDir)) {
+    return;
+  }
+
+  const entries = await readdir(resolvedDir);
+  if (entries.length > 0) {
+    return;
+  }
+
+  await rmdir(resolvedDir);
+}
+
 async function safeRealpath(target: string): Promise<string> {
   let current = resolve(target);
   const trailing: string[] = [];
