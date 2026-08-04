@@ -11,18 +11,27 @@ import {
   teardownFakeOpenSpec,
   type FakeOpenSpecEnv,
 } from "../helpers/fakeOpenSpec.js";
+import {
+  nonExistentOpenCodeBin,
+  setupFakeOpenCode,
+  teardownFakeOpenCode,
+  type FakeOpenCodeEnv,
+} from "../helpers/fakeOpenCode.js";
 
 describe("ce start (integration)", () => {
   let harnessHomeDir: string;
   let repoDir: string;
   let fakeOpenSpec: FakeOpenSpecEnv;
+  let fakeOpenCode: FakeOpenCodeEnv;
   const originalEnv = process.env.CE_HARNESS_HOME;
+  const originalExitCode = process.exitCode;
 
   beforeEach(async () => {
     harnessHomeDir = await mkdtemp(join(tmpdir(), "ce-harness-home-"));
     process.env.CE_HARNESS_HOME = harnessHomeDir;
     repoDir = await createTempRepo();
     fakeOpenSpec = await setupFakeOpenSpec();
+    fakeOpenCode = await setupFakeOpenCode();
   });
 
   afterEach(async () => {
@@ -31,7 +40,9 @@ describe("ce start (integration)", () => {
     } else {
       process.env.CE_HARNESS_HOME = originalEnv;
     }
+    process.exitCode = originalExitCode;
     await teardownFakeOpenSpec(fakeOpenSpec);
+    await teardownFakeOpenCode(fakeOpenCode);
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });
@@ -230,6 +241,96 @@ describe("ce start (integration)", () => {
       const { readFile } = await import("node:fs/promises");
       const registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
       expect(registry[storeId].root).toBe(preExistingRoot);
+    });
+  });
+
+  describe("OpenCode launch", () => {
+    it("launches OpenCode in the worktree with no arguments and the expected injected environment", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "Fix Bug #42" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "fix-bug-42");
+      const { readFile } = await import("node:fs/promises");
+      const launch = JSON.parse(await readFile(fakeOpenCode.outputFile, "utf8"));
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "fix-bug-42");
+      expect(launch.cwd).toBe(await (await import("node:fs/promises")).realpath(worktreePath));
+      expect(launch.argv).toEqual([]);
+      expect(launch.env).toEqual({
+        CE_WORKSPACE: workspace.workspacePath,
+        CE_WORKTREE: workspace.worktreePath,
+        CE_PROJECT: workspace.project,
+        CE_ISSUE: "Fix Bug #42",
+        CE_OPENSPEC_STORE: workspace.openSpec!.storeId,
+      });
+    });
+
+    it("propagates OpenCode's exit code as ce's own exit code", async () => {
+      process.env.FAKE_OPENCODE_EXIT_CODE = "3";
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      expect(process.exitCode).toBe(3);
+    });
+
+    it("exits 0 (unset) when OpenCode exits normally with code 0", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      expect(process.exitCode).toBe(0);
+    });
+
+    it("does not roll back the workspace when OpenCode cannot be launched, and prints a recovery command", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      // Only break the OpenCode binary once the workspace is otherwise
+      // fully set up: point it at a nonexistent path just before start.
+      process.env.CE_OPENCODE_BIN = nonExistentOpenCodeBin(fakeOpenCode.dir);
+
+      await expect(startCommand({ repo: repoDir, issue: "issue-1" })).rejects.toThrow(
+        /failed to launch opencode/i,
+      );
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+      expect(existsSync(worktreePath)).toBe(true);
+      expect(existsSync(join(workspacePath, "workspace.yml"))).toBe(true);
+      expect(await readActivePointer()).toEqual({
+        project: basenameOf(repoDir),
+        sanitizedIssue: "issue-1",
+      });
+
+      const branches = await execa("git", ["-C", repoDir, "branch", "--list", "ce-harness/issue-1"]);
+      expect(branches.stdout).toContain("ce-harness/issue-1");
+    });
+
+    it("includes an actionable recovery command reproducing the exact launch when OpenCode cannot be launched", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      process.env.CE_OPENCODE_BIN = nonExistentOpenCodeBin(fakeOpenCode.dir);
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      try {
+        await startCommand({ repo: repoDir, issue: "issue-1" });
+        expect.fail("expected startCommand to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CeError);
+        const recovery = (error as InstanceType<typeof CeError>).recovery ?? "";
+        expect(recovery).toContain(worktreePath);
+        expect(recovery).toContain("CE_WORKSPACE=");
+        expect(recovery).toContain("CE_OPENSPEC_STORE=");
+      }
     });
   });
 });

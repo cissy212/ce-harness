@@ -35,6 +35,7 @@ import {
   storeDoctor,
   unregisterStore,
 } from "../core/openspec.js";
+import { formatLaunchCommand, launchOpenCode } from "../core/opencode.js";
 
 export interface StartOptions {
   repo: string;
@@ -184,8 +185,28 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
   console.log(`Workspace ready for project "${project}", issue "${issue}".`);
   console.log(`OpenSpec store: ${openSpecStoreId}`);
   console.log("");
-  console.log("Next step:");
-  console.log(`  cd "${worktreePath}" && opencode`);
+  console.log(`Launching OpenCode in "${worktreePath}"...`);
+
+  // Everything the workspace needs (worktree, workspace dir, OpenSpec
+  // store, workspace.yml, active pointer) is fully created and committed
+  // at this point. A failure to launch OpenCode from here on must never
+  // roll any of that back.
+  const openCodeEnv = {
+    CE_WORKSPACE: workspacePath,
+    CE_WORKTREE: worktreePath,
+    CE_PROJECT: project,
+    CE_ISSUE: issue,
+    CE_OPENSPEC_STORE: openSpecStoreId,
+  };
+  const launchResult = await launchOpenCode({ cwd: worktreePath, env: openCodeEnv });
+  if (!launchResult.launched) {
+    throw new CeError(
+      `Failed to launch OpenCode: ${launchResult.message}`,
+      `The workspace was created successfully; enter it manually with:\n  ${formatLaunchCommand(worktreePath, openCodeEnv)}`,
+    );
+  }
+
+  process.exitCode = launchResult.exitCode;
 }
 
 interface RollbackContext {

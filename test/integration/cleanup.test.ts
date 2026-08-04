@@ -11,18 +11,26 @@ import {
   teardownFakeOpenSpec,
   type FakeOpenSpecEnv,
 } from "../helpers/fakeOpenSpec.js";
+import {
+  setupFakeOpenCode,
+  teardownFakeOpenCode,
+  type FakeOpenCodeEnv,
+} from "../helpers/fakeOpenCode.js";
 
 describe("ce cleanup (integration)", () => {
   let harnessHomeDir: string;
   let repoDir: string;
   let fakeOpenSpec: FakeOpenSpecEnv;
+  let fakeOpenCode: FakeOpenCodeEnv;
   const originalEnv = process.env.CE_HARNESS_HOME;
+  const originalExitCode = process.exitCode;
 
   beforeEach(async () => {
     harnessHomeDir = await mkdtemp(join(tmpdir(), "ce-harness-home-"));
     process.env.CE_HARNESS_HOME = harnessHomeDir;
     repoDir = await createTempRepo();
     fakeOpenSpec = await setupFakeOpenSpec();
+    fakeOpenCode = await setupFakeOpenCode();
   });
 
   afterEach(async () => {
@@ -32,7 +40,9 @@ describe("ce cleanup (integration)", () => {
     } else {
       process.env.CE_HARNESS_HOME = originalEnv;
     }
+    process.exitCode = originalExitCode;
     await teardownFakeOpenSpec(fakeOpenSpec);
+    await teardownFakeOpenCode(fakeOpenCode);
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });
