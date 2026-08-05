@@ -24,8 +24,8 @@ export const WorkspaceSchema = z.object({
   worktreePath: z.string().min(1),
   workspacePath: z.string().min(1),
   createdAt: z.string().min(1),
-  // Absent on legacy (v0.1) workspace files; ce-harness remains
-  // backward-compatible with those.
+  // Optional: older workspace files predate OpenSpec integration and
+  // have no openSpec block. Readers must treat its absence as valid.
   openSpec: OpenSpecMetadataSchema.optional(),
 });
 

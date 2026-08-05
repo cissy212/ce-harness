@@ -5,6 +5,11 @@ async function git(cwd: string, args: string[]) {
   return execa("git", args, { cwd, reject: false });
 }
 
+/** True if `stderr` shows the operation's target was already gone -- a no-op, not a failure. */
+function isAlreadyGone(stderr: string, pattern: RegExp): boolean {
+  return pattern.test(stderr);
+}
+
 /** Resolves the canonical Git repository root for `path`, or throws. */
 export async function resolveRepoRoot(path: string): Promise<string> {
   const result = await git(path, ["rev-parse", "--show-toplevel"]);
@@ -78,7 +83,7 @@ export async function removeWorktree(
   const args = ["worktree", "remove", worktreePath];
   if (force) args.push("--force");
   const result = await git(repoPath, args);
-  if (result.exitCode !== 0 && !/is not a working tree/i.test(result.stderr)) {
+  if (result.exitCode !== 0 && !isAlreadyGone(result.stderr, /is not a working tree/i)) {
     throw new CeError(
       `Failed to remove Git worktree at "${worktreePath}": ${result.stderr.trim()}`,
     );
@@ -87,7 +92,7 @@ export async function removeWorktree(
 
 export async function deleteBranch(repoPath: string, branch: string): Promise<void> {
   const result = await git(repoPath, ["branch", "-D", branch]);
-  if (result.exitCode !== 0 && !/not found/i.test(result.stderr)) {
+  if (result.exitCode !== 0 && !isAlreadyGone(result.stderr, /not found/i)) {
     throw new CeError(`Failed to delete branch "${branch}": ${result.stderr.trim()}`);
   }
 }

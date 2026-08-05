@@ -36,6 +36,8 @@ import {
   unregisterStore,
 } from "../core/openspec.js";
 import { formatLaunchCommand, launchOpenCode } from "../core/opencode.js";
+import { createOpenCodeConfig, expectedOpenCodeConfigDir } from "../core/opencodeConfig.js";
+import { createLensesDir, expectedLensesDir } from "../core/lenses.js";
 
 export interface StartOptions {
   repo: string;
@@ -131,6 +133,11 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
     await mkdir(workspacePath, { recursive: true });
     workspaceDirCreated = true;
 
+    await createOpenCodeConfig(workspacePath);
+    await createLensesDir(workspacePath);
+    // Both directories are nested under workspacePath, so workspace rollback
+    // and cleanup cover them.
+
     const setupResult = await setupStore(workspacePath, openSpecStoreId, openSpecRoot);
     if (!setupResult.success) {
       throw new CeError(
@@ -189,20 +196,22 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
 
   // Everything the workspace needs (worktree, workspace dir, OpenSpec
   // store, workspace.yml, active pointer) is fully created and committed
-  // at this point. A failure to launch OpenCode from here on must never
-  // roll any of that back.
-  const openCodeEnv = {
+  // at this point. A failure to launch the runner from here on must
+  // never roll any of that back.
+  const launchEnv = {
     CE_WORKSPACE: workspacePath,
     CE_WORKTREE: worktreePath,
     CE_PROJECT: project,
     CE_ISSUE: issue,
     CE_OPENSPEC_STORE: openSpecStoreId,
+    CE_LENSES_DIR: expectedLensesDir(workspacePath),
+    OPENCODE_CONFIG_DIR: expectedOpenCodeConfigDir(workspacePath),
   };
-  const launchResult = await launchOpenCode({ cwd: worktreePath, env: openCodeEnv });
+  const launchResult = await launchOpenCode({ cwd: worktreePath, env: launchEnv });
   if (!launchResult.launched) {
     throw new CeError(
       `Failed to launch OpenCode: ${launchResult.message}`,
-      `The workspace was created successfully; enter it manually with:\n  ${formatLaunchCommand(worktreePath, openCodeEnv)}`,
+      `The workspace was created successfully; enter it manually with:\n  ${formatLaunchCommand(worktreePath, launchEnv)}`,
     );
   }
 

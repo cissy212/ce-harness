@@ -24,6 +24,8 @@ if (outputFile) {
           CE_PROJECT: process.env.CE_PROJECT ?? null,
           CE_ISSUE: process.env.CE_ISSUE ?? null,
           CE_OPENSPEC_STORE: process.env.CE_OPENSPEC_STORE ?? null,
+          CE_LENSES_DIR: process.env.CE_LENSES_DIR ?? null,
+          OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR ?? null,
         },
       },
       null,

@@ -411,6 +411,243 @@ describe("ce cleanup (integration)", () => {
       expect(existsSync(workspacePath)).toBe(true);
     });
   });
+
+  describe("OpenCode config cleanup", () => {
+    it("removes the generated OpenCode config directory together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const configDir = join(workspace.workspacePath, "opencode");
+      expect(existsSync(configDir)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(configDir)).toBe(false);
+      expect(existsSync(workspace.workspacePath)).toBe(false);
+    });
+
+    it("removes copied command template files (e.g. workspace.md) together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedCommandFile = join(workspace.workspacePath, "opencode", "commands", "workspace.md");
+      expect(existsSync(copiedCommandFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(copiedCommandFile)).toBe(false);
+    });
+
+    it("removes the copied explore.md command file together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedExploreFile = join(workspace.workspacePath, "opencode", "commands", "explore.md");
+      expect(existsSync(copiedExploreFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(copiedExploreFile)).toBe(false);
+    });
+
+    it("removes the copied propose.md command file together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedProposeFile = join(workspace.workspacePath, "opencode", "commands", "propose.md");
+      expect(existsSync(copiedProposeFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(copiedProposeFile)).toBe(false);
+    });
+
+    it("removes the copied apply.md command file together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedApplyFile = join(workspace.workspacePath, "opencode", "commands", "apply.md");
+      expect(existsSync(copiedApplyFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(copiedApplyFile)).toBe(false);
+    });
+
+    it("removes the copied archive.md command file together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedArchiveFile = join(workspace.workspacePath, "opencode", "commands", "archive.md");
+      expect(existsSync(copiedArchiveFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(copiedArchiveFile)).toBe(false);
+    });
+
+    it("removes the copied openspec-sync-specs skill directory together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedSkillFile = join(
+        workspace.workspacePath,
+        "opencode",
+        "skills",
+        "openspec-sync-specs",
+        "SKILL.md",
+      );
+      expect(existsSync(copiedSkillFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(copiedSkillFile)).toBe(false);
+    });
+
+    it("removes the copied verify.md command file together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedVerifyFile = join(workspace.workspacePath, "opencode", "commands", "verify.md");
+      expect(existsSync(copiedVerifyFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(copiedVerifyFile)).toBe(false);
+    });
+
+    it("removes the copied adversarial-review.md command file together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedAdversarialReviewFile = join(
+        workspace.workspacePath,
+        "opencode",
+        "commands",
+        "adversarial-review.md",
+      );
+      expect(existsSync(copiedAdversarialReviewFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(copiedAdversarialReviewFile)).toBe(false);
+    });
+
+    it("removes the canonical lenses directory (e.g. backend-developer.md, pipeline-data-engineer.md) together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const lensesDir = join(workspace.workspacePath, "lenses");
+      const backendDeveloperFile = join(lensesDir, "backend-developer.md");
+      const pipelineDataEngineerFile = join(lensesDir, "pipeline-data-engineer.md");
+      expect(existsSync(lensesDir)).toBe(true);
+      expect(existsSync(backendDeveloperFile)).toBe(true);
+      expect(existsSync(pipelineDataEngineerFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(lensesDir)).toBe(false);
+      expect(existsSync(backendDeveloperFile)).toBe(false);
+      expect(existsSync(pipelineDataEngineerFile)).toBe(false);
+    });
+
+    it("removes the OpenCode-mirrored lens files under opencode/agents/ together with the workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const mirroredFile = join(workspace.workspacePath, "opencode", "agents", "backend-developer.md");
+      expect(existsSync(mirroredFile)).toBe(true);
+
+      await cleanupCommand({});
+
+      expect(existsSync(mirroredFile)).toBe(false);
+    });
+
+    it("still cleans up a legacy workspace that never had an OpenCode config directory", async () => {
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { writeActivePointer } = await import("../../src/core/workspace.js");
+      const { worktreePath: buildWorktreePath, workspacePath: buildWorkspacePath } = await import(
+        "../../src/core/paths.js"
+      );
+      const { addWorktree, detectBaseBranch } = await import("../../src/core/git.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const project = basenameOf(repoDir);
+      const worktreePath = buildWorktreePath(project, "issue-1");
+      const workspacePath = buildWorkspacePath(project, "issue-1");
+      const baseBranch = await detectBaseBranch(repoDir);
+      await addWorktree(repoDir, worktreePath, "ce-harness/issue-1", baseBranch!);
+      await mkdir(workspacePath, { recursive: true });
+
+      const legacyYaml = [
+        `project: ${project}`,
+        `repositoryPath: ${repoDir}`,
+        "issue: issue-1",
+        "sanitizedIssue: issue-1",
+        "baseBranch: main",
+        "internalBranch: ce-harness/issue-1",
+        `worktreePath: ${worktreePath}`,
+        `workspacePath: ${workspacePath}`,
+        "createdAt: '2024-01-01T00:00:00.000Z'",
+        "",
+      ].join("\n");
+      await writeFile(join(workspacePath, "workspace.yml"), legacyYaml, "utf8");
+      await writeActivePointer({ project, sanitizedIssue: "issue-1" });
+
+      expect(existsSync(join(workspacePath, "opencode"))).toBe(false);
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+
+      expect(existsSync(worktreePath)).toBe(false);
+      expect(existsSync(workspacePath)).toBe(false);
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      expect(await readActivePointer()).toBeNull();
+    });
+  });
 });
 
 function basenameOf(path: string): string {

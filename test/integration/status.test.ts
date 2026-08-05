@@ -74,6 +74,10 @@ describe("ce status (integration)", () => {
     expect(output).toMatch(/OpenSpec store:\s+ce-/);
     expect(output).toMatch(/OpenSpec root:\s+.+\/openspec$/m);
     expect(output).toMatch(/OpenSpec healthy:\s+yes/);
+    expect(output).toMatch(/OpenCode config:\s+.+\/opencode$/m);
+    expect(output).toMatch(/OpenCode config exists:\s+yes/);
+    expect(output).toMatch(/Lenses dir:\s+.+\/lenses$/m);
+    expect(output).toMatch(/Lenses dir exists:\s+yes/);
   });
 
   it("reports changed files when the worktree has been modified", async () => {
@@ -175,6 +179,67 @@ describe("ce status (integration)", () => {
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).not.toMatch(/OpenSpec/);
+    });
+  });
+
+  describe("OpenCode config status", () => {
+    it("reports the config directory and exists:yes right after start", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(
+        new RegExp(`OpenCode config:\\s+${join(workspace.workspacePath, "opencode").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      );
+      expect(output).toMatch(/OpenCode config exists:\s+yes/);
+      expect(output).toMatch(
+        new RegExp(`Lenses dir:\\s+${join(workspace.workspacePath, "lenses").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      );
+      expect(output).toMatch(/Lenses dir exists:\s+yes/);
+    });
+
+    it("reports exists:no (without crashing) for a legacy workspace with no OpenCode config directory", async () => {
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { writeActivePointer } = await import("../../src/core/workspace.js");
+      const { worktreePath: buildWorktreePath, workspacePath: buildWorkspacePath } = await import(
+        "../../src/core/paths.js"
+      );
+
+      const project = basenameOf(repoDir);
+      const worktreePath = buildWorktreePath(project, "issue-1");
+      const workspacePath = buildWorkspacePath(project, "issue-1");
+      await mkdir(workspacePath, { recursive: true });
+      const legacyYaml = [
+        `project: ${project}`,
+        `repositoryPath: ${repoDir}`,
+        "issue: issue-1",
+        "sanitizedIssue: issue-1",
+        "baseBranch: main",
+        "internalBranch: ce-harness/issue-1",
+        `worktreePath: ${worktreePath}`,
+        `workspacePath: ${workspacePath}`,
+        "createdAt: '2024-01-01T00:00:00.000Z'",
+        "",
+      ].join("\n");
+      await writeFile(join(workspacePath, "workspace.yml"), legacyYaml, "utf8");
+      await writeActivePointer({ project, sanitizedIssue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await expect(statusCommand()).resolves.toBeUndefined();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/OpenCode config:\s+.+\/opencode$/m);
+      expect(output).toMatch(/OpenCode config exists:\s+no/);
+      expect(output).toMatch(/Lenses dir:\s+.+\/lenses$/m);
+      expect(output).toMatch(/Lenses dir exists:\s+no/);
     });
   });
 });

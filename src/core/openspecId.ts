@@ -18,6 +18,9 @@ const HASH_LENGTH = 8;
 
 const PREFIX = "ce";
 
+/** Hyphens in the "ce-<project>-<issue>-<hash>" shape (see generateStoreId). */
+const HYPHEN_COUNT = 3;
+
 /** True if `id` is safe to pass to the OpenSpec CLI as a store id. */
 export function isValidStoreId(id: string): boolean {
   return (
@@ -88,8 +91,7 @@ export function generateStoreId(
   const projectToken = toKebabToken(project, "project");
   const issueToken = toKebabToken(sanitizedIssue, "issue");
 
-  // Fixed length: "ce-" + projectToken + "-" + issueToken + "-" + hash
-  const fixedLength = PREFIX.length + 1 + 1 + 1 + hash.length;
+  const fixedLength = PREFIX.length + HYPHEN_COUNT + hash.length;
   const budget = Math.max(STORE_ID_MAX_LENGTH - fixedLength, 2);
   const [project2, issue2] = shareBudget(projectToken, issueToken, budget);
 

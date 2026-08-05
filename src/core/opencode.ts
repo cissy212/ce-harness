@@ -14,7 +14,7 @@ export function openCodeBinary(): string {
 }
 
 export interface LaunchOpenCodeOptions {
-  /** Working directory OpenCode should run in (the worktree path). */
+  /** Working directory to launch the process in. */
   cwd: string;
   /** Extra environment variables layered on top of the inherited environment. */
   env: Record<string, string>;
@@ -43,8 +43,8 @@ export async function launchOpenCode(options: LaunchOpenCodeOptions): Promise<La
 
   // A real process invocation always yields a numeric exit code (even a
   // signal-terminated one is normalized by execa); a spawn-time failure
-  // (e.g. ENOENT) does not, so this is how we distinguish "OpenCode ran
-  // and exited" from "OpenCode could not be launched at all".
+  // (e.g. ENOENT) does not, so this is how we distinguish "the process
+  // ran and exited" from "the process could not be launched at all".
   if (typeof result.exitCode !== "number") {
     return {
       launched: false,

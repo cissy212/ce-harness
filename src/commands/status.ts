@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { branchExists, statusPorcelain } from "../core/git.js";
 import { readActivePointer, readWorkspace, resolveTrustedOpenSpec } from "../core/workspace.js";
 import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
+import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
+import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
 
 export async function statusCommand(): Promise<void> {
   const pointer = await readActivePointer();
@@ -33,8 +35,20 @@ export async function statusCommand(): Promise<void> {
   console.log(`Branch exists:    ${branchStillExists ? "yes" : "no"}`);
   console.log(`Worktree changes: ${changesSummary}`);
 
-  // Legacy (v0.1) workspaces have no OpenSpec metadata; leave their
-  // status output unchanged rather than printing placeholder lines.
+  // The OpenCode config directory path is fully deterministic from
+  // workspacePath, so it applies to every workspace regardless of
+  // schema, with no persisted field required.
+  console.log(`OpenCode config:        ${expectedOpenCodeConfigDir(workspace.workspacePath)}`);
+  console.log(`OpenCode config exists: ${openCodeConfigExists(workspace.workspacePath) ? "yes" : "no"}`);
+
+  console.log(`Lenses dir:        ${expectedLensesDir(workspace.workspacePath)}`);
+  console.log(
+    `Lenses dir exists: ${lensesDirExists(workspace.workspacePath) ? "yes" : "no"}`,
+  );
+
+  // Workspaces created without OpenSpec metadata have no openSpec block;
+  // skip the OpenSpec section entirely rather than printing placeholder
+  // lines.
   if (!workspace.openSpec) return;
 
   const trusted = resolveTrustedOpenSpec(workspace);
