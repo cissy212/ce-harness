@@ -227,4 +227,99 @@ describe("workspace serialization and validation", () => {
     await clearActivePointer();
     expect(await readActivePointer()).toBeNull();
   });
+
+  it("round-trips a workspace with an explicit diff review range", async () => {
+    const { writeWorkspace, readWorkspace } = await import("../../src/core/workspace.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "review-pr-116",
+      sanitizedIssue: "review-pr-116",
+      baseBranch: "a".repeat(40),
+      internalBranch: "ce-harness/review-pr-116",
+      worktreePath: join(tempHome, "worktrees", "demo", "review-pr-116"),
+      workspacePath: join(tempHome, "workspaces", "demo", "review-pr-116"),
+      createdAt: new Date().toISOString(),
+      diffBase: "b".repeat(40),
+      diffHead: "a".repeat(40),
+      diffMergeBase: "c".repeat(40),
+    };
+
+    await writeWorkspace(workspace);
+    const loaded = await readWorkspace("demo", "review-pr-116");
+    expect(loaded).toEqual(workspace);
+  });
+
+  it("a legacy workspace with no diffBase/diffHead/diffMergeBase fields remains valid", async () => {
+    const { readWorkspace } = await import("../../src/core/workspace.js");
+    const dir = join(tempHome, "workspaces", "demo", "legacy-no-diff");
+    await mkdir(dir, { recursive: true });
+    const legacyYaml = [
+      "project: demo",
+      "repositoryPath: /tmp/demo",
+      "issue: issue-1",
+      "sanitizedIssue: issue-1",
+      "baseBranch: main",
+      "internalBranch: ce-harness/issue-1",
+      `worktreePath: ${join(tempHome, "worktrees", "demo", "legacy-no-diff")}`,
+      `workspacePath: ${dir}`,
+      "createdAt: '2024-01-01T00:00:00.000Z'",
+      "",
+    ].join("\n");
+    await writeFile(join(dir, "workspace.yml"), legacyYaml, "utf8");
+
+    const loaded = await readWorkspace("demo", "legacy-no-diff");
+    expect(loaded.diffBase).toBeUndefined();
+    expect(loaded.diffHead).toBeUndefined();
+    expect(loaded.diffMergeBase).toBeUndefined();
+  });
+
+  it("rejects diffBase without diffHead (and vice versa)", async () => {
+    const { WorkspaceSchema } = await import("../../src/core/workspace.js");
+    const base = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws",
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(WorkspaceSchema.safeParse({ ...base, diffBase: "a".repeat(40) }).success).toBe(false);
+    expect(WorkspaceSchema.safeParse({ ...base, diffHead: "a".repeat(40) }).success).toBe(false);
+    expect(
+      WorkspaceSchema.safeParse({ ...base, diffBase: "a".repeat(40), diffHead: "b".repeat(40) })
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects diffMergeBase without diffBase and diffHead also present", async () => {
+    const { WorkspaceSchema } = await import("../../src/core/workspace.js");
+    const base = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws",
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(WorkspaceSchema.safeParse({ ...base, diffMergeBase: "c".repeat(40) }).success).toBe(
+      false,
+    );
+    expect(
+      WorkspaceSchema.safeParse({
+        ...base,
+        diffBase: "a".repeat(40),
+        diffHead: "b".repeat(40),
+        diffMergeBase: "c".repeat(40),
+      }).success,
+    ).toBe(true);
+  });
 });

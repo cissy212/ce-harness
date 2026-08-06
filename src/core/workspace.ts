@@ -14,20 +14,39 @@ export const OpenSpecMetadataSchema = z.object({
 
 export type OpenSpecMetadata = z.infer<typeof OpenSpecMetadataSchema>;
 
-export const WorkspaceSchema = z.object({
-  project: z.string().min(1),
-  repositoryPath: z.string().min(1),
-  issue: z.string().min(1),
-  sanitizedIssue: z.string().min(1),
-  baseBranch: z.string().min(1),
-  internalBranch: z.string().min(1),
-  worktreePath: z.string().min(1),
-  workspacePath: z.string().min(1),
-  createdAt: z.string().min(1),
-  // Optional: older workspace files predate OpenSpec integration and
-  // have no openSpec block. Readers must treat its absence as valid.
-  openSpec: OpenSpecMetadataSchema.optional(),
-});
+export const WorkspaceSchema = z
+  .object({
+    project: z.string().min(1),
+    repositoryPath: z.string().min(1),
+    issue: z.string().min(1),
+    sanitizedIssue: z.string().min(1),
+    baseBranch: z.string().min(1),
+    internalBranch: z.string().min(1),
+    worktreePath: z.string().min(1),
+    workspacePath: z.string().min(1),
+    createdAt: z.string().min(1),
+    // Optional: older workspace files predate OpenSpec integration and
+    // have no openSpec block. Readers must treat its absence as valid.
+    openSpec: OpenSpecMetadataSchema.optional(),
+    // Optional: only present when `ce start` was given an explicit
+    // --base/--head review range instead of using the local main/master
+    // tip. Resolved, immutable commit SHAs -- never raw refs. Absent on
+    // every workspace created with the default flow, and on all
+    // workspaces that predate this field.
+    diffBase: z.string().min(1).optional(),
+    diffHead: z.string().min(1).optional(),
+    // Optional: the merge base of diffBase/diffHead at the time `ce
+    // start` resolved them, persisted so `status` can show the exact
+    // effective comparison point without recomputing it. Only ever set
+    // together with diffBase/diffHead.
+    diffMergeBase: z.string().min(1).optional(),
+  })
+  .refine((w) => (w.diffBase === undefined) === (w.diffHead === undefined), {
+    message: "diffBase and diffHead must both be present or both be absent",
+  })
+  .refine((w) => w.diffMergeBase === undefined || (w.diffBase !== undefined && w.diffHead !== undefined), {
+    message: "diffMergeBase requires diffBase and diffHead to also be present",
+  });
 
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 

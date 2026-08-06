@@ -110,6 +110,40 @@ describe("ce cleanup (integration)", () => {
     expect(existsSync(worktreePath)).toBe(false);
   });
 
+  it("cleans up a workspace created with an explicit --base/--head review range identically to the default flow", async () => {
+    const { startCommand } = await import("../../src/commands/start.js");
+    const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+    const { readActivePointer } = await import("../../src/core/workspace.js");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+    await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+    await writeFile(join(repoDir, "feature.txt"), "new feature\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "feature commit"]);
+    const headSha = (await execa("git", ["-C", repoDir, "rev-parse", "feature"])).stdout.trim();
+    await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+    await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: headSha });
+
+    const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+    const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(existsSync(workspacePath)).toBe(true);
+
+    await expect(cleanupCommand({})).resolves.toBeUndefined();
+
+    expect(existsSync(worktreePath)).toBe(false);
+    expect(existsSync(workspacePath)).toBe(false);
+    expect(await readActivePointer()).toBeNull();
+
+    // The original repository must remain untouched.
+    const branch = await execa("git", ["-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD"]);
+    expect(branch.stdout.trim()).toBe("main");
+    const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+    expect(status.stdout.trim()).toBe("");
+  });
+
   it("is idempotent when run twice in a row", async () => {
     const { startCommand } = await import("../../src/commands/start.js");
     const { cleanupCommand } = await import("../../src/commands/cleanup.js");

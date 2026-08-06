@@ -48,6 +48,46 @@ export async function detectBaseBranch(repoPath: string): Promise<string | null>
   return null;
 }
 
+/**
+ * Resolves `ref` (a branch, tag, or SHA) to its full commit SHA in
+ * `repoPath`. Never fetches -- if `ref` isn't already present locally
+ * (e.g. it lives on a remote and hasn't been fetched), this throws
+ * rather than reaching out over the network.
+ */
+export async function resolveCommit(repoPath: string, ref: string): Promise<string> {
+  const result = await git(repoPath, ["rev-parse", "--verify", `${ref}^{commit}`]);
+  if (result.exitCode !== 0) {
+    throw new CeError(
+      `Could not resolve "${ref}" to a commit in "${repoPath}".`,
+      `ce-harness never fetches automatically. If "${ref}" lives on a remote, fetch it first (e.g. \`git -C "${repoPath}" fetch origin ${ref}\`), then try again.`,
+    );
+  }
+  return result.stdout.trim();
+}
+
+/**
+ * Resolves the merge base of `baseSha` and `headSha` in `repoPath`.
+ * Does not require either to be an ancestor of the other -- this is the
+ * same "where did these two histories diverge" question `git diff
+ * A...B` answers, which is what makes it correct for an open PR whose
+ * base branch has advanced since the PR's branch point. Throws if the
+ * two commits share no common history at all (no merge base exists).
+ */
+export async function resolveMergeBase(
+  repoPath: string,
+  baseSha: string,
+  headSha: string,
+): Promise<string> {
+  const result = await git(repoPath, ["merge-base", baseSha, headSha]);
+  if (result.exitCode !== 0) {
+    throw new CeError(
+      `"${baseSha}" and "${headSha}" share no common history in "${repoPath}" -- no merge base exists between them.`,
+      "Confirm both refs are reachable from a common ancestor in this repository (e.g. they both descend from the same initial commit), then try again.",
+    );
+  }
+  return result.stdout.trim();
+}
+
 export async function branchExists(repoPath: string, branch: string): Promise<boolean> {
   const result = await git(repoPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
   return result.exitCode === 0;

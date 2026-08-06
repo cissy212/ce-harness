@@ -15,6 +15,8 @@ import {
   isDirty,
   pruneWorktrees,
   removeWorktree,
+  resolveCommit,
+  resolveMergeBase,
   resolveRepoRoot,
 } from "../core/git.js";
 import {
@@ -42,9 +44,25 @@ import { createLensesDir, expectedLensesDir } from "../core/lenses.js";
 export interface StartOptions {
   repo: string;
   issue: string;
+  /** Exact base ref/commit for an explicit review range. Requires `head`. */
+  base?: string;
+  /** Exact head ref/commit for an explicit review range. Requires `base`. */
+  head?: string;
 }
 
-export async function startCommand({ repo, issue }: StartOptions): Promise<void> {
+export async function startCommand({ repo, issue, base, head }: StartOptions): Promise<void> {
+  // Pure input-shape validation, checked before touching the filesystem
+  // at all: an explicit review range requires both --base and --head,
+  // never just one.
+  if ((base && !head) || (!base && head)) {
+    throw new CeError(
+      "--base and --head must both be provided together (or neither).",
+      base
+        ? "Add --head <ref> to specify the exact review range."
+        : "Add --base <ref> to specify the exact review range.",
+    );
+  }
+
   if (!existsSync(repo)) {
     throw new CeError(
       `Repository path "${repo}" does not exist.`,
@@ -65,12 +83,38 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
   const project = deriveProjectName(repoRoot);
   const sanitizedIssue = sanitizeIssue(issue);
 
-  const baseBranch = await detectBaseBranch(repoRoot);
-  if (!baseBranch) {
-    throw new CeError(
-      `Neither "main" nor "master" branch exists in "${repoRoot}".`,
-      'Create a "main" or "master" branch in the target repository before running `ce start`.',
-    );
+  // worktreeSeed is the ref/commit `git worktree add` starts the
+  // internal ce-harness branch from. In the default flow that's the
+  // local main/master tip, exactly as before. In the explicit-range
+  // flow it's the resolved head commit -- the worktree must actually
+  // contain the reviewed head, not just fork from the base.
+  let worktreeSeed: string;
+  let diffBase: string | undefined;
+  let diffHead: string | undefined;
+  let diffMergeBase: string | undefined;
+
+  if (base && head) {
+    // Resolved to immutable SHAs -- and their merge base confirmed to
+    // exist -- entirely before any persistent resource is created.
+    // Never fetches: resolveCommit throws its own clear, actionable
+    // error if either ref isn't already present locally.
+    diffBase = await resolveCommit(repoRoot, base);
+    diffHead = await resolveCommit(repoRoot, head);
+    // Deliberately not an ancestor check: base does not need to be an
+    // ancestor of head. An open PR whose base branch has advanced since
+    // the PR diverged is still a valid review -- only requires that the
+    // two commits share some common history at all.
+    diffMergeBase = await resolveMergeBase(repoRoot, diffBase, diffHead);
+    worktreeSeed = diffHead;
+  } else {
+    const detected = await detectBaseBranch(repoRoot);
+    if (!detected) {
+      throw new CeError(
+        `Neither "main" nor "master" branch exists in "${repoRoot}".`,
+        'Create a "main" or "master" branch in the target repository before running `ce start`.',
+      );
+    }
+    worktreeSeed = detected;
   }
 
   const internalBranch = `ce-harness/${sanitizedIssue}`;
@@ -127,7 +171,7 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
 
   try {
     await mkdir(dirname(worktreePath), { recursive: true });
-    await addWorktree(repoRoot, worktreePath, internalBranch, baseBranch);
+    await addWorktree(repoRoot, worktreePath, internalBranch, worktreeSeed);
     worktreeCreated = true;
 
     await mkdir(workspacePath, { recursive: true });
@@ -158,7 +202,7 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
       repositoryPath: repoRoot,
       issue,
       sanitizedIssue,
-      baseBranch,
+      baseBranch: worktreeSeed,
       internalBranch,
       worktreePath,
       workspacePath,
@@ -167,6 +211,7 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
         storeId: openSpecStoreId,
         root: openSpecRoot,
       },
+      ...(diffBase && diffHead ? { diffBase, diffHead, diffMergeBase } : {}),
     };
     await writeWorkspace(workspace);
 
@@ -198,7 +243,7 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
   // store, workspace.yml, active pointer) is fully created and committed
   // at this point. A failure to launch the runner from here on must
   // never roll any of that back.
-  const launchEnv = {
+  const launchEnv: Record<string, string> = {
     CE_WORKSPACE: workspacePath,
     CE_WORKTREE: worktreePath,
     CE_PROJECT: project,
@@ -207,6 +252,13 @@ export async function startCommand({ repo, issue }: StartOptions): Promise<void>
     CE_LENSES_DIR: expectedLensesDir(workspacePath),
     OPENCODE_CONFIG_DIR: expectedOpenCodeConfigDir(workspacePath),
   };
+  // Only present for an explicit --base/--head review range; the
+  // workflow templates fall back to their own merge-base detection
+  // against main/master when these are absent.
+  if (diffBase && diffHead) {
+    launchEnv.CE_DIFF_BASE = diffBase;
+    launchEnv.CE_DIFF_HEAD = diffHead;
+  }
   const launchResult = await launchOpenCode({ cwd: worktreePath, env: launchEnv });
   if (!launchResult.launched) {
     throw new CeError(

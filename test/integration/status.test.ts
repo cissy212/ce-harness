@@ -78,6 +78,9 @@ describe("ce status (integration)", () => {
     expect(output).toMatch(/OpenCode config exists:\s+yes/);
     expect(output).toMatch(/Lenses dir:\s+.+\/lenses$/m);
     expect(output).toMatch(/Lenses dir exists:\s+yes/);
+    expect(output).not.toMatch(/Review base:/);
+    expect(output).not.toMatch(/Review head:/);
+    expect(output).not.toMatch(/Review merge base:/);
   });
 
   it("reports changed files when the worktree has been modified", async () => {
@@ -240,6 +243,73 @@ describe("ce status (integration)", () => {
       expect(output).toMatch(/OpenCode config exists:\s+no/);
       expect(output).toMatch(/Lenses dir:\s+.+\/lenses$/m);
       expect(output).toMatch(/Lenses dir exists:\s+no/);
+      expect(output).not.toMatch(/Review base:/);
+      expect(output).not.toMatch(/Review head:/);
+      expect(output).not.toMatch(/Review merge base:/);
+    });
+  });
+
+  describe("Review base/head status", () => {
+    it("shows Review base/head/merge base only for a workspace with an explicit review range", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { execa } = await import("execa");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "feature.txt"), "new feature\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "feature commit"]);
+      const headSha = (await execa("git", ["-C", repoDir, "rev-parse", "feature"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: headSha });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(new RegExp(`Review base:\\s+${workspace.diffBase}`));
+      expect(output).toMatch(new RegExp(`Review head:\\s+${workspace.diffHead}`));
+      expect(output).toMatch(new RegExp(`Review merge base:\\s+${workspace.diffMergeBase}`));
+    });
+
+    it("omits Review base/head/merge base entirely for a legacy workspace with no diff fields", async () => {
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { writeActivePointer } = await import("../../src/core/workspace.js");
+      const { worktreePath: buildWorktreePath, workspacePath: buildWorkspacePath } = await import(
+        "../../src/core/paths.js"
+      );
+
+      const project = basenameOf(repoDir);
+      const worktreePath = buildWorktreePath(project, "issue-1");
+      const workspacePath = buildWorkspacePath(project, "issue-1");
+      await mkdir(workspacePath, { recursive: true });
+      const legacyYaml = [
+        `project: ${project}`,
+        `repositoryPath: ${repoDir}`,
+        "issue: issue-1",
+        "sanitizedIssue: issue-1",
+        "baseBranch: main",
+        "internalBranch: ce-harness/issue-1",
+        `worktreePath: ${worktreePath}`,
+        `workspacePath: ${workspacePath}`,
+        "createdAt: '2024-01-01T00:00:00.000Z'",
+        "",
+      ].join("\n");
+      await writeFile(join(workspacePath, "workspace.yml"), legacyYaml, "utf8");
+      await writeActivePointer({ project, sanitizedIssue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await expect(statusCommand()).resolves.toBeUndefined();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).not.toMatch(/Review base:/);
+      expect(output).not.toMatch(/Review head:/);
+      expect(output).not.toMatch(/Review merge base:/);
     });
   });
 });

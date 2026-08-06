@@ -28,6 +28,16 @@ export async function statusCommand(): Promise<void> {
   console.log(`Repository path:  ${workspace.repositoryPath}`);
   console.log(`Base branch:      ${workspace.baseBranch}`);
   console.log(`Internal branch:  ${workspace.internalBranch}`);
+  // Only present for an explicit --base/--head review range; absent
+  // entirely (no placeholder lines) for the default flow and for every
+  // workspace created before this field existed.
+  if (workspace.diffBase && workspace.diffHead) {
+    console.log(`Review base:      ${workspace.diffBase}`);
+    console.log(`Review head:      ${workspace.diffHead}`);
+    if (workspace.diffMergeBase) {
+      console.log(`Review merge base: ${workspace.diffMergeBase}`);
+    }
+  }
   console.log(`Worktree path:    ${workspace.worktreePath}`);
   console.log(`Workspace path:   ${workspace.workspacePath}`);
   console.log(`Created at:       ${workspace.createdAt}`);

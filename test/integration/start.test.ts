@@ -266,6 +266,8 @@ describe("ce start (integration)", () => {
         CE_ISSUE: "Fix Bug #42",
         CE_OPENSPEC_STORE: workspace.openSpec!.storeId,
         CE_LENSES_DIR: join(workspace.workspacePath, "lenses"),
+        CE_DIFF_BASE: null,
+        CE_DIFF_HEAD: null,
         OPENCODE_CONFIG_DIR: join(workspace.workspacePath, "opencode"),
       });
     });
@@ -468,6 +470,236 @@ describe("ce start (integration)", () => {
       }
       expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
       expect(readdirSync(worktreePath).sort()).toEqual([".git", "README.md"]);
+    });
+  });
+
+  describe("Explicit --base/--head review range", () => {
+    it("with neither option, default behavior is exactly unchanged: worktree from local main, no diff fields", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.baseBranch).toBe("main");
+      expect(workspace.diffBase).toBeUndefined();
+      expect(workspace.diffHead).toBeUndefined();
+      expect(workspace.diffMergeBase).toBeUndefined();
+
+      const { readFile } = await import("node:fs/promises");
+      const launch = JSON.parse(await readFile(fakeOpenCode.outputFile, "utf8"));
+      expect(launch.env.CE_DIFF_BASE ?? null).toBeNull();
+      expect(launch.env.CE_DIFF_HEAD ?? null).toBeNull();
+    });
+
+    it("rejects --base without --head before creating any persistent resource", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+
+      await expect(
+        startCommand({ repo: repoDir, issue: "issue-1", base: "main" }),
+      ).rejects.toThrow(/--base and --head must both be provided together/i);
+
+      expect(await readActivePointer()).toBeNull();
+      expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+      expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+    });
+
+    it("rejects --head without --base before creating any persistent resource", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+
+      await expect(
+        startCommand({ repo: repoDir, issue: "issue-1", head: "main" }),
+      ).rejects.toThrow(/--base and --head must both be provided together/i);
+
+      expect(await readActivePointer()).toBeNull();
+      expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+      expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+    });
+
+    it("rejects an unresolvable ref before creating any persistent resource", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+
+      await expect(
+        startCommand({
+          repo: repoDir,
+          issue: "issue-1",
+          base: "main",
+          head: "does-not-exist-anywhere",
+        }),
+      ).rejects.toThrow(/could not resolve/i);
+
+      expect(await readActivePointer()).toBeNull();
+      expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+      expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+    });
+
+    it("rejects a base/head pair that shares no common history, before creating any persistent resource", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+
+      const headRef = "main";
+      const { writeFile } = await import("node:fs/promises");
+      await execa("git", ["-C", repoDir, "checkout", "--orphan", "unrelated"]);
+      await execa("git", ["-C", repoDir, "rm", "-rf", "."]);
+      await writeFile(join(repoDir, "unrelated.txt"), "no shared history\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "unrelated root commit"]);
+
+      await expect(
+        startCommand({ repo: repoDir, issue: "issue-1", base: "unrelated", head: headRef }),
+      ).rejects.toThrow(/share no common history/i);
+
+      expect(await readActivePointer()).toBeNull();
+      expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+      expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+    });
+
+    it("starts the worktree at the resolved head commit, persists resolved SHAs, and injects CE_DIFF_BASE/CE_DIFF_HEAD", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(join(repoDir, "feature.txt"), "new feature\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "feature commit"]);
+      const headSha = (await execa("git", ["-C", repoDir, "rev-parse", "feature"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: headSha });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.diffBase).toBe(baseSha);
+      expect(workspace.diffHead).toBe(headSha);
+      expect(workspace.diffMergeBase).toBe(baseSha);
+      expect(workspace.baseBranch).toBe(headSha);
+
+      const worktreeHead = (
+        await execa("git", ["-C", workspace.worktreePath, "rev-parse", "HEAD"])
+      ).stdout.trim();
+      expect(worktreeHead).toBe(headSha);
+
+      const { readFile } = await import("node:fs/promises");
+      const launch = JSON.parse(await readFile(fakeOpenCode.outputFile, "utf8"));
+      expect(launch.env.CE_DIFF_BASE).toBe(baseSha);
+      expect(launch.env.CE_DIFF_HEAD).toBe(headSha);
+    });
+
+    it("accepts short SHAs and branch names as --base/--head and resolves both to full SHAs", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const baseFullSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+
+      await startCommand({
+        repo: repoDir,
+        issue: "issue-1",
+        base: baseFullSha.slice(0, 10),
+        head: "main",
+      });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.diffBase).toBe(baseFullSha);
+      expect(workspace.diffBase).toHaveLength(40);
+      expect(workspace.diffHead).toBe(baseFullSha);
+    });
+
+    it("succeeds when base is not an ancestor of head, as long as they share a merge base (diverged-base case)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { writeFile } = await import("node:fs/promises");
+
+      // Common ancestor is the "initial commit" createTempRepo already made on main.
+      const commonAncestor = (
+        await execa("git", ["-C", repoDir, "rev-parse", "main"])
+      ).stdout.trim();
+
+      // Advance the base side with a commit unrelated to the head change.
+      await execa("git", ["-C", repoDir, "checkout", "-b", "diverged-base"]);
+      await writeFile(join(repoDir, "base-only.txt"), "base-side change\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "base-only change"]);
+      const baseSha = (
+        await execa("git", ["-C", repoDir, "rev-parse", "diverged-base"])
+      ).stdout.trim();
+
+      // Head diverges from the same common ancestor, not from the base commit.
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+      await execa("git", ["-C", repoDir, "checkout", "-b", "diverged-head"]);
+      await writeFile(join(repoDir, "head-only.txt"), "head-side change\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "head-only change"]);
+      const headSha = (
+        await execa("git", ["-C", repoDir, "rev-parse", "diverged-head"])
+      ).stdout.trim();
+
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      // base is NOT an ancestor of head -- this must still succeed.
+      const ancestorCheck = await execa(
+        "git",
+        ["-C", repoDir, "merge-base", "--is-ancestor", baseSha, headSha],
+        { reject: false },
+      );
+      expect(ancestorCheck.exitCode).not.toBe(0);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: headSha });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.diffBase).toBe(baseSha);
+      expect(workspace.diffHead).toBe(headSha);
+      expect(workspace.diffMergeBase).toBe(commonAncestor);
+
+      // The effective three-dot diff must contain only the head-side
+      // change, never the base-side change, even though --base was a
+      // real commit with its own (irrelevant) diff.
+      const diff = await execa("git", [
+        "-C",
+        workspace.worktreePath,
+        "diff",
+        `${baseSha}...${headSha}`,
+      ]);
+      expect(diff.stdout).toContain("head-only.txt");
+      expect(diff.stdout).not.toContain("base-only.txt");
+    });
+
+    it("never moves or checks out any branch in the original repository", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { writeFile } = await import("node:fs/promises");
+
+      const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "feature.txt"), "new feature\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "feature commit"]);
+      const headSha = (await execa("git", ["-C", repoDir, "rev-parse", "feature"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      const branchBefore = (
+        await execa("git", ["-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD"])
+      ).stdout.trim();
+      const statusBefore = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: headSha });
+
+      const branchAfter = (
+        await execa("git", ["-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD"])
+      ).stdout.trim();
+      const statusAfter = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+
+      expect(branchAfter).toBe(branchBefore);
+      expect(branchAfter).toBe("main");
+      expect(statusAfter.stdout).toBe(statusBefore.stdout);
+      expect(statusAfter.stdout).toBe("");
     });
   });
 
@@ -1247,6 +1479,31 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/<changeRoot>\/reports\/<YYYY-MM-DD>-verify\.md/);
     });
 
+    describe("explicit CE_DIFF_BASE/CE_DIFF_HEAD review range", () => {
+      it("uses three-dot diff semantics on the explicit range when both are present, and skips base-branch detection", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+
+        expect(content).toContain("CE_DIFF_BASE");
+        expect(content).toContain("CE_DIFF_HEAD");
+        expect(content).toMatch(/git -C "\$CE_WORKTREE" diff "\$CE_DIFF_BASE\.\.\.\$CE_DIFF_HEAD"/);
+        // Two-dot for the commit log only, never for the diff itself.
+        expect(content).toMatch(/git -C "\$CE_WORKTREE" log --oneline "\$CE_DIFF_BASE\.\.\$CE_DIFF_HEAD"/);
+        expect(content).not.toMatch(/diff "\$CE_DIFF_BASE" "\$CE_DIFF_HEAD"/);
+      });
+
+      it("preserves the merge-base fallback for when CE_DIFF_BASE/CE_DIFF_HEAD are absent", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+
+        expect(content).toMatch(/merge-base HEAD main/);
+        expect(content).toMatch(/merge-base HEAD master/);
+        expect(content).toMatch(/Otherwise, find a base for a proper diff/i);
+      });
+    });
+
     it("forbids product-code edits and task-checkbox updates", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
@@ -1507,6 +1764,26 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(
         /<changeRoot>\/reports\/<YYYY-MM-DD>-adversarial-review\.md/,
       );
+    });
+
+    describe("explicit CE_DIFF_BASE/CE_DIFF_HEAD review range", () => {
+      it("uses three-dot diff semantics on the explicit range when both are present, and skips base-branch detection", async () => {
+        const content = await readTemplate();
+
+        expect(content).toContain("CE_DIFF_BASE");
+        expect(content).toContain("CE_DIFF_HEAD");
+        expect(content).toMatch(/git -C "\$CE_WORKTREE" diff "\$CE_DIFF_BASE\.\.\.\$CE_DIFF_HEAD"/);
+        expect(content).toMatch(/git -C "\$CE_WORKTREE" log --oneline "\$CE_DIFF_BASE\.\.\$CE_DIFF_HEAD"/);
+        expect(content).not.toMatch(/diff "\$CE_DIFF_BASE" "\$CE_DIFF_HEAD"/);
+      });
+
+      it("preserves the merge-base fallback for when CE_DIFF_BASE/CE_DIFF_HEAD are absent", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/merge-base HEAD main/);
+        expect(content).toMatch(/merge-base HEAD master/);
+        expect(content).toMatch(/Otherwise, find a base for a proper diff/i);
+      });
     });
 
     it("includes BLOCKER/MAJOR/MINOR severities and the three-way PASS/PASS WITH GAPS/FAIL verdict", async () => {

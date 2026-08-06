@@ -40,13 +40,19 @@ export async function runCli(): Promise<void> {
         "Create an isolated Git worktree and workspace for an issue, without",
         "touching the target repository, and provision an external OpenSpec",
         "store for it (registered globally by id, stored under the workspace",
-        "directory, never inside the target repository or worktree).",
+        "directory, never inside the target repository or worktree). By",
+        "default, the worktree starts from the local main/master tip. Pass",
+        "--base and --head together to instead review an exact commit range",
+        "(e.g. an existing pull request) -- both refs must already exist",
+        "locally; ce-harness never fetches automatically.",
       ].join(" "),
     )
     .argument("<repo>", "path to the target Git repository")
     .argument("<issue>", "issue identifier (e.g. an issue number or short slug)")
-    .action(async (repo: string, issue: string) => {
-      await run(() => startCommand({ repo, issue }));
+    .option("--base <ref>", "exact base ref/commit to review from (requires --head)")
+    .option("--head <ref>", "exact head ref/commit to review to (requires --base)")
+    .action(async (repo: string, issue: string, options: { base?: string; head?: string }) => {
+      await run(() => startCommand({ repo, issue, base: options.base, head: options.head }));
     });
 
   program

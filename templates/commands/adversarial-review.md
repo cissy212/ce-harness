@@ -121,9 +121,26 @@ git -C "$CE_WORKTREE" status --porcelain
 git -C "$CE_WORKTREE" log --oneline -20
 ```
 
-To find a base for a proper diff, try the common base-branch names in order
-(mirrors how `ce start` itself picks a base branch) and use whichever
-exists:
+If `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set, this is an explicit
+review of a specific commit range (e.g. an existing pull request, open or
+already merged) injected by `ce start --base --head` -- use them
+directly and skip base-branch detection entirely:
+
+```bash
+git -C "$CE_WORKTREE" log --oneline "$CE_DIFF_BASE..$CE_DIFF_HEAD"
+git -C "$CE_WORKTREE" diff "$CE_DIFF_BASE...$CE_DIFF_HEAD"
+```
+
+Use three-dot (`...`) for the diff itself, not two-dot: three-dot means
+"changes introduced on head since it diverged from base," which is
+correct whether or not base has since advanced (an open PR whose base
+branch moved forward is still a valid comparison). Use two-dot for the
+commit log, which lists exactly the commits unique to head. Derive the
+actual changed code from the three-dot diff, not from the log.
+
+Otherwise, find a base for a proper diff by trying the common
+base-branch names in order (mirrors how `ce start` itself picks a base
+branch when `--base`/`--head` are not given) and use whichever exists:
 
 ```bash
 git -C "$CE_WORKTREE" merge-base HEAD main    2>/dev/null
