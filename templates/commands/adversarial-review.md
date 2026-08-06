@@ -102,7 +102,7 @@ a prior `/verify` run), if any.
   missed -- this review's job is exactly the case where verify said
   everything was fine.
 - Record whatever you found in the "Verify Report Challenge" section of the
-  report (Step 7), even if your conclusion is "the prior verdict holds."
+  report (Step 9), even if your conclusion is "the prior verdict holds."
 
 **If none exists:** note this in the report and proceed to establish your
 own evidence from scratch (Step 5) -- do not skip the review because no
@@ -155,7 +155,56 @@ uncommitted diff only.
 
 Map files and changes to spec sections and tasks.
 
-## 6. Select a lens (if one clearly matches)
+## 6. Baseline adversarial pass (runner- and lens-independent)
+
+Perform this pass regardless of what domain the change touches, and
+before any lens is selected or applied. This is the review's generic
+floor -- a lens (Step 7) deepens it with additional domain-specific
+questions; it never replaces, shortcuts, or narrows it. A change is
+never reviewed through a lens alone.
+
+For every changed area and every meaningfully changed file in the diff,
+work through all seven of these:
+
+1. **Coverage of the change itself**: has every changed area and every
+   meaningfully changed file actually been read and reasoned about --
+   not just the file(s) that obviously relate to the stated intent?
+2. **Consistency across equivalent call sites**: if the change fixes,
+   guards, or alters behavior in one place, are there other call sites,
+   branches, or copies of the same logic that needed the same treatment
+   and were missed? A fix applied to only one of several equivalent
+   surfaces is a first-class finding, not a nitpick.
+3. **Integration and wiring between layers**: does the change actually
+   connect end to end (e.g. a new field that's written but never read, a
+   handler that's defined but never registered, a config flag that's
+   parsed but never consulted)? Trace the wiring; do not assume it.
+4. **Positive and negative test coverage**: are both the intended-success
+   path and realistic failure/abuse/edge paths exercised, not only the
+   happy path?
+5. **What the tests actually prove**: does a passing test demonstrate the
+   user-visible behavior the change claims to deliver, or does it only
+   assert an intermediate value or internal state that could pass while
+   the externally observable behavior is still wrong?
+6. **Regressions from partial or inconsistent rollout**: if the change is
+   staged, flagged, or only partially applied, can that partial state
+   itself produce incorrect or inconsistent behavior for some inputs,
+   users, or timing windows?
+7. **Undocumented scope changes**: does the diff do anything beyond what
+   the proposal/design/tasks describe -- an unrelated refactor, a
+   behavior change with no corresponding spec update, a dependency or
+   config change never mentioned?
+
+Record what you found for each of the seven, even when the answer is "no
+issue found" -- this becomes the "Baseline Review Coverage" section of
+the report (Step 9), independent of whichever lens (if any) is selected
+next.
+
+## 7. Select a lens (if one clearly matches)
+
+**A lens is an additional reasoning layer, not a filter that narrows the
+review to one domain.** It adds domain-specific questions and failure
+modes on top of the baseline pass in Step 6 -- it never substitutes for
+that baseline, and it never becomes the sole basis of the review.
 
 ce-harness -- not the runner -- owns lens selection. Never rely on the
 runner's own automatic skill or agent matching for this. Discover and
@@ -190,16 +239,19 @@ If a lens is selected, load its file as an ordinary reasoning input for
 the rest of this review -- exactly like `proposal.md`, `design.md`, or
 `tasks.md`. Do not spawn a subagent, delegate to another conversation, or
 treat it as a runner-specific skill/agent invocation; it is simply
-another document you have read. Apply it as an additional adversarial
-lens in the pass below (e.g. a pipeline lens sharpens the search for
-idempotency/concurrency/partial-failure defects; a backend lens sharpens
-the search for boundary, type-safety, and query defects).
+another document you have read. Apply it as an additional layer on top
+of the baseline pass already performed in Step 6 (e.g. a pipeline lens
+sharpens the search for idempotency/concurrency/partial-failure defects;
+a backend lens sharpens the search for boundary, type-safety, and query
+defects) -- it adds questions, it does not replace or narrow the ones
+Step 6 already covered.
 
-Record the outcome (selected lens or "None", the rationale, and which
-other lenses in `"$CE_LENSES_DIR"` were considered) for the "Lens
-Coverage" section of the report.
+Record the outcome (selected lens or "None", the rationale, which other
+lenses in `"$CE_LENSES_DIR"` were considered, and what the lens added
+beyond the Step 6 baseline) for the "Lens Coverage" section of the
+report.
 
-## 7. Adversarial pass (refute, do not rubber-stamp)
+## 8. Adversarial pass (refute, do not rubber-stamp)
 
 For each acceptance criterion or scenario:
 
@@ -215,33 +267,77 @@ For each acceptance criterion or scenario:
 5. Look for missing edge cases, regressions relative to what existed
    before, incomplete implementation (partially done tasks or scenarios),
    unsafe behavior, and spec/code drift.
+6. Fold in whatever the Step 6 baseline pass and the Step 7 lens (if any)
+   surfaced -- this step is where every finding from every source gets
+   classified, not just what's found fresh here.
 
-Classify each finding along three independent axes -- Severity, Area, and
-Confidence are not the same thing, and a finding can be high-severity and
-low-confidence (or the reverse):
+### Classify each finding
 
-**Severity:**
-- **BLOCKER**: incorrect behavior, security/privacy issue, or spec
-  violation that should stop archive.
-- **MAJOR**: likely bug or significant gap; fix or spec update required
-  before archive.
-- **MINOR**: clarity, maintainability, or low-risk gap; can follow up.
+Four independent axes. A finding can be high-severity and low-confidence
+(or the reverse); Merge impact is a separate question from Severity, not
+a restatement of it (see below).
+
+**Severity** -- how technically serious the problem is, on its own terms:
+- **BLOCKER**: critical impact, or a change that cannot safely merge
+  under any reasonable interpretation. Examples: a confirmed
+  authentication/authorization bypass, secret exposure, destructive data
+  corruption, or a directly exploitable critical path.
+- **MAJOR**: substantial correctness, security, data-integrity, or
+  regression risk that should normally be fixed before merge -- but is
+  not automatically a critical or systemic failure.
+- **MINOR**: limited impact, robustness, maintainability, or
+  test-coverage gap that does not invalidate the change's central
+  behavior.
+
+**Confidence** -- how well-evidenced the finding is (kept separate from
+Severity):
+- **High** -- demonstrated by concrete code flow, exact file/line
+  evidence, a test failure, command output, or measured behavior.
+- **Medium** -- strongly supported by code reading, but one relevant
+  runtime/data-flow assumption remains unverified.
+- **Low** -- plausible but speculative; must not be presented as a
+  confirmed defect.
+
+**Merge impact** -- whether this specific finding, for this specific
+change, should gate merge. This is not a synonym for Severity: a
+BLOCKER-severity finding on a pre-existing, out-of-scope issue still
+does not block *this* change's merge, because this change didn't cause
+it and doesn't depend on it (see Step 9's two-table split, below).
+**Do not use BLOCKER merely as a synonym for "please fix before merge"**
+-- Severity and Merge impact answer different questions.
+- **Blocking** -- this finding, on its own, means the change must not
+  merge as-is.
+- **Non-blocking** -- does not block merge by itself, but should be
+  addressed, normally before merge or immediately after if the risk is
+  explicitly accepted.
+- **Follow-up** -- does not need to gate this change at all; track it
+  separately.
 
 **Area** (pick exactly one; use `Other: <label>` if none fit):
 Logic, Auth/Authz, Data integrity, Error handling, Tests, Spec conformance,
 Security, Performance, Docs/Spec, Other: `<label>`.
 
-**Confidence** (kept separate from Severity):
-- **High** -- supported by concrete evidence such as file and line
-  references, measured output, or a failing test.
-- **Medium** -- supported by code reading and reasoning but not yet
-  verified by execution.
-- **Low** -- plausible based on pattern recognition but still speculative.
-
 For each finding, state whether the fix belongs in **code**, **tests**,
 **OpenSpec artifacts** (scenarios, specs, tasks), or **documentation**.
 
-## 8. Write the report
+### Sort each finding into exactly one of two groups
+
+**Findings affecting this change** -- a finding belongs here when the
+change:
+- introduces it;
+- worsens it;
+- claims to fix the same behavior/class of problem but misses an
+  in-scope equivalent surface;
+- depends on the flawed behavior for correctness.
+
+**Pre-existing or adjacent issues** -- everything else: a real issue,
+worth recording, that this change did not introduce, does not worsen,
+and does not depend on. These still carry a genuine Severity and
+Confidence, but their Merge impact is normally `Follow-up`. Do not let a
+repository-wide adjacent issue silently turn a focused review of this
+change into a full-system audit -- note it, classify it, and move on.
+
+## 9. Write the report
 
 Resolve the report destination from `changeRoot` (never construct it by
 hand):
@@ -284,12 +380,25 @@ other file inside the target repository or its Git worktree.
 
 ---
 
+## Baseline Review Coverage
+
+<!-- The runner- and lens-independent pass from Step 6. This is what every review establishes before any lens contributes anything. -->
+
+- **Changed areas examined:** <every changed area/file actually read and reasoned about>
+- **Equivalent call sites checked:** <what else does the same thing, and whether it needed the same treatment, or "N/A -- no equivalent call sites found">
+- **Tests inspected:** <which tests were read, and whether they prove the user-visible behavior or only an intermediate value>
+- **Integration boundaries traced:** <what wiring/integration points were traced end to end>
+- **Gaps or inaccessible evidence:** <anything that could not be checked and why, or "None">
+
+---
+
 ## Lens Coverage
 
 **Lens applied:** <name from $CE_LENSES_DIR, or "None">
 **Selection rationale:** <why this one was selected, or why none was, in 1-3 sentences>
 **Other lenses considered:** <other lens names found in $CE_LENSES_DIR, or "None found">
 **Lens checks applied:** <the "Lens checks" list from the selected lens's file, or "N/A">
+**Additional checks beyond the baseline pass:** <what this lens surfaced that the Step 6 baseline pass alone would not have, or "N/A -- no lens applied">
 
 ---
 
@@ -305,17 +414,27 @@ other file inside the target repository or its Git worktree.
 
 ---
 
-## Findings
+## Findings Affecting This Change
 
-| Severity | Area | Confidence | Affected Requirement/Design/Task | Finding | Evidence | Impact | Recommended Fix |
-|---|---|---|---|---|---|---|---|
-| BLOCKER / MAJOR / MINOR | Logic / Auth-Authz / Data integrity / Error handling / Tests / Spec conformance / Security / Performance / Docs-Spec / Other: `<label>` | High / Medium / Low | <requirement, design decision, or task> | <what you found> | <file:line, diff hunk, test output> | <what happens if unaddressed> | code / spec / tests / docs |
+<!-- A finding belongs here only if this change introduces it, worsens it, claims to fix the same behavior/class of problem but misses an in-scope equivalent surface, or depends on the flawed behavior for correctness. This table alone determines the Overall Verdict. -->
+
+| Severity | Confidence | Merge impact | Area | Affected Requirement/Design/Task | Finding | Evidence | Impact | Recommended Fix |
+|---|---|---|---|---|---|---|---|---|
+| BLOCKER / MAJOR / MINOR | High / Medium / Low | Blocking / Non-blocking / Follow-up | Logic / Auth-Authz / Data integrity / Error handling / Tests / Spec conformance / Security / Performance / Docs-Spec / Other: `<label>` | <requirement, design decision, or task> | <what you found> | <file:line, diff hunk, test output> | <what happens if unaddressed> | code / spec / tests / docs |
+
+Or, if none: "None found."
 
 ---
 
-## Pre-Existing Issues Noticed
+## Pre-Existing or Adjacent Issues
 
-<bullet list of issues that predate this change and aren't caused by it, or "None noticed.">
+<!-- Real issues this change did not introduce, does not worsen, and does not depend on. These never determine the Overall Verdict on their own -- Merge impact here is normally Follow-up. Do not let a repository-wide issue turn this into a full-system audit. -->
+
+| Severity | Confidence | Area | Issue | Evidence | Why it is outside this change | Suggested follow-up |
+|---|---|---|---|---|---|---|
+| BLOCKER / MAJOR / MINOR | High / Medium / Low | Logic / Auth-Authz / Data integrity / Error handling / Tests / Spec conformance / Security / Performance / Docs-Spec / Other: `<label>` | <what you found> | <file:line, diff hunk, test output> | <why this predates or is unrelated to the change> | <what should happen, tracked separately from this review> |
+
+Or, if none: "None noticed."
 
 ---
 
@@ -323,16 +442,31 @@ other file inside the target repository or its Git worktree.
 
 PASS
 
-**Reason:** No blockers or majors found.
+**Reason:** No Blocking or Non-blocking findings affecting this change.
 ```
 
+The verdict is derived **only** from the "Findings Affecting This Change"
+table -- pre-existing/adjacent issues never determine it on their own.
 Use exactly one of these three verdict tokens, with a `**Reason:**` line
 after it:
-- `PASS` -- no `BLOCKER` or `MAJOR` findings; `MINOR`s may be listed.
-- `PASS WITH GAPS` -- `MINOR` findings only; no `BLOCKER` or `MAJOR`.
-- `FAIL` -- at least one `BLOCKER` or `MAJOR` finding.
+- `FAIL` -- at least one finding affecting this change has Merge impact
+  `Blocking`, or the change's central behavior is not safe or correct
+  (this can be true even without a single finding individually tagged
+  `Blocking`, if the accumulated evidence shows the core behavior fails).
+- `PASS WITH GAPS` -- no `Blocking` findings affecting this change, but
+  one or more `Non-blocking` findings, incomplete verification, or
+  meaningful limitations remain.
+- `PASS` (adversarial) -- no `Blocking` or `Non-blocking` findings
+  affecting this change; any pre-existing/adjacent issues are listed
+  with Merge impact `Follow-up` only; the review was completed with
+  adequate evidence.
 
-## 9. Report back (no automatic fixes)
+Pre-existing or adjacent issues, on their own, must never cause `FAIL` --
+if every finding lives only in the "Pre-Existing or Adjacent Issues"
+table, the verdict is `PASS` or `PASS WITH GAPS`, decided purely by
+whatever remains (if anything) in "Findings Affecting This Change."
+
+## 10. Report back (no automatic fixes)
 
 After writing the report, tell the user its path (inside the external
 store) and the overall verdict. You may **suggest** fixes for any findings
@@ -346,8 +480,8 @@ separate, explicit step.
   and `artifactPaths` from the CLI's JSON output.
 - Never invent a finding you don't have evidence for -- every finding must
   state the affected requirement/design decision/task, its impact, its
-  Area, its Confidence, and a recommended fix. Evidence discipline is
-  mandatory:
+  Area, its Confidence, its Merge impact, and a recommended fix. Evidence
+  discipline is mandatory:
   - cite concrete file paths and line ranges where available;
   - cite diff hunks, commands, logs, or test output where relevant;
   - **Avoid vague references.**
@@ -356,6 +490,20 @@ separate, explicit step.
   - missing or unobtainable evidence must be reported as an uncertainty
     (Low/Medium confidence, or an open question) -- never converted into a
     defect finding just because you couldn't rule it out.
+- The Step 6 baseline pass is mandatory and runner-/lens-independent --
+  never skip it or fold it silently into the lens's own questions. A
+  selected lens (Step 7) only ever adds to it.
+- Severity, Confidence, and Merge impact are three independent
+  judgments, not restatements of each other. **Do not use `BLOCKER`
+  merely as a synonym for "please fix before merge"** -- a finding can be
+  high-Severity with a `Follow-up` Merge impact (e.g. a real but
+  pre-existing issue), and a `MINOR`-Severity finding can still be
+  `Blocking` if it directly undermines the change's specific claim.
+- Every finding must be sorted into exactly one of "Findings Affecting
+  This Change" or "Pre-Existing or Adjacent Issues" -- never a single
+  merged list. Pre-existing/adjacent issues alone must never produce a
+  `FAIL` verdict, and must not be allowed to expand a focused review of
+  this change into a full-system audit.
 - Do not duplicate the full verification pass when a recent verify report
   already exists and is trustworthy for a given item -- reuse it, but
   actively challenge its assumptions, gaps, blocked items, and PASS verdict
@@ -374,7 +522,8 @@ separate, explicit step.
   an explicit step this command owns.
 - A selected lens is loaded as an ordinary reasoning input (like
   `proposal.md` or `tasks.md`) -- never spawned as a subagent and never
-  delegated to as a separate conversation.
+  delegated to as a separate conversation. A lens is an additional
+  reasoning layer, never a filter that narrows the review to one domain.
 - Do not praise the implementation to "balance" criticism unless a strength
   directly mitigates a documented risk (use the optional Risk-Mitigating
   Observations section for that, never as filler in Findings).

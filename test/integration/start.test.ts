@@ -1798,15 +1798,15 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/`FAIL`/);
     });
 
-    it("requires evidence, impact, area, and confidence for every finding, with a dedicated findings table", async () => {
+    it("requires evidence, impact, area, confidence, and merge impact for every in-change finding, with a dedicated findings table", async () => {
       const content = await readTemplate();
 
       expect(content).toMatch(
-        /\| Severity \| Area \| Confidence \| Affected Requirement\/Design\/Task \| Finding \| Evidence \| Impact \| Recommended Fix \|/,
+        /\| Severity \| Confidence \| Merge impact \| Area \| Affected Requirement\/Design\/Task \| Finding \| Evidence \| Impact \| Recommended Fix \|/,
       );
       expect(content).toMatch(/never invent a finding you don't have evidence for/i);
       expect(content).toMatch(
-        /state the affected\s*requirement\/design decision\/task, its impact, its\s*Area, its Confidence, and a recommended fix/i,
+        /state the affected\s*requirement\/design decision\/task, its impact, its\s*Area, its Confidence, its Merge impact, and a recommended fix/i,
       );
     });
 
@@ -1916,7 +1916,7 @@ describe("ce start (integration)", () => {
         expect(content).toMatch(/do not spawn a subagent/i);
       });
 
-      it("includes a '## Lens Coverage' report section with all four required fields", async () => {
+      it("includes a '## Lens Coverage' report section with all five required fields", async () => {
         const content = await readTemplate();
 
         expect(content).toMatch(/## Lens Coverage/);
@@ -1924,12 +1924,232 @@ describe("ce start (integration)", () => {
         expect(content).toMatch(/\*\*Selection rationale:\*\*/);
         expect(content).toMatch(/\*\*Other lenses considered:\*\*/);
         expect(content).toMatch(/\*\*Lens checks applied:\*\*/);
+        expect(content).toMatch(/\*\*Additional checks beyond the baseline pass:\*\*/);
       });
 
       it('never uses "specialist" terminology anywhere in the operational body', async () => {
         const content = await readTemplate();
 
         expect(content).not.toMatch(/specialist/i);
+      });
+    });
+
+    describe("Baseline adversarial pass (mandatory, runner- and lens-independent)", () => {
+      it("appears before lens selection and covers all seven required checks", async () => {
+        const content = await readTemplate();
+
+        const baselineIdx = content.indexOf("Baseline adversarial pass");
+        const lensSelectIdx = content.indexOf("Select a lens");
+        expect(baselineIdx).toBeGreaterThan(-1);
+        expect(lensSelectIdx).toBeGreaterThan(-1);
+        expect(baselineIdx).toBeLessThan(lensSelectIdx);
+
+        expect(content).toMatch(/Coverage of the change itself/i);
+        expect(content).toMatch(/Consistency across equivalent call sites/i);
+        expect(content).toMatch(/Integration and wiring between layers/i);
+        expect(content).toMatch(/Positive and negative test coverage/i);
+        expect(content).toMatch(/What the tests actually prove/i);
+        expect(content).toMatch(/Regressions from partial or inconsistent rollout/i);
+        expect(content).toMatch(/Undocumented scope changes/i);
+      });
+
+      it("states the baseline pass is mandatory, runner-/lens-independent, and never skipped or folded into a lens", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /the Step 6 baseline pass is mandatory and runner-\/lens-independent/i,
+        );
+        expect(normalized).toMatch(/never skip it or fold it silently into the lens/i);
+        expect(content).toMatch(/A change is\s*never reviewed through a lens alone/i);
+      });
+
+      it("frames a lens as an additive layer, not a filter that narrows the review to one domain", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(
+          /A lens is an additional reasoning layer, not a filter that narrows the\s*review to one domain/,
+        );
+        expect(content).toMatch(
+          /A lens is an additional\s*reasoning layer, never a filter that narrows the review to one domain/,
+        );
+        expect(content).toMatch(/it never replaces, shortcuts, or narrows it/i);
+      });
+
+      it("feeds baseline findings into a dedicated 'Baseline Review Coverage' report section with all five fields", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/## Baseline Review Coverage/);
+        expect(content).toMatch(/\*\*Changed areas examined:\*\*/);
+        expect(content).toMatch(/\*\*Equivalent call sites checked:\*\*/);
+        expect(content).toMatch(/\*\*Tests inspected:\*\*/);
+        expect(content).toMatch(/\*\*Integration boundaries traced:\*\*/);
+        expect(content).toMatch(/\*\*Gaps or inaccessible evidence:\*\*/);
+
+        const baselineSectionIdx = content.indexOf("## Baseline Review Coverage");
+        const lensSectionIdx = content.indexOf("## Lens Coverage");
+        expect(baselineSectionIdx).toBeGreaterThan(-1);
+        expect(lensSectionIdx).toBeGreaterThan(-1);
+        expect(baselineSectionIdx).toBeLessThan(lensSectionIdx);
+      });
+    });
+
+    describe("Four-axis classification (Severity / Confidence / Merge impact / Area)", () => {
+      it("defines Severity, Confidence, and Merge impact as independent axes, warning against collapsing them", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/Four independent axes/i);
+        expect(normalized).toMatch(
+          /Severity, Confidence, and Merge impact are three independent\s*judgments, not restatements of each other/i,
+        );
+        expect(normalized).toMatch(
+          /a finding can be high-Severity with a `Follow-up` Merge impact/i,
+        );
+        expect(normalized).toMatch(
+          /a `MINOR`-Severity finding can still be\s*`Blocking`/i,
+        );
+      });
+
+      it("guards against using BLOCKER as a synonym for 'please fix before merge'", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+        const matches = normalized.match(
+          /\*\*Do not use `?BLOCKER`? merely as a synonym for "please fix before merge"\*\*/g,
+        );
+
+        // Stated at least twice: once in the classification step, once in
+        // the guardrails list.
+        expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+      });
+
+      it("defines the Merge impact enum as exactly Blocking / Non-blocking / Follow-up", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/\*\*Merge impact\*\*/);
+        expect(content).toMatch(/\*\*Blocking\*\* -- this finding, on its own/);
+        expect(content).toMatch(/\*\*Non-blocking\*\* -- does not block merge by itself/);
+        expect(content).toMatch(/\*\*Follow-up\*\* -- does not need to gate this change at all/);
+      });
+
+      it("keeps Severity defined as BLOCKER/MAJOR/MINOR with the original impact-based criteria", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/\*\*BLOCKER\*\*: critical impact/);
+        expect(content).toMatch(/\*\*MAJOR\*\*: substantial correctness/);
+        expect(content).toMatch(/\*\*MINOR\*\*: limited impact/);
+      });
+
+      it("keeps Confidence defined as High/Medium/Low with unchanged evidentiary criteria", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/\*\*High\*\* -- demonstrated by concrete code flow/);
+        expect(content).toMatch(/\*\*Medium\*\* -- strongly supported by code reading/);
+        expect(content).toMatch(/\*\*Low\*\* -- plausible but speculative/);
+      });
+    });
+
+    describe("Two-table finding split (in-change vs pre-existing/adjacent)", () => {
+      it("sorts every finding into exactly one of two named groups with explicit membership criteria", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/Sort each finding into exactly one of two groups/i);
+        expect(content).toMatch(/\*\*Findings affecting this change\*\* -- a finding belongs here when the\s*change:/i);
+        expect(content).toMatch(/\*\*Pre-existing or adjacent issues\*\* -- everything else/i);
+      });
+
+      it("includes a '## Findings Affecting This Change' table that alone determines the verdict", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/## Findings Affecting This Change/);
+        expect(content).toMatch(/This table alone determines the Overall Verdict/i);
+        expect(content).toMatch(
+          /\| Severity \| Confidence \| Merge impact \| Area \| Affected Requirement\/Design\/Task \| Finding \| Evidence \| Impact \| Recommended Fix \|/,
+        );
+        expect(content).toMatch(/Or, if none: "None found\."/);
+      });
+
+      it("includes a '## Pre-Existing or Adjacent Issues' table that never determines the verdict on its own", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/## Pre-Existing or Adjacent Issues/);
+        expect(content).toMatch(/These never determine the Overall Verdict on their own/i);
+        expect(content).toMatch(
+          /\| Severity \| Confidence \| Area \| Issue \| Evidence \| Why it is outside this change \| Suggested follow-up \|/,
+        );
+        expect(content).toMatch(/Or, if none: "None noticed\."/);
+      });
+
+      it("never lets pre-existing/adjacent issues cause FAIL or expand into a full-system audit", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Pre-existing or adjacent issues, on their own, must never cause `FAIL`/i,
+        );
+        expect(normalized).toMatch(
+          /must not be allowed to expand a focused review of\s*this change into a full-system audit/i,
+        );
+        expect(normalized).toMatch(
+          /Do not let a\s*repository-wide adjacent issue silently turn a focused review of this\s*change into a full-system audit/i,
+        );
+      });
+    });
+
+    describe("Verdict rules derived only from in-change findings", () => {
+      it("states the verdict is derived only from the Findings Affecting This Change table", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /The verdict is derived \*\*only\*\* from the "Findings Affecting This Change"\s*table/i,
+        );
+      });
+
+      it("defines FAIL, PASS WITH GAPS, and PASS (adversarial) using exactly the PASS/PASS WITH GAPS/FAIL tokens", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`FAIL` -- at least one finding affecting this change has Merge impact\s*`Blocking`/i,
+        );
+        expect(normalized).toMatch(
+          /`PASS WITH GAPS` -- no `Blocking` findings affecting this change, but/i,
+        );
+        expect(normalized).toMatch(
+          /`PASS` \(adversarial\) -- no `Blocking` or `Non-blocking` findings/i,
+        );
+
+        // The emitted verdict token itself must remain exactly one of the
+        // original three-way vocabulary shared with /verify -- "(adversarial)"
+        // is prose clarification only, never part of the token written into
+        // the report body.
+        expect(content).toMatch(/^PASS$/m);
+      });
+    });
+
+    describe("Preserved mindset and evidence guardrails", () => {
+      it("keeps the assume-flaws-until-evidence framing and red-team mindset intact", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(
+          /independent adversarial reviewer/i,
+        );
+        expect(content).toMatch(
+          /Assume gaps, flaws, regressions, or unsafe behavior may exist/i,
+        );
+        expect(content).toMatch(/Try to break the implementation/i);
+        expect(content).toMatch(/Never invent findings merely to appear adversarial/i);
+      });
+
+      it("keeps the Area taxonomy and file/line evidence discipline intact", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(
+          /Logic, Auth\/Authz, Data integrity, Error handling, Tests, Spec conformance,\s*Security, Performance, Docs\/Spec, Other:/,
+        );
+        expect(content).toMatch(/cite concrete file paths and line ranges where available/i);
+        expect(content).toMatch(/Avoid vague references\./);
       });
     });
   });
