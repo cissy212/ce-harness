@@ -100,41 +100,24 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 **Change:** <change-name>
 **Schema:** <schema-name>
 **Archived to:** the archive path derived from `planningHome.changesDir`/YYYY-MM-DD-<name>/
-**Specs:** ✓ Synced to main specs
-
-All artifacts complete. All tasks complete.
-```
-
-**Output On Success (No Delta Specs)**
-
-```
-## Archive Complete
-
-**Change:** <change-name>
-**Schema:** <schema-name>
-**Archived to:** the archive path derived from `planningHome.changesDir`/YYYY-MM-DD-<name>/
-**Specs:** No delta specs
-
-All artifacts complete. All tasks complete.
-```
-
-**Output On Success With Warnings**
-
-```
-## Archive Complete (with warnings)
-
-**Change:** <change-name>
-**Schema:** <schema-name>
-**Archived to:** the archive path derived from `planningHome.changesDir`/YYYY-MM-DD-<name>/
-**Specs:** Sync skipped (user chose to skip)
+**Specs:** ✓ Synced to main specs / No delta specs / Sync skipped (user chose to skip)
 
 **Warnings:**
-- Archived with 2 incomplete artifacts
-- Archived with 3 incomplete tasks
+- Archived with N incomplete artifacts
+- Archived with N incomplete tasks
 - Delta spec sync was skipped (user chose to skip)
 
-Review the archive if this was not intentional.
+All artifacts complete. All tasks complete.
 ```
+
+Show whichever single **Specs** value actually applies -- never all
+three. Include the **Warnings** section, listing only the specific
+warnings that actually apply, only when at least one holds (incomplete
+artifacts, incomplete tasks, or a skipped sync); omit the section
+entirely when none apply. When the **Warnings** section is present,
+change the heading to `## Archive Complete (with warnings)` and use
+"Review the archive if this was not intentional." as the closing line
+instead of "All artifacts complete. All tasks complete."
 
 **Output On Error (Archive Exists)**
 

@@ -237,6 +237,31 @@ external service, or credential), mark that check as `BLOCKED` and state the
 specific reason. Do not skip -- a `BLOCKED` result in the report is
 informative; a missing result is not.
 
+**Handling large output:**
+- Always preserve the exact **exit code** of each command -- this is what
+  `PASS`/`FAIL`/`BLOCKED` is ultimately based on.
+- Always preserve the **final test/check summary line(s) verbatim** (e.g.
+  "12 passed, 1 failed", a linter's total-error count, a compiler's final
+  diagnostic count).
+- Always preserve **every failure/error line, and any surrounding context
+  needed to diagnose it** (the failing test's name, the assertion that
+  failed, the stack frame that points at your own code).
+- Passing-test noise and repetitive successful output (e.g. hundreds of
+  identical "✓ passed" lines) may be omitted once the summary line and
+  exit code are preserved -- they add no additional evidence.
+- If the reduced output is ambiguous -- you cannot tell from the summary
+  and preserved failure lines alone whether the command actually passed,
+  or a failure's cause is unclear -- retrieve and inspect the full raw
+  output before concluding anything. Never guess to avoid re-reading.
+- **Never** apply this kind of reduction to Git diffs, `openspec` JSON
+  output, merge-base commit SHAs, or any source line you are about to
+  cite as evidence -- read and quote those exactly as produced, never
+  summarized or reinterpreted.
+- Reports must always cite the raw, reproducible evidence itself (the
+  exact failing line, the exact exit code, the exact command run) --
+  never your own compressed summary of it, and never a compression
+  tool's interpretation presented as if it were the original output.
+
 ## 9. Write the report
 
 Resolve the report destination from `changeRoot` (never construct it by
