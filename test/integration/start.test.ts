@@ -1414,6 +1414,127 @@ describe("ce start (integration)", () => {
     });
   });
 
+  describe("composition-patterns skill", () => {
+    const RULE_FILENAMES = [
+      "architecture-avoid-boolean-props.md",
+      "architecture-compound-components.md",
+      "patterns-children-over-render-props.md",
+      "patterns-explicit-variants.md",
+      "react19-no-forwardref.md",
+      "state-context-interface.md",
+      "state-decouple-implementation.md",
+      "state-lift-state.md",
+    ];
+
+    it("recursively copies SKILL.md and every rules/*.md file into <workspace>/opencode/skills/composition-patterns/, byte-for-byte", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const { readFile } = await import("node:fs/promises");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedSkillDir = join(
+        workspace.workspacePath,
+        "opencode",
+        "skills",
+        "composition-patterns",
+      );
+      const sourceSkillDir = join(templatesRoot(), "skills", "composition-patterns");
+
+      const copiedSkillMd = join(copiedSkillDir, "SKILL.md");
+      const sourceSkillMd = join(sourceSkillDir, "SKILL.md");
+      expect(existsSync(copiedSkillMd)).toBe(true);
+      expect(await readFile(copiedSkillMd, "utf8")).toBe(await readFile(sourceSkillMd, "utf8"));
+
+      for (const filename of RULE_FILENAMES) {
+        const copiedRulePath = join(copiedSkillDir, "rules", filename);
+        const sourceRulePath = join(sourceSkillDir, "rules", filename);
+        expect(existsSync(copiedRulePath)).toBe(true);
+        expect(await readFile(copiedRulePath, "utf8")).toBe(await readFile(sourceRulePath, "utf8"));
+      }
+    });
+
+    it("includes required name/description/license frontmatter fields", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(
+        join(templatesRoot(), "skills", "composition-patterns", "SKILL.md"),
+        "utf8",
+      );
+
+      expect(content).toMatch(/^---\n/);
+      expect(content).toMatch(/^name: vercel-composition-patterns$/m);
+      expect(content).toMatch(/^description:\s*$/m);
+      expect(content).toMatch(/^license: MIT$/m);
+    });
+
+    it("carries no runner-specific tool coupling or ce-harness-specific env vars (pure reference content)", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const sourceSkillDir = join(templatesRoot(), "skills", "composition-patterns");
+
+      const skillContent = await readFile(join(sourceSkillDir, "SKILL.md"), "utf8");
+      for (const filename of RULE_FILENAMES) {
+        const ruleContent = await readFile(join(sourceSkillDir, "rules", filename), "utf8");
+        expect(ruleContent).not.toMatch(/CE_[A-Z_]+/);
+        expect(ruleContent).not.toMatch(/openspec/i);
+        expect(ruleContent).not.toMatch(/\$CE_WORKTREE|\$CE_OPENSPEC_STORE/);
+      }
+      expect(skillContent).not.toMatch(/CE_[A-Z_]+/);
+      expect(skillContent).not.toMatch(/openspec/i);
+    });
+
+    it("records provenance in THIRD_PARTY_NOTICES.md and carries the standard trailing reference line", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const skillContent = await readFile(
+        join(templatesRoot(), "skills", "composition-patterns", "SKILL.md"),
+        "utf8",
+      );
+      expect(skillContent).toMatch(/THIRD_PARTY_NOTICES\.md/);
+
+      const noticesPath = join(templatesRoot(), "..", "THIRD_PARTY_NOTICES.md");
+      const notices = await readFile(noticesPath, "utf8");
+      expect(notices).toMatch(/templates\/skills\/composition-patterns\/SKILL\.md/);
+      expect(notices).toMatch(/vercel-labs\/agent-skills/);
+      expect(notices).toMatch(/License: MIT/);
+    });
+
+    it("does not vendor upstream authoring/build artifacts not needed at runtime", async () => {
+      const sourceSkillDir = join(
+        (await import("../../src/core/templates.js")).templatesRoot(),
+        "skills",
+        "composition-patterns",
+      );
+
+      for (const unwanted of [
+        "AGENTS.md",
+        "README.md",
+        "metadata.json",
+        join("rules", "_sections.md"),
+        join("rules", "_template.md"),
+      ]) {
+        expect(existsSync(join(sourceSkillDir, unwanted))).toBe(false);
+      }
+    });
+
+    it("never places the skill inside the target repository or worktree", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      expect(existsSync(join(repoDir, "composition-patterns"))).toBe(false);
+      expect(existsSync(join(worktreePath, "composition-patterns"))).toBe(false);
+      expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
+      expect(readdirSync(worktreePath).sort()).toEqual([".git", "README.md"]);
+    });
+  });
+
   describe("/verify command template", () => {
     it("copies templates/commands/verify.md into <workspace>/opencode/commands/, byte-for-byte", async () => {
       const { startCommand } = await import("../../src/commands/start.js");
