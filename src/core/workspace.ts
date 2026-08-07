@@ -203,3 +203,18 @@ export function resolveTrustedOpenSpec(workspace: Workspace): OpenSpecMetadata |
 
   return persisted;
 }
+
+export type WorkspaceType = "Implementation" | "Existing PR review";
+
+/**
+ * Whether this workspace is implementing an OpenSpec change (the default
+ * flow) or reviewing an existing, already-given commit range (`ce start
+ * --base --head`). Derived entirely from the existing `diffBase`/`diffHead`
+ * fields -- the same ones that gate `CE_DIFF_BASE`/`CE_DIFF_HEAD` at
+ * launch and the "Review base/head" fields in `ce status` -- so this
+ * never introduces a second, separately-maintained source of truth for
+ * the same fact.
+ */
+export function workspaceType(workspace: Workspace): WorkspaceType {
+  return workspace.diffBase && workspace.diffHead ? "Existing PR review" : "Implementation";
+}

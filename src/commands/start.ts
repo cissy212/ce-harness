@@ -141,8 +141,24 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
   const existingActive = await readActivePointer();
   if (existingActive) {
     throw new CeError(
-      `A workspace is already active for project "${existingActive.project}", issue "${existingActive.sanitizedIssue}".`,
-      "Run `ce cleanup` to finish the active task before starting a new one.",
+      [
+        "A workspace is already active.",
+        "",
+        "Active workspace:",
+        `  Project: ${existingActive.project}`,
+        `  Issue:   ${existingActive.sanitizedIssue}`,
+      ].join("\n"),
+      [
+        "Useful commands:",
+        "",
+        "  ce status",
+        "      Show workspace details.",
+        "",
+        "  ce cleanup",
+        "      Remove the active workspace.",
+        "",
+        "Then retry `ce start` with the same arguments.",
+      ].join("\n"),
     );
   }
   if (existsSync(worktreePath)) {

@@ -318,6 +318,46 @@ describe("ce status (integration)", () => {
       expect(output).not.toMatch(/Review merge base:/);
     });
   });
+
+  describe("Workspace type reporting", () => {
+    it('reports "Workspace type: Implementation" for the default flow', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Workspace type:\s+Implementation/);
+      expect(output).not.toMatch(/Existing PR review/);
+    });
+
+    it('reports "Workspace type: Existing PR review" for an explicit --base/--head workspace', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { execa } = await import("execa");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "feature.txt"), "new feature\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "feature commit"]);
+      const headSha = (await execa("git", ["-C", repoDir, "rev-parse", "feature"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: headSha });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Workspace type:\s+Existing PR review/);
+    });
+  });
 });
 
 function basenameOf(path: string): string {

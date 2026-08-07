@@ -23,9 +23,27 @@ OpenSpec store.
 
 ## 0. Guard
 
-If `CE_OPENSPEC_STORE` or `CE_WORKTREE` is empty or unset, stop and tell the
-user to run `ce start` first -- there is no store or worktree to verify
-against. Every `openspec` command below includes
+If `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set, this workspace was
+created with `ce start --base --head` to review an existing, already-given
+commit range (e.g. an external pull request) -- it is not implementing an
+OpenSpec change. Stop immediately, before running any command, and tell
+the user:
+
+> This workspace is reviewing an existing commit range
+> (`$CE_DIFF_BASE`..`$CE_DIFF_HEAD`), not an implementation produced from
+> an OpenSpec change. `/verify` checks conformance against the artifacts
+> of an OpenSpec change (proposal, design, specs, tasks) -- there is no
+> such implementation here to verify, only the auxiliary OpenSpec change
+> this workspace generated for its own exploration. `/adversarial-review`
+> is the correct command for reviewing an external commit range directly.
+
+Do not attempt any partial verification in this case -- no `openspec`
+command, no diff inspection, no report. Stop entirely and take no further
+action.
+
+Otherwise, if `CE_OPENSPEC_STORE` or `CE_WORKTREE` is empty or unset, stop
+and tell the user to run `ce start` first -- there is no store or worktree
+to verify against. Every `openspec` command below includes
 `--store "$CE_OPENSPEC_STORE"`. All code inspection happens only inside
 `$CE_WORKTREE`.
 

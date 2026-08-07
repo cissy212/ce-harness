@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import { branchExists, statusPorcelain } from "../core/git.js";
-import { readActivePointer, readWorkspace, resolveTrustedOpenSpec } from "../core/workspace.js";
+import {
+  readActivePointer,
+  readWorkspace,
+  resolveTrustedOpenSpec,
+  workspaceType,
+} from "../core/workspace.js";
 import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
 import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
 import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
@@ -32,6 +37,7 @@ export async function statusCommand(): Promise<void> {
 
   console.log(`Project:          ${workspace.project}`);
   console.log(`Issue:            ${workspace.issue}`);
+  console.log(`Workspace type:   ${workspaceType(workspace)}`);
   console.log(`Repository path:  ${workspace.repositoryPath}`);
   console.log(`Base branch:      ${workspace.baseBranch}`);
   console.log(`Internal branch:  ${workspace.internalBranch}`);

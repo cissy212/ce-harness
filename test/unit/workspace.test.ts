@@ -323,3 +323,28 @@ describe("workspace serialization and validation", () => {
     ).toBe(true);
   });
 });
+
+describe("workspaceType", () => {
+  const base = {
+    project: "demo",
+    repositoryPath: "/tmp/demo",
+    issue: "issue-1",
+    sanitizedIssue: "issue-1",
+    baseBranch: "main",
+    internalBranch: "ce-harness/issue-1",
+    worktreePath: "/tmp/wt",
+    workspacePath: "/tmp/ws",
+    createdAt: new Date().toISOString(),
+  };
+
+  it('is "Implementation" when diffBase/diffHead are absent (the default flow)', async () => {
+    const { workspaceType } = await import("../../src/core/workspace.js");
+    expect(workspaceType(base)).toBe("Implementation");
+  });
+
+  it('is "Existing PR review" when both diffBase and diffHead are present', async () => {
+    const { workspaceType } = await import("../../src/core/workspace.js");
+    const workspace = { ...base, diffBase: "a".repeat(40), diffHead: "b".repeat(40) };
+    expect(workspaceType(workspace)).toBe("Existing PR review");
+  });
+});

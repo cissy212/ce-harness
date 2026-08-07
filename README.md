@@ -306,7 +306,9 @@ Read-only; safe to run any time, including with no active workspace (it
 prints `No active workspace.` and exits). With an active workspace, it
 reports:
 
-- Project, issue, repository path, base branch, internal branch
+- Project, issue, workspace type (`Implementation` or `Existing PR
+  review` — derived from whether `--base`/`--head` were used, never a
+  separate piece of state), repository path, base branch, internal branch
 - Review base/head/merge-base commits (only shown for an explicit
   `--base`/`--head` range)
 - Worktree and workspace paths, creation time
@@ -386,11 +388,11 @@ config, wired up automatically):
 
 | Command | What it does |
 |---|---|
-| `/workspace` | Shows the current workspace's context in plain language: project, issue, worktree/workspace paths, OpenSpec store id, lenses directory. A safe first command in any session. |
+| `/workspace` | Shows the current workspace's context in plain language: project, issue, workspace type, worktree/workspace paths, OpenSpec store id, lenses directory. A safe first command in any session. |
 | `/explore` | Explores the codebase read-only and drafts an OpenSpec change proposal grounded in what it actually finds — use when you want to investigate before committing to a plan. |
 | `/propose` | Creates a new OpenSpec change and generates **all** of its artifacts (proposal, design, tasks) in one step — use when you already know roughly what you want built and want to move straight to planning. |
 | `/apply` | Implements the tasks from an OpenSpec change, one at a time, only inside the worktree — marking each task's checkbox as it completes it, and pausing on anything unclear or blocked. |
-| `/verify` | Checks the implementation against the change's proposal, design, specs, and tasks — the **conformance baseline**. Runs discovered test/lint/build commands and writes a report into the OpenSpec store. Never fixes code. |
+| `/verify` | Checks the implementation against the change's proposal, design, specs, and tasks — the **conformance baseline**. Runs discovered test/lint/build commands and writes a report into the OpenSpec store. Never fixes code. **Refuses to run in an `Existing PR review` workspace** (there's no OpenSpec-driven implementation to check conformance against) — use `/adversarial-review` there instead. |
 | `/adversarial-review` | Runs after `/verify` and independently hunts for defects, gaps, and risks the specification itself doesn't describe — assumes flaws exist until argued against with evidence. Challenges `/verify`'s report rather than duplicating it. Never fixes code. |
 | `/archive` | Archives a completed change: checks artifact/task completion, offers to sync delta specs into the main specs, and moves the change into the store's archive. |
 

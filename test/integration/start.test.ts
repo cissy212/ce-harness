@@ -135,6 +135,28 @@ describe("ce start (integration)", () => {
     );
   });
 
+  it("the active-workspace error is actionable: names the active project/issue and suggests ce status / ce cleanup", async () => {
+    const { startCommand } = await import("../../src/commands/start.js");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { CeError } = await import("../../src/core/errors.js");
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+
+    try {
+      await startCommand({ repo: repoDir, issue: "issue-2" });
+      expect.fail("expected startCommand to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CeError);
+      const ceError = error as InstanceType<typeof CeError>;
+      expect(ceError.message).toMatch(/Active workspace:/);
+      expect(ceError.message).toMatch(new RegExp(`Project:\\s+${basenameOf(repoDir)}`));
+      expect(ceError.message).toMatch(/Issue:\s+issue-1/);
+      expect(ceError.recovery).toMatch(/ce status/);
+      expect(ceError.recovery).toMatch(/ce cleanup/);
+      expect(ceError.recovery).toMatch(/retry `ce start`/i);
+    }
+  });
+
   it("fails with an actionable error when neither main nor master exists", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ce-harness-nobranch-"));
     try {
@@ -731,6 +753,18 @@ describe("ce start (integration)", () => {
       const { readFile } = await import("node:fs/promises");
       expect(existsSync(copiedPath)).toBe(true);
       expect(await readFile(copiedPath, "utf8")).toBe(await readFile(sourcePath, "utf8"));
+    });
+
+    it("/workspace surfaces the workspace type, derived only from CE_DIFF_BASE/CE_DIFF_HEAD", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "workspace.md"), "utf8");
+      const normalized = content.replace(/\s+/g, " ");
+
+      expect(normalized).toMatch(/Workspace type: Implementation/);
+      expect(normalized).toMatch(/Workspace type: Existing PR review/);
+      expect(normalized).toMatch(/CE_DIFF_BASE.*and.*CE_DIFF_HEAD.*are set/i);
+      expect(normalized).toMatch(/Do not derive this from anything else/i);
     });
 
     it("is generic: additional template files placed in templates/commands/ are copied too, filenames preserved exactly", async () => {
@@ -1575,6 +1609,52 @@ describe("ce start (integration)", () => {
       expect(content.toLowerCase()).toMatch(
         /if `ce_openspec_store` or `ce_worktree` is empty or unset, stop/,
       );
+    });
+
+    describe("refuses to run in an existing-PR-review workspace", () => {
+      it("checks CE_DIFF_BASE/CE_DIFF_HEAD before the store/worktree guard, and stops entirely", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/^>\s?/gm, "").replace(/\s+/g, " ");
+
+        const reviewGuardIndex = content.search(
+          /If `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set/,
+        );
+        const storeGuardIndex = content.search(
+          /if `CE_OPENSPEC_STORE` or `CE_WORKTREE` is empty or unset, stop/i,
+        );
+        expect(reviewGuardIndex).toBeGreaterThan(-1);
+        expect(storeGuardIndex).toBeGreaterThan(-1);
+        expect(reviewGuardIndex).toBeLessThan(storeGuardIndex);
+
+        expect(normalized).toMatch(/Do not attempt any partial verification/i);
+        expect(normalized).toMatch(/Stop entirely and take no further action/i);
+      });
+
+      it("explains this workspace reviews an existing commit range, not an OpenSpec implementation", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/^>\s?/gm, "").replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/reviewing an existing commit range/i);
+        expect(normalized).toMatch(
+          /`\/verify` checks conformance against the artifacts of an OpenSpec change/i,
+        );
+        expect(normalized).toMatch(/auxiliary OpenSpec change this workspace generated/i);
+      });
+
+      it("points the user at /adversarial-review as the correct command", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/^>\s?/gm, "").replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`\/adversarial-review` is the correct command for reviewing an external commit range/i,
+        );
+      });
     });
 
     it("passes --store \"$CE_OPENSPEC_STORE\" on every concrete openspec invocation (list, status)", async () => {
