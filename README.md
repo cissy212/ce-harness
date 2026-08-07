@@ -182,9 +182,9 @@ ce --help
 ```
 
 This should print ce-harness's usage text, including a description of
-the `start`, `status`, and `cleanup` commands. If you see a "permission
-denied" error or any other error instead of the usage text, see
-"Troubleshooting" below.
+the `start`, `resume`, `status`, and `cleanup` commands. If you see a
+"permission denied" error or any other error instead of the usage text,
+see "Troubleshooting" below.
 
 ### 10. First `ce` command to run
 
@@ -277,7 +277,9 @@ ce cleanup
 
 This removes the worktree, its branch, and the workspace directory, and
 unregisters the OpenSpec store. Use `ce status` any time in between to
-see what's currently active.
+see what's currently active. If OpenCode ever exits before you're done
+(closed the terminal, crashed, etc.), `ce resume` gets you straight back
+into the same workspace — see [Resuming a session](#resuming-a-session).
 
 ### `ce` command reference
 
@@ -297,8 +299,17 @@ OpenCode inside the worktree.
   [Reviewing an existing pull request or commit range](#reviewing-an-existing-pull-request-or-commit-range).
 
 If OpenCode fails to launch after everything else succeeds, `ce start`
-does **not** roll the workspace back — it prints the exact command to
-enter it manually (see [Resuming a session](#resuming-a-session)).
+does **not** roll the workspace back — the workspace is still valid and
+active, so just run `ce resume` (see [Resuming a session](#resuming-a-session))
+instead of re-running `ce start`.
+
+#### `ce resume`
+
+Re-enters the active workspace: relaunches OpenCode with exactly the
+same environment `ce start` used, in the same worktree. Requires an
+active workspace and creates nothing — no new worktree, workspace,
+OpenSpec store, or CodeGraph index — and never modifies `workspace.yml`.
+See [Resuming a session](#resuming-a-session).
 
 #### `ce status`
 
@@ -386,18 +397,27 @@ verdict rules — is identical to the Implementation-workspace flow.
 
 If OpenCode exits (you closed the terminal, it crashed, etc.) but you
 haven't run `ce cleanup`, the workspace is still active — re-running
-`ce start` will refuse ("a workspace is already active"). To get back
-into the same session, either:
+`ce start` will refuse ("a workspace is already active"). Get back into
+it with:
 
-- run `ce status` to see the worktree path, `cd` into it, and launch
-  OpenCode yourself with the same environment variables (see
-  [Environment variables reference](#environment-variables-reference)), or
-- if a launch failure just happened, `ce start` prints the exact command
-  to run, in the form:
-  ```bash
-  cd "<worktree-path>" && CE_WORKSPACE="..." CE_WORKTREE="..." ... opencode
-  ```
-  which you can copy-paste directly.
+```bash
+ce resume
+```
+
+This relaunches OpenCode with exactly the same environment `ce start`
+used the first time, in the same worktree. It requires an active
+workspace and never creates, registers, or initializes anything — no new
+worktree, no new workspace, no OpenSpec store, no CodeGraph index — and
+it never modifies `workspace.yml`. If there's no active workspace, or the
+recorded worktree/workspace is missing or its metadata doesn't check out,
+it explains exactly what's wrong and points you at `ce cleanup --force`
+rather than guessing or repairing anything silently.
+
+Reconstructing the launch command by hand is no longer the normal path —
+keep it only as a fallback for debugging (e.g. if `ce resume` itself
+can't launch OpenCode, it prints the exact manual command, in the form
+`cd "<worktree-path>" && CE_WORKSPACE="..." CE_WORKTREE="..." ... opencode`,
+which you can copy-paste directly).
 
 ### The workflow inside OpenCode
 
@@ -476,9 +496,10 @@ ce-harness also ships two [Agent Skills](https://agentskills.io)
 
 ### Environment variables reference
 
-Injected automatically when `ce start` launches OpenCode — read by the
-workflow commands, lenses, and skills, and useful if you need to relaunch
-manually (see [Resuming a session](#resuming-a-session)):
+Injected automatically when `ce start` or `ce resume` launches OpenCode —
+read by the workflow commands, lenses, and skills, and useful if you ever
+need to relaunch manually for debugging (see
+[Resuming a session](#resuming-a-session)):
 
 | Variable | Meaning |
 |---|---|
@@ -605,8 +626,10 @@ out the branch you want under one of those names) and try again.
 ### `ce start` fails with "A workspace is already active..."
 
 Only one workspace can be active at a time. Run `ce status` to see what
-it is, finish up inside it, then run `ce cleanup` (see
-[`ce cleanup`](#ce-cleanup---force)) before starting a new one.
+it is. If that's the workspace you meant to keep working in, run
+`ce resume` to get back into it — no need to start a new one. If you're
+actually done with it, run `ce cleanup` (see
+[`ce cleanup`](#ce-cleanup---force)) first, then start the new one.
 
 ### `ce start --base ... --head ...` fails to resolve a ref, or reports no shared history
 

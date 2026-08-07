@@ -38,14 +38,10 @@ import {
   unregisterStore,
 } from "../core/openspec.js";
 import { formatLaunchCommand, launchOpenCode } from "../core/opencode.js";
-import { createOpenCodeConfig, expectedOpenCodeConfigDir } from "../core/opencodeConfig.js";
-import { createLensesDir, expectedLensesDir } from "../core/lenses.js";
-import {
-  expectedCodeGraphOpenCodeConfigPath,
-  initializeCodeGraph,
-  writeCodeGraphOpenCodeConfig,
-  type CodeGraphResult,
-} from "../core/codeGraph.js";
+import { createOpenCodeConfig } from "../core/opencodeConfig.js";
+import { createLensesDir } from "../core/lenses.js";
+import { initializeCodeGraph, writeCodeGraphOpenCodeConfig, type CodeGraphResult } from "../core/codeGraph.js";
+import { buildLaunchEnv } from "../core/launchEnv.js";
 
 export interface StartOptions {
   repo: string;
@@ -195,6 +191,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     managedByHarness: false,
     reason: "CodeGraph setup was not attempted.",
   };
+  let workspace: Workspace;
 
   try {
     await mkdir(dirname(worktreePath), { recursive: true });
@@ -242,7 +239,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
       );
     }
 
-    const workspace: Workspace = {
+    workspace = {
       project,
       repositoryPath: repoRoot,
       issue,
@@ -289,31 +286,11 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
   // store, workspace.yml, active pointer) is fully created and committed
   // at this point. A failure to launch the runner from here on must
   // never roll any of that back.
-  const launchEnv: Record<string, string> = {
-    CE_WORKSPACE: workspacePath,
-    CE_WORKTREE: worktreePath,
-    CE_PROJECT: project,
-    CE_ISSUE: issue,
-    CE_OPENSPEC_STORE: openSpecStoreId,
-    CE_LENSES_DIR: expectedLensesDir(workspacePath),
-    OPENCODE_CONFIG_DIR: expectedOpenCodeConfigDir(workspacePath),
-  };
-  // Only present for an explicit --base/--head review range; the
-  // workflow templates fall back to their own merge-base detection
-  // against main/master when these are absent.
-  if (diffBase && diffHead) {
-    launchEnv.CE_DIFF_BASE = diffBase;
-    launchEnv.CE_DIFF_HEAD = diffHead;
-  }
-  // Generic, provider-agnostic capability signal for templates -- never
-  // a CodeGraph-specific variable name. Only present when a semantic
-  // code navigation index was actually provisioned and wired up this
-  // session; absent otherwise, exactly like CE_DIFF_BASE/CE_DIFF_HEAD.
-  if (codeGraphResult.available) {
-    launchEnv.CE_CODE_NAV_AVAILABLE = "1";
-    launchEnv.CE_CODE_NAV_PROVIDER = "codegraph";
-    launchEnv.OPENCODE_CONFIG = expectedCodeGraphOpenCodeConfigPath(workspacePath);
-  }
+  //
+  // The launch environment itself is built by the same shared helper
+  // `ce resume` uses, from the just-written `workspace` object -- so the
+  // two commands can never define two different launch environments.
+  const launchEnv = buildLaunchEnv(workspace);
   const launchResult = await launchOpenCode({ cwd: worktreePath, env: launchEnv });
   if (!launchResult.launched) {
     throw new CeError(

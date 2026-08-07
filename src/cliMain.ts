@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { startCommand } from "./commands/start.js";
 import { statusCommand } from "./commands/status.js";
 import { cleanupCommand } from "./commands/cleanup.js";
+import { resumeCommand } from "./commands/resume.js";
 import { formatError } from "./core/errors.js";
 
 /**
@@ -53,6 +54,18 @@ export async function runCli(): Promise<void> {
     .option("--head <ref>", "exact head ref/commit to review to (requires --base)")
     .action(async (repo: string, issue: string, options: { base?: string; head?: string }) => {
       await run(() => startCommand({ repo, issue, base: options.base, head: options.head }));
+    });
+
+  program
+    .command("resume")
+    .description(
+      "Re-enter the active workspace by relaunching OpenCode with the same environment " +
+        "`ce start` used -- creates nothing, registers nothing, and never modifies " +
+        "workspace.yml. Use this instead of reconstructing the launch command by hand " +
+        "after OpenCode exits.",
+    )
+    .action(async () => {
+      await run(() => resumeCommand());
     });
 
   program

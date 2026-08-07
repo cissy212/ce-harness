@@ -38,5 +38,6 @@ describe("dist/cli.js build artifact", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Usage: ce");
     expect(result.stdout).toContain("start [options] <repo> <issue>");
+    expect(result.stdout).toContain("resume");
   });
 });
