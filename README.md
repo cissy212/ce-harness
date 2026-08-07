@@ -25,6 +25,7 @@ called out explicitly).
   - [Resuming a session](#resuming-a-session)
   - [The workflow inside OpenCode](#the-workflow-inside-opencode)
   - [Reasoning lenses](#reasoning-lenses)
+  - [Environment-mutation safety](#environment-mutation-safety)
   - [Skills](#skills)
   - [Environment variables reference](#environment-variables-reference)
   - [Directory layout reference](#directory-layout-reference)
@@ -450,14 +451,20 @@ A **reasoning lens** is a domain-specific set of questions and failure
 modes that `/verify` and `/adversarial-review` can load as extra context
 — for example, a lens sharpens a review's attention toward database/query
 design, or toward accessibility, without replacing the review's own
-baseline checks. Lens selection is owned by ce-harness itself (never the
-runner's own automatic skill/agent matching): each command compares every
-available lens's description against the change, prefers an
-operational/runtime concern over a structural one when both apply, and
-asks you explicitly if more than one lens matches equally well. A lens is
-always an additional layer on top of the review's own baseline, never a
-substitute for it, and it's loaded as an ordinary document to read — never
-spawned as a separate agent.
+baseline checks. Lenses are additive, not mutually exclusive: more than
+one may apply to the same change. Lens selection is owned by ce-harness
+itself (never the runner's own automatic skill/agent matching): each
+command compares every available lens's description against the change,
+using an operational/runtime-vs-structural tie-break only to decide what
+counts as a match. If exactly one lens matches, it's applied
+automatically; if none match, the review continues without one; if
+several match, ce-harness asks you explicitly which to apply — you can
+pick one, several, all, or none, and you can always override the
+selection up front by naming lenses yourself. A lens (or several) is
+always an additional layer on top of the review's own single baseline
+pass, never a substitute for it and never a reason to repeat that
+baseline — each is loaded as an ordinary document to read, never spawned
+as a separate agent.
 
 The lenses shipped today:
 
@@ -474,6 +481,31 @@ They're discovered from `$CE_LENSES_DIR` (a plain directory of `.md`
 files inside the workspace — never a runner-specific path), so a
 different runner adapter could point its own discovery mechanism at the
 same files without ce-harness duplicating anything.
+
+### Environment-mutation safety
+
+Both review commands treat observation (tests, lint, typecheck, build,
+read-only queries, etc.) as allowed by default, and mutation (schema/data
+migrations, seeds, resets, `terraform apply`, `kubectl apply`, and
+similar) as requiring either a proven disposable environment or explicit
+approval — never inferred from a name containing "test". They differ in
+how much latitude they have:
+
+- `/verify` is a conformance workflow, so it may exercise a migration or
+  other state-changing behavior when the proposal/design/specs/tasks
+  explicitly require it — but only in an already-established, genuinely
+  disposable verification environment, or after asking. Mutation that
+  isn't part of the change (e.g. a stale local database) always requires
+  approval first.
+- `/adversarial-review` is observational and more conservative: it never
+  independently mutates database schema/data, infrastructure, external
+  services, or developer configuration. It prefers challenging a prior
+  `/verify` report's mutation evidence over re-running the mutation, and
+  asks first if further mutation is genuinely needed to investigate a
+  finding — in both the `Implementation` and `Existing PR review` modes.
+
+A withheld mutation is reported as a verification limitation (`BLOCKED`,
+or an explicit uncertainty), never silently converted into a defect.
 
 ### Skills
 

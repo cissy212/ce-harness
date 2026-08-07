@@ -1736,11 +1736,15 @@ describe("ce start (integration)", () => {
       expect(content).not.toMatch(/npm test/);
       expect(content).not.toMatch(/npm run (typecheck|lint)/);
       expect(content).not.toMatch(/docker compose/i);
-      // "Prisma" legitimately appears only as an example of a stack this
-      // command must NOT assume (per requirement 7's own wording); it must
-      // never appear as an actual invoked command (e.g. "npx prisma ...").
+      // "Prisma" legitimately appears as an example of a stack this command
+      // must NOT assume for verification-command discovery (requirement 7's
+      // own wording), and separately as an illustrative example of a
+      // *mutating* command in the Environment-mutation safety guardrails
+      // (`prisma migrate deploy`) -- it must never appear as an actual
+      // invoked/discovered command (e.g. "npx prisma ..." or inside a
+      // fenced shell block this command itself runs).
       expect(content).not.toMatch(/npx prisma/i);
-      expect(content).not.toMatch(/prisma migrate/i);
+      expect(content).not.toMatch(/```bash\n[^`]*prisma migrate/i);
       expect(content).toMatch(/discovered from the repository/i);
       expect(content).toMatch(/do not assume npm, docker, prisma, or any other specific stack/i);
     });
@@ -1859,45 +1863,118 @@ describe("ce start (integration)", () => {
         expect(normalized).toMatch(/operational\/runtime concern.{0,120}take precedence/i);
       });
 
-      it("asks the user when multiple lenses match equally, and always allows explicit override", async () => {
+      it("asks the user when multiple lenses match, and always allows explicit override", async () => {
         const { readFile } = await import("node:fs/promises");
         const { templatesRoot } = await import("../../src/core/templates.js");
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
         const normalized = content.replace(/\s+/g, " ");
 
-        expect(normalized).toMatch(/match equally well.*ask the user/i);
+        expect(normalized).toMatch(/two or more lenses match.*ask which to apply/i);
         expect(normalized).toMatch(/always allow an? explicit user override/i);
       });
 
-      it('continues normally and reports "Lens applied: None" when nothing clearly matches', async () => {
+      it("auto-selects without asking when exactly one lens clearly matches", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /If exactly one lens clearly matches, select it and continue -- no need\s*to ask/i,
+        );
+      });
+
+      it("preserves the presented order when the user says 'all'", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /literal\s*word `all` \(apply every matching lens, in the order they were\s*presented\)/i,
+        );
+      });
+
+      it('continues normally and reports "Lenses applied: None" when nothing clearly matches', async () => {
         const { readFile } = await import("node:fs/promises");
         const { templatesRoot } = await import("../../src/core/templates.js");
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
 
         expect(content).toMatch(/continue normally/i);
-        expect(content).toContain("Lens applied: None");
+        expect(content).toContain("Lenses applied: None");
         expect(content).toMatch(/this is not a failure/i);
       });
 
-      it("loads a selected lens as an ordinary reasoning input, never a subagent or delegated conversation", async () => {
+      it("loads each selected lens as an ordinary reasoning input, never a subagent or delegated conversation", async () => {
         const { readFile } = await import("node:fs/promises");
         const { templatesRoot } = await import("../../src/core/templates.js");
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/\s+/g, " ");
 
-        expect(content).toMatch(/load its file as an ordinary reasoning input/i);
-        expect(content).toMatch(/do not spawn a subagent/i);
+        expect(normalized).toMatch(/load each one's file as an ordinary reasoning input/i);
+        expect(normalized).toMatch(/do not spawn a subagent/i);
       });
 
-      it("includes a '## Lens Coverage' report section with all four required fields", async () => {
+      it("states lenses are additive and multiple may be selected without repeating the baseline pass", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/Lenses are additive, not mutually exclusive/i);
+        expect(normalized).toMatch(
+          /the user may pick one, several, all, or none.*not a single-choice menu/i,
+        );
+        expect(normalized).toMatch(/literal word `all`/i);
+        expect(normalized).toMatch(/literal word `none`/i);
+        expect(normalized).toMatch(
+          /one progressively richer review, not one review per lens/i,
+        );
+      });
+
+      it("requires de-duplicating repeated lens names and preserving user-given order", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/De-duplicate repeated names without loading the same lens twice/i);
+        expect(normalized).toMatch(/preserve the order the user\s*named them in/i);
+      });
+
+      it("explains and re-asks rather than silently dropping an unresolvable lens name", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/do not drop it silently/i);
+        expect(normalized).toMatch(
+          /explain which name\(s\) could not be resolved, list the valid lens\s*names, and ask again/i,
+        );
+      });
+
+      it("extends the explicit override to one or more named lenses, validated the same way", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /if the user has already named\s*one or more specific lenses \(or "none"\) before this step runs/i,
+        );
+      });
+
+      it("includes a '## Lens Coverage' report section with the top-level fields and a per-lens table", async () => {
         const { readFile } = await import("node:fs/promises");
         const { templatesRoot } = await import("../../src/core/templates.js");
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
 
         expect(content).toMatch(/## Lens Coverage/);
-        expect(content).toMatch(/\*\*Lens applied:\*\*/);
-        expect(content).toMatch(/\*\*Selection rationale:\*\*/);
+        expect(content).toMatch(/\*\*Lenses applied:\*\*/);
         expect(content).toMatch(/\*\*Other lenses considered:\*\*/);
-        expect(content).toMatch(/\*\*Lens checks applied:\*\*/);
+        expect(content).toMatch(/\| Lens \| Selection rationale \| Lens checks applied \|/);
+        expect(content).toMatch(/N\/A -- no lens applied/);
       });
 
       it('never uses "specialist" terminology anywhere in the operational body', async () => {
@@ -1906,6 +1983,121 @@ describe("ce start (integration)", () => {
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
 
         expect(content).not.toMatch(/specialist/i);
+      });
+    });
+
+    describe("Environment-mutation safety", () => {
+      const readVerify = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+      };
+
+      it("keeps observation (tests, lint, typecheck, build, read-only queries) allowed by default, unchanged", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Observation is allowed by default: tests, lint, typecheck, build,\s*`git status`\/`log`\/`diff`, `docker ps`, schema\/code inspection, and\s*read-only database queries never require approval/i,
+        );
+      });
+
+      it("does not impose a blanket ban on migrations -- explicitly allows them when part of the change", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /This does \*\*not\*\* mean verification commands may never run a migration\s*-- a migration can be an explicit part of the change being verified/i,
+        );
+      });
+
+      it("requires approval before mutation that is unrelated to the change (Case A)", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Case A -- the mutation is not part of the change being verified\*\*/,
+        );
+        expect(normalized).toMatch(/tests fail because the local database is out of date/i);
+        expect(normalized).toMatch(
+          /Do not perform it\s*automatically\. Explain what is required and ask the user for explicit\s*approval first/i,
+        );
+      });
+
+      it("allows a change-required migration to run without asking only in a proven disposable environment (Case B)", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Case B -- the mutation is explicitly part of the OpenSpec change\*\*/,
+        );
+        expect(normalized).toMatch(/against the proposal, design, specs, and tasks already loaded/i);
+        expect(normalized).toMatch(
+          /you may exercise the mutation there without asking, provided\s*concrete repo evidence -- not assumption -- shows it cannot affect\s*development\/shared\/production state/i,
+        );
+        expect(normalized).toMatch(
+          /Never infer that an environment\s*is disposable merely because its name contains "test"/i,
+        );
+      });
+
+      it("requires approval for a change-required mutation against a persistent/shared environment (Case B)", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /If verification would instead mutate an existing persistent or\s*shared environment, ask the user first/i,
+        );
+      });
+
+      it("requires approval when environment safety cannot be established (Case C)", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Case C -- environment safety cannot be established\*\* from concrete\s*repo evidence either way\. Do not mutate it\. Ask\./i,
+        );
+      });
+
+      it("specifies what the approval prompt must state", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /state: the exact command that would run; the specific\s*environment\/resource it would mutate; why the change requires it; and\s*whether the mutation is reversible or disposable/i,
+        );
+      });
+
+      it("lists mutating command examples as illustrative, not an exhaustive blacklist, and forbids name-matching alone", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/prisma migrate deploy/);
+        expect(normalized).toMatch(/terraform apply/);
+        expect(normalized).toMatch(/kubectl apply/);
+        expect(normalized).toMatch(
+          /These are examples of the category, not an exhaustive blacklist: do not\s*decide "safe" or "unsafe" by matching a command name alone/i,
+        );
+        expect(normalized).toMatch(
+          /do not\s*assume a nominally "test" command is safe merely because of its name --\s*if it performs destructive setup, it is still mutation and the rules\s*below still apply/i,
+        );
+      });
+
+      it("reports a withheld mutation as BLOCKED, a verification limitation, never as a defect", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /mark the affected check\s*`BLOCKED` \(never `NOT VERIFIED`\) and state the specific limitation under\s*"Gaps and Blockers" -- a withheld mutation is a verification limitation,\s*not an implementation defect/i,
+        );
+      });
+
+      it("summarizes the policy in the Guardrails section", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Mutating database schema\/data, infrastructure, external services, or\s*developer configuration always requires either a proven disposable\s*environment.*or explicit user approval/i,
+        );
       });
     });
   });
@@ -2106,38 +2298,100 @@ describe("ce start (integration)", () => {
         expect(normalized).toMatch(/operational\/runtime concern.{0,120}take precedence/i);
       });
 
-      it("asks the user when multiple lenses match equally, and always allows explicit override", async () => {
+      it("asks the user when multiple lenses match, and always allows explicit override", async () => {
         const content = await readTemplate();
         const normalized = content.replace(/\s+/g, " ");
 
-        expect(normalized).toMatch(/match equally well.*ask the user/i);
+        expect(normalized).toMatch(/two or more lenses match.*ask which to apply/i);
         expect(normalized).toMatch(/always allow an? explicit user override/i);
       });
 
-      it('continues normally and reports "Lens applied: None" when nothing clearly matches', async () => {
+      it("auto-selects without asking when exactly one lens clearly matches", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /If exactly one lens clearly matches, select it and continue -- no need\s*to ask/i,
+        );
+      });
+
+      it("preserves the presented order when the user says 'all'", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /literal\s*word `all` \(apply every matching lens, in the order they were\s*presented\)/i,
+        );
+      });
+
+      it('continues normally and reports "Lenses applied: None" when nothing clearly matches', async () => {
         const content = await readTemplate();
 
         expect(content).toMatch(/continue normally/i);
-        expect(content).toContain("Lens applied: None");
+        expect(content).toContain("Lenses applied: None");
         expect(content).toMatch(/this is not a failure/i);
       });
 
-      it("loads a selected lens as an ordinary reasoning input, never a subagent or delegated conversation", async () => {
+      it("loads each selected lens as an ordinary reasoning input, never a subagent or delegated conversation", async () => {
         const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
 
-        expect(content).toMatch(/load its file as an ordinary reasoning input/i);
-        expect(content).toMatch(/do not spawn a subagent/i);
+        expect(normalized).toMatch(/load each one's file as an ordinary reasoning input/i);
+        expect(normalized).toMatch(/do not spawn a subagent/i);
       });
 
-      it("includes a '## Lens Coverage' report section with all five required fields", async () => {
+      it("states lenses are additive and multiple may be selected without repeating the baseline pass", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/Lenses are additive, not mutually exclusive/i);
+        expect(normalized).toMatch(
+          /the user may pick one, several, all, or none.*not a single-choice menu/i,
+        );
+        expect(normalized).toMatch(/literal word `all`/i);
+        expect(normalized).toMatch(/literal word `none`/i);
+        expect(normalized).toMatch(
+          /one review with several layers, never one review per lens/i,
+        );
+      });
+
+      it("requires de-duplicating repeated lens names and preserving user-given order", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/De-duplicate repeated names without loading the same lens twice/i);
+        expect(normalized).toMatch(/preserve the order the user\s*named them in/i);
+      });
+
+      it("explains and re-asks rather than silently dropping an unresolvable lens name", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/do not drop it silently/i);
+        expect(normalized).toMatch(
+          /explain which name\(s\) could not be resolved, list the valid lens\s*names, and ask again/i,
+        );
+      });
+
+      it("extends the explicit override to one or more named lenses, validated the same way", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /if the user has already named\s*one or more specific lenses \(or "none"\) before this step runs/i,
+        );
+      });
+
+      it("includes a '## Lens Coverage' report section with the top-level fields and a per-lens table", async () => {
         const content = await readTemplate();
 
         expect(content).toMatch(/## Lens Coverage/);
-        expect(content).toMatch(/\*\*Lens applied:\*\*/);
-        expect(content).toMatch(/\*\*Selection rationale:\*\*/);
+        expect(content).toMatch(/\*\*Lenses applied:\*\*/);
         expect(content).toMatch(/\*\*Other lenses considered:\*\*/);
-        expect(content).toMatch(/\*\*Lens checks applied:\*\*/);
-        expect(content).toMatch(/\*\*Additional checks beyond the baseline pass:\*\*/);
+        expect(content).toMatch(
+          /\| Lens \| Selection rationale \| Lens checks applied \| Additional checks beyond the baseline pass \|/,
+        );
+        expect(content).toMatch(/N\/A -- no lens applied/);
       });
 
       it('never uses "specialist" terminology anywhere in the operational body', async () => {
@@ -2152,7 +2406,7 @@ describe("ce start (integration)", () => {
         const content = await readTemplate();
 
         const baselineIdx = content.indexOf("Baseline adversarial pass");
-        const lensSelectIdx = content.indexOf("Select a lens");
+        const lensSelectIdx = content.indexOf("Select one or more lenses");
         expect(baselineIdx).toBeGreaterThan(-1);
         expect(lensSelectIdx).toBeGreaterThan(-1);
         expect(baselineIdx).toBeLessThan(lensSelectIdx);
@@ -2366,6 +2620,75 @@ describe("ce start (integration)", () => {
       });
     });
 
+    describe("Environment-mutation safety", () => {
+      it("never performs mutation automatically -- states this in the Guardrails section", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Never independently mutate database schema\/data, infrastructure,\s*external services, or developer configuration \(e\.g\. running a\s*migration such as `prisma migrate deploy`, a seed, a reset,\s*`terraform apply`, `kubectl apply`, or any similar mutating command\)\s*without explicit user approval/i,
+        );
+      });
+
+      it("applies the same mutation guardrail identically in both workspace types", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /this\s*applies identically in both workspace types/i,
+        );
+        // The guardrail lives in the shared Guardrails list (Step 10), which
+        // is not duplicated per workspace type.
+        const occurrences =
+          content.split("Never independently mutate database schema/data").length - 1;
+        expect(occurrences).toBe(1);
+      });
+
+      it("prefers challenging a prior /verify report's mutation evidence over rerunning the mutation", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /If the prior report already contains adequate evidence that a\s*migration or other state-changing acceptance criterion was exercised/i,
+        );
+        expect(normalized).toMatch(
+          /challenge that evidence -- was it sufficient, does it still\s*hold against the current diff -- rather than re-running the mutation\s*yourself/i,
+        );
+        expect(normalized).toMatch(
+          /prefer challenging\s*a prior `\/verify` report's mutation evidence \(Step 4\) over re-running\s*the mutation/i,
+        );
+      });
+
+      it("asks first, explaining why, before any additional state-changing operation to investigate a finding", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /If additional mutation is genuinely necessary to\s*investigate a finding, explain why and ask first/i,
+        );
+        expect(normalized).toMatch(
+          /never infer an\s*environment is disposable merely because it's named "test"/i,
+        );
+      });
+
+      it("REGRESSION: never runs a schema migration against an existing local test database merely to make the test suite runnable", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        // The motivating real-world failure: an adversarial review must not
+        // decide, on its own, to run `prisma migrate deploy` (or any
+        // similarly mutating command) against a pre-existing local test
+        // database just to unblock a test run. This is exactly "mutation
+        // unrelated to what's being investigated performed to make an
+        // environment usable" -- forbidden without explicit approval.
+        expect(normalized).toMatch(/Never independently mutate database schema\/data/i);
+        expect(normalized).toMatch(/prisma migrate deploy/);
+        expect(normalized).toMatch(
+          /never run a migration against an\s*existing local test database merely to make the test suite runnable/i,
+        );
+      });
+    });
+
     describe("Existing PR review mode (first-class support)", () => {
       it("detects the workspace type from CE_DIFF_BASE/CE_DIFF_HEAD before resolving anything", async () => {
         const content = await readTemplate();
@@ -2466,7 +2789,7 @@ describe("ce start (integration)", () => {
         for (const heading of [
           "## 2. Mindset",
           "## 6. Baseline adversarial pass",
-          "## 7. Select a lens",
+          "## 7. Select one or more lenses",
           "### Classify each finding",
           "## Overall Verdict",
         ]) {

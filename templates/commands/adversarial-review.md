@@ -181,6 +181,14 @@ a prior `/verify` run), if any.
   everything was fine.
 - Record whatever you found in the "Verify Report Challenge" section of the
   report (Step 9), even if your conclusion is "the prior verdict holds."
+- If the prior report already contains adequate evidence that a
+  migration or other state-changing acceptance criterion was exercised
+  (e.g. in a proven disposable environment, or with recorded user
+  approval), challenge that evidence -- was it sufficient, does it still
+  hold against the current diff -- rather than re-running the mutation
+  yourself. This command never independently mutates database
+  schema/data, infrastructure, external services, or developer
+  configuration; see the environment-mutation guardrail below.
 
 **If none exists:** note this in the report and proceed to establish your
 own evidence from scratch (Step 5) -- do not skip the review because no
@@ -281,12 +289,16 @@ issue found" -- this becomes the "Baseline Review Coverage" section of
 the report (Step 9), independent of whichever lens (if any) is selected
 next.
 
-## 7. Select a lens (if one clearly matches)
+## 7. Select one or more lenses (if any clearly match)
 
 **A lens is an additional reasoning layer, not a filter that narrows the
 review to one domain.** It adds domain-specific questions and failure
 modes on top of the baseline pass in Step 6 -- it never substitutes for
-that baseline, and it never becomes the sole basis of the review.
+that baseline, and it never becomes the sole basis of the review. Lenses
+are additive, not mutually exclusive: more than one may apply to the same
+change, and selecting several never repeats or replaces the Step 6
+baseline pass -- each one simply layers additional questions onto that
+same single pass.
 
 ce-harness -- not the runner -- owns lens selection. Never rely on the
 runner's own automatic skill or agent matching for this. Discover and
@@ -296,7 +308,7 @@ hardcode any runner-specific path such as `opencode/agents/`.
 
 1. If `CE_LENSES_DIR` is unset, or the directory contains no `*.md`
    files, skip this step entirely -- proceed without a lens and report
-   `Lens applied: None` in the "Lens Coverage" section of the report.
+   `Lenses applied: None` in the "Lens Coverage" section of the report.
    This is not a failure.
 2. Otherwise, list every available lens (every `*.md` file directly
    inside `"$CE_LENSES_DIR"`) and read each one's `description`
@@ -311,29 +323,48 @@ hardcode any runner-specific path such as `opencode/agents/`.
    structural concern (module boundaries, abstraction design, type/API
    design) apply to this change, prefer the lens describing the
    operational/runtime concern -- operational concerns take precedence.
-5. If exactly one lens clearly matches, select it.
+   This tie-break only decides which single lens to prefer when reasoning
+   about this specific overlap; it does not cap how many lenses may match
+   and be selected overall.
+5. If exactly one lens clearly matches, select it and continue -- no need
+   to ask.
 6. If no lens clearly matches, select none and continue normally --
-   report `Lens applied: None`.
-7. If two or more lenses match equally well, do not guess: ask the user
-   which one to apply (or whether to apply none).
+   report `Lenses applied: None`.
+7. If two or more lenses match, do not guess and do not silently pick
+   one: tell the user which lenses matched and ask which to apply.
+   Applying a lens is additive, so make clear the user may pick one,
+   several, all, or none -- this is not a single-choice menu. Accept a
+   free-form, comma- or space-separated list of lens names, the literal
+   word `all` (apply every matching lens, in the order they were
+   presented), or the literal word `none`. De-duplicate repeated names
+   without loading the same lens twice, and preserve the order the user
+   named them in (or the presented order, for `all`). If any named lens
+   does not match an available lens file, do not drop it silently:
+   explain which name(s) could not be resolved, list the valid lens
+   names, and ask again.
 8. Always allow an explicit user override: if the user has already named
-   a specific lens (or "none"), use that instead of steps 2-7.
+   one or more specific lenses (or "none") before this step runs,
+   validate that input the same way as step 7 (unresolvable names
+   explained and re-asked, duplicates de-duplicated, order preserved) and
+   use it instead of steps 2-7.
 
-If a lens is selected, load its file as an ordinary reasoning input for
-the rest of this review -- exactly like `proposal.md`, `design.md`, or
-`tasks.md`. Do not spawn a subagent, delegate to another conversation, or
-treat it as a runner-specific skill/agent invocation; it is simply
-another document you have read. Apply it as an additional layer on top
-of the baseline pass already performed in Step 6 (e.g. a pipeline lens
-sharpens the search for idempotency/concurrency/partial-failure defects;
-a backend lens sharpens the search for boundary, type-safety, and query
-defects) -- it adds questions, it does not replace or narrow the ones
-Step 6 already covered.
+If one or more lenses are selected, load each one's file as an ordinary
+reasoning input for the rest of this review -- exactly like
+`proposal.md`, `design.md`, or `tasks.md`. Do not spawn a subagent,
+delegate to another conversation, or treat any of them as a
+runner-specific skill/agent invocation; each is simply another document
+you have read. Apply each as an additional layer on top of the same
+baseline pass already performed in Step 6 (e.g. a pipeline lens sharpens
+the search for idempotency/concurrency/partial-failure defects; a
+backend lens sharpens the search for boundary, type-safety, and query
+defects) -- together they add questions, they do not replace, narrow, or
+repeat the ones Step 6 already covered. Applying multiple lenses always
+means one review with several layers, never one review per lens.
 
-Record the outcome (selected lens or "None", the rationale, which other
-lenses in `"$CE_LENSES_DIR"` were considered, and what the lens added
-beyond the Step 6 baseline) for the "Lens Coverage" section of the
-report.
+Record the outcome (the list of applied lenses, or "None"; the rationale
+for each; which other lenses in `"$CE_LENSES_DIR"` were considered but
+not selected; and what each applied lens added beyond the Step 6
+baseline) for the "Lens Coverage" section of the report.
 
 ## 8. Adversarial pass (refute, do not rubber-stamp)
 
@@ -504,11 +535,14 @@ either way. -->
 
 ## Lens Coverage
 
-**Lens applied:** <name from $CE_LENSES_DIR, or "None">
-**Selection rationale:** <why this one was selected, or why none was, in 1-3 sentences>
-**Other lenses considered:** <other lens names found in $CE_LENSES_DIR, or "None found">
-**Lens checks applied:** <the "Lens checks" list from the selected lens's file, or "N/A">
-**Additional checks beyond the baseline pass:** <what this lens surfaced that the Step 6 baseline pass alone would not have, or "N/A -- no lens applied">
+**Lenses applied:** <comma-separated lens names, in the order applied, or "None">
+**Other lenses considered:** <other lens names found in $CE_LENSES_DIR but not selected, or "None found">
+
+| Lens | Selection rationale | Lens checks applied | Additional checks beyond the baseline pass |
+|---|---|---|---|
+| <lens name> | <why this one was selected, in 1-3 sentences> | <the "Lens checks" list from this lens's file> | <what this lens surfaced that the Step 6 baseline pass alone would not have> |
+
+Or, if none applied: "N/A -- no lens applied."
 
 ---
 
@@ -631,6 +665,19 @@ separate, explicit step.
   consult; see Step 4.)
 - Never modify product/application code. This command reviews; it does not
   implement or fix.
+- Never independently mutate database schema/data, infrastructure,
+  external services, or developer configuration (e.g. running a
+  migration such as `prisma migrate deploy`, a seed, a reset,
+  `terraform apply`, `kubectl apply`, or any similar mutating command)
+  without explicit user approval -- this applies identically in both
+  workspace types. In particular, never run a migration against an
+  existing local test database merely to make the test suite runnable.
+  This command is observational and more conservative than `/verify`:
+  prefer challenging a prior `/verify` report's mutation evidence
+  (Step 4) over re-running the mutation. If additional mutation is
+  genuinely necessary to investigate a finding, explain why and ask
+  first; never infer an environment is disposable merely because it's
+  named "test".
 - Never check, uncheck, or otherwise edit `tasks.md` or any other OpenSpec
   artifact.
 - Never create `openspec/`, `.opencode/`, `reports/`, or any other

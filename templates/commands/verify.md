@@ -155,7 +155,7 @@ and the uncommitted diff only.
 Map each changed file to the spec sections and tasks it is supposed to
 satisfy.
 
-## 4. Select a lens (if one clearly matches)
+## 4. Select one or more lenses (if any clearly match)
 
 ce-harness -- not the runner -- owns lens selection. Never rely on the
 runner's own automatic skill or agent matching for this. Discover and
@@ -163,9 +163,13 @@ read reasoning lenses **only** through the canonical, runner-agnostic
 directory at `"$CE_LENSES_DIR"` (injected by `ce start`); never assume or
 hardcode any runner-specific path such as `opencode/agents/`.
 
+Lenses are additive, not mutually exclusive -- more than one may apply to
+the same change, and applying several never repeats or replaces this
+step; each one simply layers onto the same single pass.
+
 1. If `CE_LENSES_DIR` is unset, or the directory contains no `*.md`
    files, skip this step entirely -- proceed without a lens and report
-   `Lens applied: None` in the "Lens Coverage" section of the report.
+   `Lenses applied: None` in the "Lens Coverage" section of the report.
    This is not a failure.
 2. Otherwise, list every available lens (every `*.md` file directly
    inside `"$CE_LENSES_DIR"`) and read each one's `description`
@@ -178,23 +182,44 @@ hardcode any runner-specific path such as `opencode/agents/`.
    structural concern (module boundaries, abstraction design, type/API
    design) apply to this change, prefer the lens describing the
    operational/runtime concern -- operational concerns take precedence.
-5. If exactly one lens clearly matches, select it.
+   This tie-break only decides which single lens to prefer when reasoning
+   about this specific overlap; it does not cap how many lenses may match
+   and be selected overall.
+5. If exactly one lens clearly matches, select it and continue -- no need
+   to ask.
 6. If no lens clearly matches, select none and continue normally --
-   report `Lens applied: None`.
-7. If two or more lenses match equally well, do not guess: ask the user
-   which one to apply (or whether to apply none).
+   report `Lenses applied: None`.
+7. If two or more lenses match, do not guess and do not silently pick
+   one: tell the user which lenses matched and ask which to apply.
+   Applying a lens is additive, so make clear the user may pick one,
+   several, all, or none -- this is not a single-choice menu. Accept a
+   free-form, comma- or space-separated list of lens names, the literal
+   word `all` (apply every matching lens, in the order they were
+   presented), or the literal word `none`. De-duplicate repeated names
+   without loading the same lens twice, and preserve the order the user
+   named them in (or the presented order, for `all`). If any named lens
+   does not match an available lens file, do not drop it silently:
+   explain which name(s) could not be resolved, list the valid lens
+   names, and ask again.
 8. Always allow an explicit user override: if the user has already named
-   a specific lens (or "none"), use that instead of steps 2-7.
+   one or more specific lenses (or "none") before this step runs,
+   validate that input the same way as step 7 (unresolvable names
+   explained and re-asked, duplicates de-duplicated, order preserved) and
+   use it instead of steps 2-7.
 
-If a lens is selected, load its file as an ordinary reasoning input for
-the rest of this session -- exactly like `proposal.md`, `design.md`, or
-`tasks.md`. Do not spawn a subagent, delegate to another conversation, or
-treat it as a runner-specific skill/agent invocation; it is simply
-another document you have read.
+If one or more lenses are selected, load each one's file as an ordinary
+reasoning input for the rest of this session -- exactly like
+`proposal.md`, `design.md`, or `tasks.md`. Do not spawn a subagent,
+delegate to another conversation, or treat any of them as a
+runner-specific skill/agent invocation; each is simply another document
+you have read. Applying multiple lenses never repeats this step or any
+other step -- all selected lenses are layered onto the same single
+verification pass, producing one progressively richer review, not one
+review per lens.
 
-Record the outcome (selected lens or "None", the rationale, and which
-other lenses in `"$CE_LENSES_DIR"` were considered) for the "Lens
-Coverage" section of the report.
+Record the outcome (the list of applied lenses, or "None"; the rationale
+for each; and which other lenses in `"$CE_LENSES_DIR"` were considered
+but not selected) for the "Lens Coverage" section of the report.
 
 ## 5. Verify requirements and scenarios
 
@@ -268,6 +293,66 @@ external service, or credential), mark that check as `BLOCKED` and state the
 specific reason. Do not skip -- a `BLOCKED` result in the report is
 informative; a missing result is not.
 
+### Environment-mutation safety
+
+Observation is allowed by default: tests, lint, typecheck, build,
+`git status`/`log`/`diff`, `docker ps`, schema/code inspection, and
+read-only database queries never require approval. Mutation -- a schema
+or data migration, a seed/reset, or anything else that changes database
+schema/data, infrastructure, external services, or developer
+configuration (e.g. `prisma migrate deploy`/`dev`, `prisma db push`,
+`prisma db seed`, `drizzle-kit push`, `sequelize db:migrate`,
+`rails db:migrate`, `alembic upgrade`, `terraform apply`, `pulumi up`,
+`kubectl apply`, or any command that resets/seeds/truncates/writes a
+database or mutates a remote service or cloud resource) -- is different.
+These are examples of the category, not an exhaustive blacklist: do not
+decide "safe" or "unsafe" by matching a command name alone, and do not
+assume a nominally "test" command is safe merely because of its name --
+if it performs destructive setup, it is still mutation and the rules
+below still apply.
+
+This does **not** mean verification commands may never run a migration
+-- a migration can be an explicit part of the change being verified.
+Before running any command that would mutate state, classify it against
+the proposal, design, specs, and tasks already loaded (Step 2) -- never
+against the implementation alone:
+
+- **Case A -- the mutation is not part of the change being verified**
+  (e.g. tests fail because the local database is out of date, a
+  migration is only needed to make the environment usable, or a
+  seed/reset would merely prepare local state). Do not perform it
+  automatically. Explain what is required and ask the user for explicit
+  approval first.
+- **Case B -- the mutation is explicitly part of the OpenSpec change**
+  (e.g. the change adds a schema migration, acceptance criteria require
+  existing rows to be migrated, a task explicitly requires applying an
+  index migration, or verification must demonstrate an upgrade path
+  succeeds). Then:
+  - If the repository already provides an explicitly disposable
+    verification environment whose creation and reset is already part
+    of the established repository/tooling workflow (e.g. a test
+    database/container the test workflow itself creates and resets),
+    you may exercise the mutation there without asking, provided
+    concrete repo evidence -- not assumption -- shows it cannot affect
+    development/shared/production state and that disposal/reset is
+    genuinely wired into that workflow. Never infer that an environment
+    is disposable merely because its name contains "test".
+  - If verification would instead mutate an existing persistent or
+    shared environment, ask the user first.
+- **Case C -- environment safety cannot be established** from concrete
+  repo evidence either way. Do not mutate it. Ask.
+
+When asking for approval (Case A, the persistent/shared branch of Case
+B, or Case C), state: the exact command that would run; the specific
+environment/resource it would mutate; why the change requires it; and
+whether the mutation is reversible or disposable.
+
+If a mutation is required but not authorized, mark the affected check
+`BLOCKED` (never `NOT VERIFIED`) and state the specific limitation under
+"Gaps and Blockers" -- a withheld mutation is a verification limitation,
+not an implementation defect, unless other independent evidence already
+shows the requirement fails.
+
 **Handling large output:**
 - Always preserve the exact **exit code** of each command -- this is what
   `PASS`/`FAIL`/`BLOCKED` is ultimately based on.
@@ -339,10 +424,14 @@ other file inside the target repository or its Git worktree.
 
 ## Lens Coverage
 
-**Lens applied:** <name from $CE_LENSES_DIR, or "None">
-**Selection rationale:** <why this one was selected, or why none was, in 1-3 sentences>
-**Other lenses considered:** <other lens names found in $CE_LENSES_DIR, or "None found">
-**Lens checks applied:** <the "Lens checks" list from the selected lens's file, or "N/A">
+**Lenses applied:** <comma-separated lens names, in the order applied, or "None">
+**Other lenses considered:** <other lens names found in $CE_LENSES_DIR but not selected, or "None found">
+
+| Lens | Selection rationale | Lens checks applied |
+|---|---|---|
+| <lens name> | <why this one was selected, in 1-3 sentences> | <the "Lens checks" list from this lens's file> |
+
+Or, if none applied: "N/A -- no lens applied."
 
 ## Requirement / Scenario Verification
 
@@ -422,6 +511,12 @@ Run `/adversarial-review` next for independent defect hunting.
   on `ce cleanup`. Never copy such artifacts into the original repository.
 - Do not hardcode verification commands to any specific stack (npm, Docker,
   Prisma, or otherwise) -- discover them from the repository itself.
+- Mutating database schema/data, infrastructure, external services, or
+  developer configuration always requires either a proven disposable
+  environment (established by concrete repo evidence, never inferred
+  from a name containing "test") or explicit user approval -- see
+  "Environment-mutation safety" in Step 8. A withheld mutation is a
+  verification limitation (`BLOCKED`), never converted into a defect.
 - If evidence is ambiguous, state what was found and why it is insufficient.
   Do not guess.
 - Lenses are discovered and read only through `"$CE_LENSES_DIR"` -- never
