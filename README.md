@@ -363,6 +363,25 @@ ce start /path/to/your/repository review-pr-123 --base main --head feature-branc
   that commit range using three-dot diff semantics, instead of
   auto-detecting a base branch.
 
+This is a first-class workflow, not an improvised fallback: `/verify`
+refuses to run entirely (there is no OpenSpec-driven implementation to
+check conformance against), and `/adversarial-review` runs an explicit,
+dedicated **Existing PR review** mode instead of its usual
+Implementation-workspace one —
+
+- it never tries to resolve, require, or invent an OpenSpec change, and
+  never performs proposal/design/tasks/spec conformance checks;
+- its review baseline is the PR description, the target repository's own
+  conventions/documentation, and the commit range itself, instead of
+  OpenSpec artifacts;
+- its report is written to an official, dedicated location inside the
+  OpenSpec store (`<store root>/reviews/<date>-adversarial-review.md`)
+  rather than a change's `reports/` directory, since there is no change.
+
+Everything else about the review — the mindset, the mandatory baseline
+pass, lens selection, the four-axis finding classification, and the
+verdict rules — is identical to the Implementation-workspace flow.
+
 ### Resuming a session
 
 If OpenCode exits (you closed the terminal, it crashed, etc.) but you
@@ -393,14 +412,17 @@ config, wired up automatically):
 | `/propose` | Creates a new OpenSpec change and generates **all** of its artifacts (proposal, design, tasks) in one step — use when you already know roughly what you want built and want to move straight to planning. |
 | `/apply` | Implements the tasks from an OpenSpec change, one at a time, only inside the worktree — marking each task's checkbox as it completes it, and pausing on anything unclear or blocked. |
 | `/verify` | Checks the implementation against the change's proposal, design, specs, and tasks — the **conformance baseline**. Runs discovered test/lint/build commands and writes a report into the OpenSpec store. Never fixes code. **Refuses to run in an `Existing PR review` workspace** (there's no OpenSpec-driven implementation to check conformance against) — use `/adversarial-review` there instead. |
-| `/adversarial-review` | Runs after `/verify` and independently hunts for defects, gaps, and risks the specification itself doesn't describe — assumes flaws exist until argued against with evidence. Challenges `/verify`'s report rather than duplicating it. Never fixes code. |
+| `/adversarial-review` | In an `Implementation` workspace: runs after `/verify` and independently hunts for defects, gaps, and risks the specification itself doesn't describe, challenging `/verify`'s report rather than duplicating it. In an `Existing PR review` workspace: the **only** review step — reviews the commit range directly against the PR description and repository conventions, with no OpenSpec change involved. Never fixes code, either way. |
 | `/archive` | Archives a completed change: checks artifact/task completion, offers to sync delta specs into the main specs, and moves the change into the store's archive. |
 
-The typical order is: `/explore` or `/propose` → `/apply` (repeat as
-needed) → `/verify` → `/adversarial-review` → `/archive`. None of these
-commands ever write OpenSpec files, reports, or harness config inside
-your actual repository or worktree — only inside the external OpenSpec
-store, and (for `/apply`) actual code changes inside the worktree itself.
+In an **Implementation** workspace, the typical order is: `/explore` or
+`/propose` → `/apply` (repeat as needed) → `/verify` → `/adversarial-review`
+→ `/archive`. In an **Existing PR review** workspace, `/adversarial-review`
+is the whole workflow — run it directly, no other command is needed or
+applicable. None of these commands ever write OpenSpec files, reports, or
+harness config inside your actual repository or worktree — only inside
+the external OpenSpec store, and (for `/apply`) actual code changes
+inside the worktree itself.
 
 ### Reasoning lenses
 
@@ -483,6 +505,8 @@ useful for development/testing, not day-to-day use): `CE_HARNESS_HOME`
   workspaces/<project>/<issue>/
     workspace.yml                    # metadata: paths, branch, OpenSpec store id, review range (if any)
     openspec/                        # the external OpenSpec store (proposal, design, specs, tasks, reports, archive)
+                                     #   reviews/ -- Existing PR review workspaces only: /adversarial-review's
+                                     #   dedicated report location, since there is no change to nest reports under
     lenses/                          # canonical reasoning-lens files
     opencode/
       commands/                     # the /workspace, /explore, /propose, /apply, /verify, /adversarial-review, /archive templates

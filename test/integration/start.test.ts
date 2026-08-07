@@ -2365,6 +2365,132 @@ describe("ce start (integration)", () => {
         expect(content).toMatch(/Avoid vague references\./);
       });
     });
+
+    describe("Existing PR review mode (first-class support)", () => {
+      it("detects the workspace type from CE_DIFF_BASE/CE_DIFF_HEAD before resolving anything", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Detect the workspace type before anything else.*if `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set, this is an.*Existing PR review.*workspace/i,
+        );
+        // The detection guidance appears before "## 1. Resolve the review scope".
+        const guardIndex = content.search(/Detect the workspace type before anything else/i);
+        const step1Index = content.search(/^## 1\. Resolve the review scope/m);
+        expect(guardIndex).toBeGreaterThan(-1);
+        expect(step1Index).toBeGreaterThan(-1);
+        expect(guardIndex).toBeLessThan(step1Index);
+      });
+
+      it("never resolves, requires, or invents an OpenSpec change in an Existing PR review workspace", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /never attempt to resolve, require, or\s*create an OpenSpec change here/i,
+        );
+        expect(normalized).toMatch(
+          /never resolve, require, or invent\s*an OpenSpec change/i,
+        );
+      });
+
+      it("never performs proposal/design/tasks/spec conformance checks in review mode", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        const occurrences = normalized.match(
+          /never perform proposal\/design\/tasks\/spec\s*conformance checks/gi,
+        );
+        expect(occurrences?.length ?? 0).toBeGreaterThanOrEqual(2);
+      });
+
+      it("uses the PR description, repository conventions/documentation, and the commit range as the review baseline", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/\*\*The PR description\*\*/i);
+        expect(normalized).toMatch(/gh pr view/);
+        expect(normalized).toMatch(
+          /\*\*Repository conventions and documentation\*\*/i,
+        );
+        expect(normalized).toMatch(/AGENTS\.md.*README.*CONTRIBUTING/i);
+        expect(normalized).toMatch(/\*\*The commit range itself\*\*/i);
+      });
+
+      it("defines an explicit, official report location distinct from a change's reports/ directory", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/mkdir -p "<root\.path>\/reviews"/);
+        expect(content).toMatch(
+          /<root\.path>\/reviews\/<YYYY-MM-DD>-adversarial-review\.md/,
+        );
+        expect(normalized).toMatch(/official, dedicated report location/i);
+        expect(normalized).toMatch(/never invent a different one/i);
+      });
+
+      it("report structure includes both Change and Pull request fields, with guidance to include exactly one", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(/\*\*Review type:\*\* OpenSpec change \/ Existing PR review/);
+        expect(content).toMatch(/\*\*Change:\*\* <changeRoot> -- Implementation workspaces only/);
+        expect(content).toMatch(
+          /\*\*Pull request:\*\*.*-- Existing PR review workspaces only/,
+        );
+        expect(normalized).toMatch(
+          /Include exactly one of \*\*Change:\*\* \/ \*\*Pull request:\*\* below.*never both/i,
+        );
+      });
+
+      it("skips the verify-report-challenge step entirely and records N/A in the report", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\(Implementation workspaces only\)/,
+        );
+        expect(normalized).toMatch(
+          /`\/verify` refuses to run in an Existing PR review workspace.*so there is never a verify report to look for there\. Skip this\s*step entirely/i,
+        );
+        expect(normalized).toMatch(
+          /N\/A -- \/verify does not run in an\s*Existing PR review workspace/i,
+        );
+      });
+
+      it("shares the mindset, baseline pass, lens selection, classification, and verdict rules unchanged across both workspace types", async () => {
+        const content = await readTemplate();
+
+        // These headings/sections are not duplicated per-mode -- exactly one
+        // of each, used by both workspace types.
+        for (const heading of [
+          "## 2. Mindset",
+          "## 6. Baseline adversarial pass",
+          "## 7. Select a lens",
+          "### Classify each finding",
+          "## Overall Verdict",
+        ]) {
+          const occurrences = content.split(heading).length - 1;
+          expect(occurrences).toBe(1);
+        }
+      });
+
+      it("still preserves the intro's dual-mode framing without altering the two locked lidr-specboot sentences verbatim", async () => {
+        const content = await readTemplate();
+
+        // Provenance-locked verbatim sentences (see THIRD_PARTY_NOTICES.md) --
+        // must survive this restructuring unchanged.
+        expect(content).toMatch(
+          /This skill is intended for the verification window of spec-driven\ndevelopment \(after implementation, before archiving\), when the human runs\na different agent or session than the one that implemented the change\./,
+        );
+        expect(content).toMatch(
+          /Do not prescribe which agent, model, or IDE to use\. That is the human's\nchoice\./,
+        );
+
+        expect(content).toMatch(/\*\*Implementation workspace\*\*/);
+        expect(content).toMatch(/\*\*Existing PR review workspace\*\*/);
+      });
+    });
   });
 });
 

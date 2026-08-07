@@ -1,10 +1,10 @@
 ---
-description: Independently hunt for defects, gaps, and risks in an OpenSpec change before archiving -- assumes flaws exist until argued against with evidence
+description: Independently hunt for defects, gaps, and risks in an implementation before archiving, or in an existing pull request -- assumes flaws exist until argued against with evidence
 ---
 
-Act as an **independent adversarial reviewer** for the active OpenSpec
-change: assume gaps, flaws, or unsafe behavior may exist until you have
-argued against them with evidence.
+Act as an **independent adversarial reviewer**: assume gaps, flaws, or
+unsafe behavior may exist until you have argued against them with
+evidence.
 
 This skill is intended for the verification window of spec-driven
 development (after implementation, before archiving), when the human runs
@@ -13,10 +13,33 @@ a different agent or session than the one that implemented the change.
 Do not prescribe which agent, model, or IDE to use. That is the human's
 choice.
 
-This command checks conformance **and** looks beyond it for defects,
-regressions, and risks the specification itself doesn't describe. It runs
-after `/verify` and independently challenges that conformance baseline
-rather than duplicating it. It never modifies the target repository, the
+This command supports two workspace types, first-class -- detect which
+one applies from the workspace's own type (the same distinction `ce
+status`/`/workspace` already report, equivalently whether `CE_DIFF_BASE`/
+`CE_DIFF_HEAD` are set):
+
+- **Implementation workspace** (the default `ce start` flow): reviews an
+  OpenSpec change's implementation. Checks conformance **and** looks
+  beyond it for defects, regressions, and risks the specification itself
+  doesn't describe. Runs after `/verify` and independently challenges
+  that conformance baseline rather than duplicating it.
+- **Existing PR review workspace** (`ce start --base --head`): reviews an
+  already-given commit range directly. There is no OpenSpec change here
+  to check conformance against, and this command never tries to resolve,
+  require, or invent one -- never perform proposal/design/tasks/spec
+  conformance checks in this workspace type. The PR description, the
+  target repository's own conventions and documentation, and the commit
+  range itself are the review baseline instead. `/verify` refuses to run
+  in this workspace type (see its own guard); this command is the only
+  review step here.
+
+Both workspace types share the same adversarial mindset, baseline pass,
+lens selection, finding classification, and verdict rules below -- only
+how the review baseline is established (Steps 1 and 3), whether a prior
+`/verify` report is consulted (Step 4), and the report's identifying
+fields and destination (Step 9) differ. Each step below calls out
+explicitly where the two workspace types diverge; everything not called
+out is identical for both. It never modifies the target repository, the
 worktree, or task checkboxes; it only reads evidence and writes a report
 into the external OpenSpec store.
 
@@ -28,12 +51,25 @@ against. Every `openspec` command below includes
 `--store "$CE_OPENSPEC_STORE"`. All code inspection happens only inside
 `$CE_WORKTREE`.
 
-**Input**: Optionally specify a change name (e.g., `/adversarial-review
-add-auth`). If omitted, infer it from conversation context or auto-select if
-exactly one active change exists; if ambiguous, list changes and ask the
-user to choose. Never guess.
+**Detect the workspace type before anything else**: if `CE_DIFF_BASE` and
+`CE_DIFF_HEAD` are both set, this is an **Existing PR review** workspace
+-- use every "Existing PR review workspace" branch below. Otherwise it is
+an **Implementation workspace** -- use every "Implementation workspace"
+branch below. These two environment variables are the single source of
+truth for this (the same ones `ce status`/`/workspace` already report the
+workspace type from) -- never infer the type any other way, e.g. by
+guessing from whether OpenSpec changes happen to exist.
 
-## 1. Resolve the change
+**Input** (Implementation workspaces only): Optionally specify a change
+name (e.g., `/adversarial-review add-auth`). If omitted, infer it from
+conversation context or auto-select if exactly one active change exists;
+if ambiguous, list changes and ask the user to choose. Never guess. An
+Existing PR review workspace has no change to name -- this input does not
+apply there; proceed directly to Step 1.
+
+## 1. Resolve the review scope
+
+**Implementation workspace:**
 
 ```bash
 openspec list --store "$CE_OPENSPEC_STORE" --json
@@ -49,6 +85,18 @@ Read from the status JSON -- never assume a repo-local `openspec/` path:
 
 If the change cannot be resolved unambiguously, ask the user before
 proceeding.
+
+**Existing PR review workspace:** never attempt to resolve, require, or
+create an OpenSpec change here -- there is none, and none should be
+created to compensate. Only resolve the store's root path, needed for the
+report destination in Step 9:
+
+```bash
+openspec list --store "$CE_OPENSPEC_STORE" --json
+```
+
+Read `root.path` from the JSON -- present even with zero changes, and the
+only piece of OpenSpec state this workspace type ever touches.
 
 ## 2. Mindset
 
@@ -70,10 +118,10 @@ Borrowed from common red-team / adversarial practice:
   evidence; a hunch that isn't backed by anything you actually read is not
   a finding -- say so explicitly instead of inventing one.
 
-## 3. Load the specification side
+## 3. Load the review baseline
 
-Read, in order, whichever of these exist (from `artifactPaths`, inside the
-external store):
+**Implementation workspace:** read, in order, whichever of these exist
+(from `artifactPaths`, inside the external store):
 1. The change's `proposal.md` -- scope and non-goals
 2. The change's `design.md`, if it exists -- technical commitments
 3. All delta specs under the change's `specs/` directory, including their
@@ -84,7 +132,37 @@ Extract the acceptance criteria and explicit non-goals: list what must be
 true for "done." Note anything underspecified -- ambiguous acceptance,
 missing error cases, missing security constraints.
 
-## 4. Check for an existing verify report -- and challenge it
+**Existing PR review workspace:** there is no proposal, design, spec, or
+tasks file, and none should be created to compensate -- never perform
+proposal/design/tasks/spec conformance checks in this workspace type.
+Establish the review baseline from these instead:
+1. **The PR description** -- fetch it if a GitHub remote and the `gh` CLI
+   are available (e.g. `gh pr view --json title,body,baseRefName,
+   headRefName`), or ask the user for it if not available. Extract what
+   the PR claims to do, its stated scope, and any explicit non-goals --
+   the same things the Implementation-workspace branch above extracts
+   from a proposal.
+2. **Repository conventions and documentation** -- read the target
+   repository's own `AGENTS.md`, `README`, `CONTRIBUTING`, or equivalent,
+   inside `$CE_WORKTREE`, for whatever conventions this codebase already
+   documents. Optional and read-only; never assume a particular file
+   exists.
+3. **The commit range itself** (`$CE_DIFF_BASE`..`$CE_DIFF_HEAD`, loaded
+   in Step 5) -- what actually changed is as much a part of the baseline
+   as the PR description's claims are.
+
+Extract the same things the other branch extracts -- what must be true
+for this PR to be correct, and what's underspecified -- just sourced from
+the PR description and repository conventions instead of OpenSpec
+artifacts.
+
+## 4. Check for an existing verify report -- and challenge it (Implementation workspaces only)
+
+`/verify` refuses to run in an Existing PR review workspace (see its own
+guard) -- so there is never a verify report to look for there. Skip this
+step entirely in that workspace type and proceed directly to Step 5;
+record `**Verify report reviewed:** N/A -- /verify does not run in an
+Existing PR review workspace.` in the report (Step 9) instead.
 
 Look for the most recent `<changeRoot>/reports/*-verify.md` file (written by
 a prior `/verify` run), if any.
@@ -153,7 +231,10 @@ file ordering. If neither `main` nor `master` exists as a reachable branch,
 note this as a scope limitation and fall back to reviewing `HEAD` and the
 uncommitted diff only.
 
-Map files and changes to spec sections and tasks.
+**Implementation workspace:** map files and changes to spec sections and
+tasks. **Existing PR review workspace:** map files and changes to the PR
+description's stated scope and to any repository conventions noted in
+Step 3 instead -- there are no spec sections or tasks to map to.
 
 ## 6. Baseline adversarial pass (runner- and lens-independent)
 
@@ -190,9 +271,10 @@ work through all seven of these:
    itself produce incorrect or inconsistent behavior for some inputs,
    users, or timing windows?
 7. **Undocumented scope changes**: does the diff do anything beyond what
-   the proposal/design/tasks describe -- an unrelated refactor, a
-   behavior change with no corresponding spec update, a dependency or
-   config change never mentioned?
+   the review baseline describes -- the proposal/design/tasks in an
+   Implementation workspace, or the PR description in an Existing PR
+   review workspace -- an unrelated refactor, a behavior change with no
+   corresponding update, a dependency or config change never mentioned?
 
 Record what you found for each of the seven, even when the answer is "no
 issue found" -- this becomes the "Baseline Review Coverage" section of
@@ -219,8 +301,10 @@ hardcode any runner-specific path such as `opencode/agents/`.
 2. Otherwise, list every available lens (every `*.md` file directly
    inside `"$CE_LENSES_DIR"`) and read each one's `description`
    frontmatter field.
-3. Compare each description against the proposal, design, specs,
-   scenarios, and tasks loaded above, and the implementation diff just
+3. Compare each description against the review baseline loaded in Step 3
+   (the proposal, design, specs, and tasks in an Implementation
+   workspace, or the PR description and repository conventions in an
+   Existing PR review workspace) and the implementation diff just
    gathered.
 4. If both an operational/runtime concern (execution behavior,
    idempotency, retries, concurrency, checkpoints, partial failure) and a
@@ -253,7 +337,8 @@ report.
 
 ## 8. Adversarial pass (refute, do not rubber-stamp)
 
-For each acceptance criterion or scenario:
+For each acceptance criterion or scenario (Implementation workspace), or
+each PR-description claim (Existing PR review workspace):
 
 1. State how the implementation **could still fail** while the author
    believed it passed: wrong input, partial failure, double-submit, stale
@@ -262,11 +347,15 @@ For each acceptance criterion or scenario:
    IDOR-style access patterns, replay, conflict handling.
 3. Check **tests and any verification artifacts**: do they prove the
    criterion, or only the happy path?
-4. Record **spec-vs-code mismatches** (spec says X, code does Y) as
-   first-class findings.
+4. Record **baseline-vs-code mismatches** (the review baseline says X --
+   a spec in an Implementation workspace, the PR description in an
+   Existing PR review workspace -- but the code does Y) as first-class
+   findings.
 5. Look for missing edge cases, regressions relative to what existed
-   before, incomplete implementation (partially done tasks or scenarios),
-   unsafe behavior, and spec/code drift.
+   before, incomplete implementation (partially done tasks or scenarios
+   in an Implementation workspace; a PR that doesn't fully deliver its
+   own stated scope in an Existing PR review workspace), unsafe behavior,
+   and baseline/code drift.
 6. Fold in whatever the Step 6 baseline pass and the Step 7 lens (if any)
    surfaced -- this step is where every finding from every source gets
    classified, not just what's found fresh here.
@@ -318,7 +407,9 @@ Logic, Auth/Authz, Data integrity, Error handling, Tests, Spec conformance,
 Security, Performance, Docs/Spec, Other: `<label>`.
 
 For each finding, state whether the fix belongs in **code**, **tests**,
-**OpenSpec artifacts** (scenarios, specs, tasks), or **documentation**.
+**OpenSpec artifacts** (scenarios, specs, tasks -- Implementation
+workspaces only, since an Existing PR review workspace has none), or
+**documentation**.
 
 ### Sort each finding into exactly one of two groups
 
@@ -339,31 +430,45 @@ change into a full-system audit -- note it, classify it, and move on.
 
 ## 9. Write the report
 
-Resolve the report destination from `changeRoot` (never construct it by
-hand):
+**Implementation workspace:** resolve the report destination from
+`changeRoot` (never construct it by hand):
 
 ```bash
 mkdir -p "<changeRoot>/reports"
 # write to: <changeRoot>/reports/<YYYY-MM-DD>-adversarial-review.md
 ```
 
-Use today's date in the filename. This directory and file live **only**
-inside the external OpenSpec store at `$CE_OPENSPEC_STORE` -- never create a
-`reports/` directory, `openspec/` directory, `.opencode/` directory, or any
-other file inside the target repository or its Git worktree.
+**Existing PR review workspace:** there is no `changeRoot`. This is the
+**official, dedicated report location** for this workspace type -- resolve
+it from the `root.path` read in Step 1, and never invent a different one:
+
+```bash
+mkdir -p "<root.path>/reviews"
+# write to: <root.path>/reviews/<YYYY-MM-DD>-adversarial-review.md
+```
+
+Either way, use today's date in the filename. This directory and file live
+**only** inside the external OpenSpec store at `$CE_OPENSPEC_STORE` -- never
+create a `reports/` directory, `reviews/` directory, `openspec/` directory,
+`.opencode/` directory, or any other file inside the target repository or
+its Git worktree.
 
 ### Report structure
 
-```markdown
-# Adversarial Review: <change-name>
+Include exactly one of **Change:** / **Pull request:** below, matching
+this workspace's type -- never both, and never invent a third variant.
 
-**Review type:** OpenSpec change
+```markdown
+# Adversarial Review: <change-name (Implementation workspace), or the PR's identifier -- e.g. its head branch name or PR number (Existing PR review workspace)>
+
+**Review type:** OpenSpec change / Existing PR review
 **Date:** YYYY-MM-DD
-**Change:** <changeRoot>
+**Change:** <changeRoot> -- Implementation workspaces only
+**Pull request:** <PR number/URL if known, else the head branch name> -- Existing PR review workspaces only
 **Scope:** <what this review covers>
-**Spec sources:** <artifact paths read>
+**Baseline sources:** <artifact paths read (Implementation workspace), or PR description + repository docs actually read (Existing PR review workspace)>
 **Implementation sources:** <worktree diff range examined>
-**Verify report reviewed:** <path inside changeRoot/reports/, or "None found">
+**Verify report reviewed:** <path inside changeRoot/reports/, or "None found" (Implementation workspace); "N/A -- /verify does not run in an Existing PR review workspace" (Existing PR review workspace)>
 **Scope limitations:** <limitations or "None declared">
 
 > This is an AI-generated review draft. A human reviewer must validate the findings before acting on them or publishing them externally.
@@ -372,9 +477,14 @@ other file inside the target repository or its Git worktree.
 
 ## Requirement Coverage
 
+<!-- "Requirement" means an OpenSpec acceptance criterion in an
+Implementation workspace, or a claim/scope item stated in the PR
+description in an Existing PR review workspace -- same table shape
+either way. -->
+
 | Requirement | Examined? | Outcome | Notes |
 |---|---|---|---|
-| <acceptance criterion text> | Yes / No | Pass / Issues found / N/A | |
+| <acceptance criterion, or PR-description claim/scope item> | Yes / No | Pass / Issues found / N/A | |
 
 **Underspecified areas:** <list or "None">
 
@@ -404,7 +514,7 @@ other file inside the target repository or its Git worktree.
 
 ## Verify Report Challenge
 
-<what was challenged in the existing verify report and what you concluded, or "No verify report found; evidence established from scratch in this review.">
+<what was challenged in the existing verify report and what you concluded, or "No verify report found; evidence established from scratch in this review." (Implementation workspace); "N/A -- /verify does not run in an Existing PR review workspace." (Existing PR review workspace)>
 
 ---
 
@@ -416,11 +526,11 @@ other file inside the target repository or its Git worktree.
 
 ## Findings Affecting This Change
 
-<!-- A finding belongs here only if this change introduces it, worsens it, claims to fix the same behavior/class of problem but misses an in-scope equivalent surface, or depends on the flawed behavior for correctness. This table alone determines the Overall Verdict. -->
+<!-- A finding belongs here only if this change introduces it, worsens it, claims to fix the same behavior/class of problem but misses an in-scope equivalent surface, or depends on the flawed behavior for correctness. This table alone determines the Overall Verdict. "Affected Requirement/Design/Task" means the relevant PR-description claim or code area in an Existing PR review workspace, since there is no requirement/design/task there. -->
 
 | Severity | Confidence | Merge impact | Area | Affected Requirement/Design/Task | Finding | Evidence | Impact | Recommended Fix |
 |---|---|---|---|---|---|---|---|---|
-| BLOCKER / MAJOR / MINOR | High / Medium / Low | Blocking / Non-blocking / Follow-up | Logic / Auth-Authz / Data integrity / Error handling / Tests / Spec conformance / Security / Performance / Docs-Spec / Other: `<label>` | <requirement, design decision, or task> | <what you found> | <file:line, diff hunk, test output> | <what happens if unaddressed> | code / spec / tests / docs |
+| BLOCKER / MAJOR / MINOR | High / Medium / Low | Blocking / Non-blocking / Follow-up | Logic / Auth-Authz / Data integrity / Error handling / Tests / Spec conformance / Security / Performance / Docs-Spec / Other: `<label>` | <requirement, design decision, task, or PR-description claim> | <what you found> | <file:line, diff hunk, test output> | <what happens if unaddressed> | code / spec / tests / docs |
 
 Or, if none: "None found."
 
@@ -476,8 +586,17 @@ separate, explicit step.
 
 **Guardrails**
 - Every `openspec` command must include `--store "$CE_OPENSPEC_STORE"`.
-- Never assume repo-local `openspec/` paths -- always resolve `changeRoot`
-  and `artifactPaths` from the CLI's JSON output.
+- Never assume repo-local `openspec/` paths -- always resolve
+  `changeRoot`/`artifactPaths` (Implementation workspaces) or `root.path`
+  (Existing PR review workspaces) from the CLI's JSON output.
+- In an Existing PR review workspace, never resolve, require, or invent
+  an OpenSpec change, and never perform proposal/design/tasks/spec
+  conformance checks -- the PR description, repository conventions and
+  documentation, and the commit range are the review baseline instead
+  (Step 3). Its report always lives at the official
+  `<root.path>/reviews/<date>-adversarial-review.md` location (Step 9) --
+  never `<changeRoot>/reports/`, since there is no change, and never any
+  other invented location.
 - Never invent a finding you don't have evidence for -- every finding must
   state the affected requirement/design decision/task, its impact, its
   Area, its Confidence, its Merge impact, and a recommended fix. Evidence
@@ -507,7 +626,9 @@ separate, explicit step.
 - Do not duplicate the full verification pass when a recent verify report
   already exists and is trustworthy for a given item -- reuse it, but
   actively challenge its assumptions, gaps, blocked items, and PASS verdict
-  rather than accepting it at face value.
+  rather than accepting it at face value. (Implementation workspaces
+  only -- an Existing PR review workspace never has a verify report to
+  consult; see Step 4.)
 - Never modify product/application code. This command reviews; it does not
   implement or fix.
 - Never check, uncheck, or otherwise edit `tasks.md` or any other OpenSpec
