@@ -40,6 +40,12 @@ import {
 import { formatLaunchCommand, launchOpenCode } from "../core/opencode.js";
 import { createOpenCodeConfig, expectedOpenCodeConfigDir } from "../core/opencodeConfig.js";
 import { createLensesDir, expectedLensesDir } from "../core/lenses.js";
+import {
+  expectedCodeGraphOpenCodeConfigPath,
+  initializeCodeGraph,
+  writeCodeGraphOpenCodeConfig,
+  type CodeGraphResult,
+} from "../core/codeGraph.js";
 
 export interface StartOptions {
   repo: string;
@@ -168,6 +174,11 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
   let workspaceDirCreated = false;
   let storeRegistered = false;
   let activePointerWritten = false;
+  let codeGraphResult: CodeGraphResult = {
+    available: false,
+    managedByHarness: false,
+    reason: "CodeGraph setup was not attempted.",
+  };
 
   try {
     await mkdir(dirname(worktreePath), { recursive: true });
@@ -181,6 +192,24 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     await createLensesDir(workspacePath);
     // Both directories are nested under workspacePath, so workspace rollback
     // and cleanup cover them.
+
+    // Optional CodeGraph (semantic code navigation) provisioning, scoped
+    // entirely to this isolated worktree -- never the target repository.
+    // Never allowed to fail `ce start` itself: initializeCodeGraph never
+    // throws by contract, and this call site adds a second, defensive
+    // layer around both it and the config-write step.
+    try {
+      codeGraphResult = await initializeCodeGraph(worktreePath);
+      if (codeGraphResult.available) {
+        await writeCodeGraphOpenCodeConfig(workspacePath, worktreePath);
+      }
+    } catch (error) {
+      codeGraphResult = {
+        available: false,
+        managedByHarness: false,
+        reason: `CodeGraph setup encountered an unexpected error: ${(error as Error).message}`,
+      };
+    }
 
     const setupResult = await setupStore(workspacePath, openSpecStoreId, openSpecRoot);
     if (!setupResult.success) {
@@ -212,6 +241,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
         root: openSpecRoot,
       },
       ...(diffBase && diffHead ? { diffBase, diffHead, diffMergeBase } : {}),
+      codeGraph: codeGraphResult,
     };
     await writeWorkspace(workspace);
 
@@ -258,6 +288,15 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
   if (diffBase && diffHead) {
     launchEnv.CE_DIFF_BASE = diffBase;
     launchEnv.CE_DIFF_HEAD = diffHead;
+  }
+  // Generic, provider-agnostic capability signal for templates -- never
+  // a CodeGraph-specific variable name. Only present when a semantic
+  // code navigation index was actually provisioned and wired up this
+  // session; absent otherwise, exactly like CE_DIFF_BASE/CE_DIFF_HEAD.
+  if (codeGraphResult.available) {
+    launchEnv.CE_CODE_NAV_AVAILABLE = "1";
+    launchEnv.CE_CODE_NAV_PROVIDER = "codegraph";
+    launchEnv.OPENCODE_CONFIG = expectedCodeGraphOpenCodeConfigPath(workspacePath);
   }
   const launchResult = await launchOpenCode({ cwd: worktreePath, env: launchEnv });
   if (!launchResult.launched) {

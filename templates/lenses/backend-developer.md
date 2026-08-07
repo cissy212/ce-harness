@@ -42,11 +42,17 @@ this produces reviews that miss the real problems.
 2. Check the project's manifest (`package.json`, `pyproject.toml`,
    `Cargo.toml`, `go.mod`, `Gemfile`, or equivalent) for the tech stack,
    scripts, and workspace layout.
-3. If a `.codegraph/` index exists at or above the project root, use
-   `codegraph_explore` as the primary exploration tool -- name the
+3. If the workspace reports semantic code navigation as available
+   (`CE_CODE_NAV_AVAILABLE` set -- never assume this without checking;
+   ce-harness only wires it up opportunistically), use it as the primary
+   exploration tool: for the `codegraph` provider (check
+   `CE_CODE_NAV_PROVIDER`), that means `codegraph_explore` -- name the
    symbols, files, or call chains relevant to the change; it returns
    verbatim source and call paths in one round-trip. Fall back to
-   targeted Grep and Read only when no index is present.
+   targeted Grep and Read when unavailable or insufficient. Either way,
+   confirm anything cited as evidence against the actual current source
+   before citing it -- this accelerates discovery, it never substitutes
+   for reading the exact line you cite.
 
 Then characterise the existing architecture by answering, from the code
 itself:

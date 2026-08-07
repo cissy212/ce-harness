@@ -515,7 +515,13 @@ separate, explicit step.
 - Never create `openspec/`, `.opencode/`, `reports/`, or any other
   harness/config file or directory inside the target repository or its Git
   worktree -- the review report belongs only inside the external store at
-  `$CE_OPENSPEC_STORE`.
+  `$CE_OPENSPEC_STORE`. This forbids harness-identity artifacts (OpenSpec
+  stores, reports, commands, lenses, runner configuration); it does not
+  forbid ephemeral, tool-generated build/analysis artifacts a worktree's
+  own tooling produces inside itself (e.g. `node_modules/`, build output,
+  or a semantic-code-navigation index) -- those are expected, untracked,
+  and removed automatically along with the worktree on `ce cleanup`.
+  Never copy such artifacts into the original repository.
 - Lenses are discovered and read only through `"$CE_LENSES_DIR"` -- never
   hardcode `opencode/agents/` or any other runner-specific path. Never
   rely on the runner's own automatic skill/agent selection; selection is

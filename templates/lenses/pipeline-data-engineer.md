@@ -40,11 +40,17 @@ Skipping this produces reviews that miss the real problems.
    these often encode the operational contracts between stages.
 2. Check the project's manifest for its script/job inventory -- treat it
    as the authoritative list of runnable pipelines.
-3. If a `.codegraph/` index exists at or above the project root, use
-   `codegraph_explore` as the primary exploration tool -- name the
+3. If the workspace reports semantic code navigation as available
+   (`CE_CODE_NAV_AVAILABLE` set -- never assume this without checking;
+   ce-harness only wires it up opportunistically), use it as the primary
+   exploration tool: for the `codegraph` provider (check
+   `CE_CODE_NAV_PROVIDER`), that means `codegraph_explore` -- name the
    pipeline entry points, work-selection functions, and write functions
-   relevant to the task. Fall back to targeted Grep and Read only when no
-   index is present.
+   relevant to the task. Fall back to targeted Grep and Read when
+   unavailable or insufficient. Either way, confirm anything cited as
+   evidence against the actual current source before citing it -- this
+   accelerates discovery, it never substitutes for reading the exact
+   line you cite.
 
 Then map the pipeline under inspection by answering, from the code itself:
 

@@ -29,6 +29,7 @@ import {
   isStoreRegistered,
   unregisterStore,
 } from "../core/openspec.js";
+import { filterHarnessManagedChanges } from "../core/worktreeArtifacts.js";
 
 export interface CleanupOptions {
   force?: boolean;
@@ -106,18 +107,38 @@ export async function cleanupCommand({ force = false }: CleanupOptions): Promise
     }
   }
 
+  // Git's own `worktree remove` refuses whenever *any* untracked or
+  // modified file is present -- including a harmless, harness-managed
+  // artifact like a CodeGraph index -- unless `--force` is passed at the
+  // git level. `effectiveGitForce` auto-elevates only that git-level
+  // call, and only in the one case already proven safe by the check
+  // above: every raw change is accounted for by harness-managed
+  // artifacts. It is never set just because the user's own `--force`
+  // flag is absent, and a real, significant change always still requires
+  // the user to pass `--force` themselves (the throw above already
+  // guards that).
+  let effectiveGitForce = force;
   if (existsSync(workspace.worktreePath)) {
     const changes = await statusPorcelain(workspace.worktreePath);
-    if (changes.length > 0 && !force) {
+    // Excludes only entries proven, via cross-checked workspace metadata,
+    // to be a harness-managed ephemeral artifact (e.g. a CodeGraph index
+    // ce-harness itself provisioned inside this worktree) -- never a
+    // by-name exclusion, and never anything that could hide a real
+    // tracked-file change from this safety gate.
+    const significantChanges = filterHarnessManagedChanges(changes, workspace);
+    if (significantChanges.length > 0 && !force) {
       throw new CeError(
-        `Worktree at "${workspace.worktreePath}" has ${changes.length} tracked or untracked change(s).`,
+        `Worktree at "${workspace.worktreePath}" has ${significantChanges.length} tracked or untracked change(s).`,
         "Re-run with `ce cleanup --force` to discard these changes, or commit/copy them out first.",
       );
+    }
+    if (changes.length > 0 && significantChanges.length === 0) {
+      effectiveGitForce = true;
     }
   }
 
   if (existsSync(workspace.worktreePath)) {
-    await removeWorktree(workspace.repositoryPath, workspace.worktreePath, force);
+    await removeWorktree(workspace.repositoryPath, workspace.worktreePath, effectiveGitForce);
   }
 
   await deleteBranch(workspace.repositoryPath, workspace.internalBranch);

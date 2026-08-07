@@ -17,6 +17,7 @@ import {
   teardownFakeOpenCode,
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
+import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
 
 describe("ce start (integration)", () => {
   let harnessHomeDir: string;
@@ -32,6 +33,10 @@ describe("ce start (integration)", () => {
     repoDir = await createTempRepo();
     fakeOpenSpec = await setupFakeOpenSpec();
     fakeOpenCode = await setupFakeOpenCode();
+    // Deterministic regardless of whether this machine happens to have
+    // the real `codegraph` on PATH -- CodeGraph behavior itself is
+    // covered by test/integration/codeGraph.test.ts.
+    process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
   });
 
   afterEach(async () => {
@@ -43,6 +48,7 @@ describe("ce start (integration)", () => {
     process.exitCode = originalExitCode;
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
+    delete process.env.CE_CODEGRAPH_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });
@@ -268,7 +274,13 @@ describe("ce start (integration)", () => {
         CE_LENSES_DIR: join(workspace.workspacePath, "lenses"),
         CE_DIFF_BASE: null,
         CE_DIFF_HEAD: null,
+        // CodeGraph is forced unavailable for this suite (see beforeEach);
+        // its availability/env-injection behavior is covered in
+        // test/integration/codeGraph.test.ts.
+        CE_CODE_NAV_AVAILABLE: null,
+        CE_CODE_NAV_PROVIDER: null,
         OPENCODE_CONFIG_DIR: join(workspace.workspacePath, "opencode"),
+        OPENCODE_CONFIG: null,
       });
     });
 

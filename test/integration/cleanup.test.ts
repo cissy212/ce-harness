@@ -16,6 +16,7 @@ import {
   teardownFakeOpenCode,
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
+import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
 
 describe("ce cleanup (integration)", () => {
   let harnessHomeDir: string;
@@ -31,6 +32,10 @@ describe("ce cleanup (integration)", () => {
     repoDir = await createTempRepo();
     fakeOpenSpec = await setupFakeOpenSpec();
     fakeOpenCode = await setupFakeOpenCode();
+    // Deterministic regardless of whether this machine happens to have
+    // the real `codegraph` on PATH -- CodeGraph behavior itself is
+    // covered by test/integration/codeGraph.test.ts.
+    process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
   });
 
   afterEach(async () => {
@@ -43,6 +48,7 @@ describe("ce cleanup (integration)", () => {
     process.exitCode = originalExitCode;
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
+    delete process.env.CE_CODEGRAPH_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });

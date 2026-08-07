@@ -49,9 +49,15 @@ Skipping this produces reviews that miss the real problems.
    eslint accessibility plugin, prior audit output) and treat any
    existing findings as evidence to read, not something to re-derive
    from scratch.
-4. If a `.codegraph/` index exists at or above the project root, use
+4. If the workspace reports semantic code navigation as available
+   (`CE_CODE_NAV_AVAILABLE` set -- never assume this without checking;
+   ce-harness only wires it up opportunistically), use it: for the
+   `codegraph` provider (check `CE_CODE_NAV_PROVIDER`), that means
    `codegraph_explore` to find the components or templates relevant to
-   the change. Fall back to targeted Grep and Read otherwise.
+   the change. Fall back to targeted Grep and Read when unavailable or
+   insufficient. Either way, confirm anything cited as evidence against
+   the actual current source before citing it -- this accelerates
+   discovery, it never substitutes for reading the exact line you cite.
 
 Then characterise what exists today:
 

@@ -52,10 +52,16 @@ Skipping this produces reviews that miss the real problems.
    build/declaration configuration (project references, module
    resolution, emitted `.d.ts` files) -- the latter has a wider blast
    radius than a single file's types.
-4. If a `.codegraph/` index exists at or above the project root, use
+4. If the workspace reports semantic code navigation as available
+   (`CE_CODE_NAV_AVAILABLE` set -- never assume this without checking;
+   ce-harness only wires it up opportunistically), use it: for the
+   `codegraph` provider (check `CE_CODE_NAV_PROVIDER`), that means
    `codegraph_explore` to trace where a type or generic is actually
    consumed across the codebase. Fall back to targeted Grep and Read
-   otherwise.
+   when unavailable or insufficient. Either way, confirm anything cited
+   as evidence against the actual current source before citing it --
+   this accelerates discovery, it never substitutes for reading the
+   exact line you cite.
 
 Then characterise existing type conventions:
 

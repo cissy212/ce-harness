@@ -14,6 +14,29 @@ export const OpenSpecMetadataSchema = z.object({
 
 export type OpenSpecMetadata = z.infer<typeof OpenSpecMetadataSchema>;
 
+/**
+ * Optional semantic-code-navigation adapter state (CodeGraph today).
+ * `available`/`managedByHarness` are independent flags: this
+ * implementation only ever sets `available: true` when
+ * `managedByHarness` is also true (ce-harness never wires up navigation
+ * for an index it did not create and cannot vouch for), but the schema
+ * does not hard-couple them, in case a future adapter safely verifies a
+ * pre-existing index without claiming ownership of it.
+ */
+export const CodeGraphMetadataSchema = z
+  .object({
+    available: z.boolean(),
+    managedByHarness: z.boolean(),
+    indexPath: z.string().min(1).optional(),
+    initializedAt: z.string().min(1).optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .refine((c) => !c.available || (c.indexPath !== undefined && c.initializedAt !== undefined), {
+    message: "available CodeGraph metadata requires indexPath and initializedAt",
+  });
+
+export type CodeGraphMetadata = z.infer<typeof CodeGraphMetadataSchema>;
+
 export const WorkspaceSchema = z
   .object({
     project: z.string().min(1),
@@ -40,6 +63,10 @@ export const WorkspaceSchema = z
     // effective comparison point without recomputing it. Only ever set
     // together with diffBase/diffHead.
     diffMergeBase: z.string().min(1).optional(),
+    // Optional: older workspace files predate the semantic-code-navigation
+    // integration and have no codeGraph block. Readers must treat its
+    // absence as valid, exactly like the openSpec block above.
+    codeGraph: CodeGraphMetadataSchema.optional(),
   })
   .refine((w) => (w.diffBase === undefined) === (w.diffHead === undefined), {
     message: "diffBase and diffHead must both be present or both be absent",

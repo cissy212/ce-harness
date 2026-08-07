@@ -4,6 +4,7 @@ import { readActivePointer, readWorkspace, resolveTrustedOpenSpec } from "../cor
 import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
 import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
 import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
+import { filterHarnessManagedChanges } from "../core/worktreeArtifacts.js";
 
 export async function statusCommand(): Promise<void> {
   const pointer = await readActivePointer();
@@ -20,7 +21,13 @@ export async function statusCommand(): Promise<void> {
   let changesSummary = "worktree does not exist";
   if (worktreeExists) {
     const changes = await statusPorcelain(workspace.worktreePath);
-    changesSummary = changes.length === 0 ? "clean" : `${changes.length} changed file(s)`;
+    // Excludes only entries proven, via cross-checked workspace metadata,
+    // to be a harness-managed ephemeral artifact (e.g. a CodeGraph index
+    // ce-harness itself provisioned) -- never a by-name exclusion, and
+    // never anything that could hide a real tracked-file change.
+    const significantChanges = filterHarnessManagedChanges(changes, workspace);
+    changesSummary =
+      significantChanges.length === 0 ? "clean" : `${significantChanges.length} changed file(s)`;
   }
 
   console.log(`Project:          ${workspace.project}`);
@@ -55,6 +62,20 @@ export async function statusCommand(): Promise<void> {
   console.log(
     `Lenses dir exists: ${lensesDirExists(workspace.workspacePath) ? "yes" : "no"}`,
   );
+
+  // Workspaces created before the semantic-code-navigation integration
+  // have no codeGraph block; skip this section entirely rather than
+  // printing placeholder lines, same convention as the OpenSpec section
+  // below.
+  if (workspace.codeGraph) {
+    if (workspace.codeGraph.available) {
+      console.log(
+        `CodeGraph:        available (index at ${workspace.codeGraph.indexPath}, initialized ${workspace.codeGraph.initializedAt})`,
+      );
+    } else {
+      console.log(`CodeGraph:        not available (${workspace.codeGraph.reason ?? "unknown reason"})`);
+    }
+  }
 
   // Workspaces created without OpenSpec metadata have no openSpec block;
   // skip the OpenSpec section entirely rather than printing placeholder

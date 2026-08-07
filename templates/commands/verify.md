@@ -74,14 +74,27 @@ optional and read-only; never assume any particular file exists.
 
 ## 3. Inspect the implementation in `$CE_WORKTREE`
 
-Use CodeGraph first when `.codegraph/` exists at the worktree root:
+Use semantic code navigation first, but only when the workspace reports it
+as available: check `CE_CODE_NAV_AVAILABLE` before assuming any specific
+tool exists -- ce-harness never guarantees this capability, it only wires
+it up opportunistically when a provider was detected and successfully
+initialized for this exact workspace. If `CE_CODE_NAV_AVAILABLE` is unset,
+skip straight to Grep/Read below; this is not a failure.
+
+If it is set, check `CE_CODE_NAV_PROVIDER` to know which tool backs it.
+For the `codegraph` provider:
 
 ```
 mcp__codegraph__codegraph_explore: query the symbols and call paths relevant to the change
 ```
 
-Fall back to targeted Grep and Read calls inside `$CE_WORKTREE` when CodeGraph
-is unavailable or its output is insufficient.
+Fall back to targeted Grep and Read calls inside `$CE_WORKTREE` whenever
+`CE_CODE_NAV_AVAILABLE` is unset, or the available provider's output is
+insufficient. Either way, before citing anything discovered through
+semantic navigation as evidence in the report, confirm it against the
+actual current source (Read the cited file:line directly) -- semantic
+navigation accelerates discovery, it never substitutes for reading the
+exact line you are about to cite.
 
 Determine the diff scope, entirely inside `$CE_WORKTREE`:
 
@@ -262,6 +275,19 @@ informative; a missing result is not.
   never your own compressed summary of it, and never a compression
   tool's interpretation presented as if it were the original output.
 
+**Optional terminal-output compression (`rtk`):** ce-harness never
+installs or configures this -- it is not wired into any hook or plugin,
+and it is never on by default. If (and only if) an `rtk` executable
+happens to already be on `PATH`, you may explicitly invoke it for the
+specific noisy commands above (e.g. `rtk test <cmd>`, `rtk lint`,
+`rtk tsc`, `rtk cargo build`, a package install command, `rtk git
+status`, or a bounded `rtk git log`) instead of running them directly.
+**Never** run the review diff, an `openspec` JSON call, merge-base
+resolution, or any command whose output you intend to cite as evidence
+through `rtk` -- those must always run unwrapped, exactly as instructed
+above. If `rtk`'s output is ambiguous, re-run the same command without
+the `rtk` prefix for the full raw output.
+
 ## 9. Write the report
 
 Resolve the report destination from `changeRoot` (never construct it by
@@ -291,7 +317,7 @@ other file inside the target repository or its Git worktree.
 
 ## Evidence Examined
 
-<list of artifacts read (proposal, design, specs, tasks), files inspected in $CE_WORKTREE, and any tools used (CodeGraph, grep, etc.)>
+<list of artifacts read (proposal, design, specs, tasks), files inspected in $CE_WORKTREE, and any tools used (semantic code navigation, grep, etc.)>
 
 ## Lens Coverage
 
@@ -369,7 +395,13 @@ Run `/adversarial-review` next for independent defect hunting.
 - Never create `openspec/`, `.opencode/`, `reports/`, or any other
   harness/config file or directory inside the target repository or its Git
   worktree -- the verification report belongs only inside the external store
-  at `$CE_OPENSPEC_STORE`.
+  at `$CE_OPENSPEC_STORE`. This forbids harness-identity artifacts
+  (OpenSpec stores, reports, commands, lenses, runner configuration); it
+  does not forbid ephemeral, tool-generated build/analysis artifacts a
+  worktree's own tooling produces inside itself (e.g. `node_modules/`,
+  build output, or a semantic-code-navigation index) -- those are
+  expected, untracked, and removed automatically along with the worktree
+  on `ce cleanup`. Never copy such artifacts into the original repository.
 - Do not hardcode verification commands to any specific stack (npm, Docker,
   Prisma, or otherwise) -- discover them from the repository itself.
 - If evidence is ambiguous, state what was found and why it is insufficient.
