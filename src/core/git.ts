@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { execa } from "execa";
 import { CeError } from "./errors.js";
 
@@ -20,6 +22,24 @@ export async function resolveRepoRoot(path: string): Promise<string> {
     );
   }
   return result.stdout.trim();
+}
+
+/**
+ * Validates and resolves a user-supplied repository path down to its
+ * canonical Git repository root: the path must exist, and must be (or
+ * be inside) a Git repository. Shared by every command that takes a
+ * `<repo>` argument (`ce start`, `ce review`) so this validation is
+ * never duplicated or allowed to drift between them.
+ */
+export async function resolveTargetRepo(repoPath: string): Promise<string> {
+  if (!existsSync(repoPath)) {
+    throw new CeError(
+      `Repository path "${repoPath}" does not exist.`,
+      "Check the path and try again.",
+    );
+  }
+  const canonicalRepoPath = await realpath(repoPath);
+  return resolveRepoRoot(canonicalRepoPath);
 }
 
 /** Returns porcelain status lines; empty array means a clean tree. */
@@ -86,6 +106,32 @@ export async function resolveMergeBase(
     );
   }
   return result.stdout.trim();
+}
+
+/**
+ * Fetches `refspec` from `remote` into `repoPath`. This is the only
+ * function in ce-harness that ever fetches over the network -- used
+ * exclusively by `ce review` (never by `ce start`, which requires refs
+ * to already exist locally). Callers are expected to pass an explicit
+ * destination (e.g. `+refs/pull/123/head:refs/ce-harness/reviews/pr-123/head`)
+ * so the fetched commit is durably reachable via a real ref rather than
+ * the ephemeral `FETCH_HEAD`, and so nothing under `refs/heads/*` (a
+ * local branch) is ever created or moved by a fetch.
+ */
+export async function fetchRefspec(repoPath: string, remote: string, refspec: string): Promise<void> {
+  const result = await git(repoPath, ["fetch", remote, refspec]);
+  if (result.exitCode !== 0) {
+    throw new CeError(
+      `Failed to fetch "${refspec}" from "${remote}" in "${repoPath}": ${result.stderr.trim()}`,
+      `Confirm "${remote}" is a valid remote for this repository and that the ref exists there, then try again.`,
+    );
+  }
+}
+
+/** True if `sha` resolves to a commit already present locally. Never fetches, never throws. */
+export async function commitExists(repoPath: string, sha: string): Promise<boolean> {
+  const result = await git(repoPath, ["cat-file", "-e", `${sha}^{commit}`]);
+  return result.exitCode === 0;
 }
 
 export async function branchExists(repoPath: string, branch: string): Promise<boolean> {

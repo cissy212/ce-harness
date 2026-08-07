@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CeError } from "../core/errors.js";
 import { deriveProjectName, sanitizeIssue } from "../core/sanitize.js";
@@ -17,7 +17,7 @@ import {
   removeWorktree,
   resolveCommit,
   resolveMergeBase,
-  resolveRepoRoot,
+  resolveTargetRepo,
 } from "../core/git.js";
 import {
   clearActivePointer,
@@ -65,15 +65,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     );
   }
 
-  if (!existsSync(repo)) {
-    throw new CeError(
-      `Repository path "${repo}" does not exist.`,
-      "Check the path and try again.",
-    );
-  }
-
-  const canonicalRepoPath = await realpath(repo);
-  const repoRoot = await resolveRepoRoot(canonicalRepoPath);
+  const repoRoot = await resolveTargetRepo(repo);
 
   if (await isDirty(repoRoot)) {
     throw new CeError(

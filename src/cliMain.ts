@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { startCommand } from "./commands/start.js";
+import { reviewCommand } from "./commands/review.js";
 import { statusCommand } from "./commands/status.js";
 import { cleanupCommand } from "./commands/cleanup.js";
 import { resumeCommand } from "./commands/resume.js";
@@ -54,6 +55,26 @@ export async function runCli(): Promise<void> {
     .option("--head <ref>", "exact head ref/commit to review to (requires --base)")
     .action(async (repo: string, issue: string, options: { base?: string; head?: string }) => {
       await run(() => startCommand({ repo, issue, base: options.base, head: options.head }));
+    });
+
+  program
+    .command("review")
+    .description(
+      [
+        "Start an Existing PR review workspace directly from a GitHub PR",
+        "number: resolves the PR's exact base/head commits via the `gh`",
+        "CLI, fetches only what's needed to make them available locally",
+        "(never switching branches, never touching the original repository's",
+        "working tree), and reuses the same review-workspace flow `ce start",
+        "--base --head` uses. Defaults the issue identifier to",
+        "`review-pr-<number>`. Requires the `gh` CLI installed and",
+        "authenticated; `ce start` itself remains entirely GitHub-independent.",
+      ].join(" "),
+    )
+    .argument("<repo>", "path to the target Git repository")
+    .argument("<pr-number>", "GitHub pull request number")
+    .action(async (repo: string, prNumber: string) => {
+      await run(() => reviewCommand({ repo, prNumber }));
     });
 
   program

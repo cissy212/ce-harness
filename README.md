@@ -21,6 +21,7 @@ called out explicitly).
   - [Core concepts](#core-concepts)
   - [Quick start](#quick-start)
   - [`ce` command reference](#ce-command-reference)
+  - [Reviewing a GitHub pull request](#reviewing-a-github-pull-request)
   - [Reviewing an existing pull request or commit range](#reviewing-an-existing-pull-request-or-commit-range)
   - [Resuming a session](#resuming-a-session)
   - [The workflow inside OpenCode](#the-workflow-inside-opencode)
@@ -43,6 +44,13 @@ You need all four of the following installed before you start:
 - **The OpenCode CLI** — the tool ce-harness launches inside each worktree.
 - **The OpenSpec CLI** — the tool ce-harness uses to manage specs for each
   change.
+
+Optionally, if you want to use `ce review` (see
+[Reviewing a GitHub pull request](#reviewing-a-github-pull-request)):
+
+- **The [`gh` CLI](https://cli.github.com)**, installed and authenticated
+  (`gh auth login`). Every other command, including `ce start --base
+  --head`, has no GitHub dependency at all.
 
 The next sections install each of these one at a time.
 
@@ -304,6 +312,23 @@ does **not** roll the workspace back — the workspace is still valid and
 active, so just run `ce resume` (see [Resuming a session](#resuming-a-session))
 instead of re-running `ce start`.
 
+#### `ce review <repo> <pr-number>`
+
+The convenient way to review a GitHub pull request when all you know is
+the local repository path and the PR number — see
+[Reviewing a GitHub pull request](#reviewing-a-github-pull-request).
+Resolves the PR's exact base/head commits via the `gh` CLI, fetches only
+what's needed to make them available locally, and starts the same
+Existing PR review workspace `ce start --base --head` would, with the
+issue identifier defaulted to `review-pr-<number>`.
+
+- `<repo>` — path to your existing local clone (same requirement as
+  `ce start`).
+- `<pr-number>` — the PR's number, as a positive integer.
+- Requires the `gh` CLI installed and authenticated (`gh auth status`).
+  `ce start` itself has no GitHub dependency at all — only `ce review`
+  does.
+
 #### `ce resume`
 
 Re-enters the active workspace: relaunches OpenCode with exactly the
@@ -349,12 +374,61 @@ worktree changes; removes harness-owned files even if unregistering the
 store failed). It never bypasses the "your shell is inside the worktree"
 check — always `cd` elsewhere first.
 
+### Reviewing a GitHub pull request
+
+The quickest way to review a GitHub PR when all you know is the local
+repository path and the PR number:
+
+```bash
+ce review /path/to/repo 119
+
+# OpenCode opens
+/adversarial-review
+
+# if OpenCode closes
+ce resume
+
+# when finished
+ce cleanup
+```
+
+`ce review` resolves the PR's exact base/head commits via the `gh` CLI
+(installed and authenticated — see [Prerequisites](#1-prerequisites)),
+fetches only what's needed to make those exact commits available
+locally (it never switches your current branch, never touches your
+working tree, and never assumes the PR's head branch exists on
+`origin` — same-repo and fork PRs both work), and starts the same
+Existing PR review workspace described below, with the issue
+identifier defaulted to `review-pr-<number>` so you never have to name
+it yourself. Before OpenCode launches, it prints a concise summary:
+
+```
+GitHub PR #119
+Dashboard api wiring contacts
+
+Base: main      9392fe9
+Head: dashboard-api-wiring-contacts  8fb7148
+
+Workspace type: Existing PR review
+```
+
+If `gh` is missing, unauthenticated, or can't resolve the PR, `ce
+review` fails with an actionable error before creating anything
+persistent — exactly like every other `ce start`-family pre-flight
+check.
+
+`ce review` is the convenient, GitHub-specific path. For any other exact
+commit range — not from GitHub, or already fetched by some other means
+— use the generic, manual path below instead.
+
 ### Reviewing an existing pull request or commit range
 
-By default, `ce start` reviews "whatever changes on top of `main`/`master`"
-— the normal in-progress-work case. To instead review an **exact,
-already-existing commit range** (for example, an open or already-merged
-pull request), pass both `--base` and `--head`:
+`ce start --base --head` is the generic, exact-commit-range workflow
+underneath `ce review` (and the only option for a non-GitHub commit
+range). By default, `ce start` reviews "whatever changes on top of
+`main`/`master`" — the normal in-progress-work case. To instead review
+an **exact, already-existing commit range** (for example, an open or
+already-merged pull request) yourself, pass both `--base` and `--head`: 
 
 ```bash
 ce start /path/to/your/repository review-pr-123 --base main --head feature-branch
@@ -670,3 +744,20 @@ exist in your local clone. Run `git fetch` (or pull the branch you need)
 in the target repository first, then try again. If it reports the two
 refs share no common history at all, double-check you passed the
 branches/commits you actually intended to compare.
+
+### `ce review` fails with a `gh`-related error
+
+- **"not installed or could not be run"** — the `gh` CLI isn't on the
+  `PATH` `ce` sees. Confirm with `command -v gh`, then install it from
+  <https://cli.github.com>.
+- **"not authenticated"** — run `gh auth login`, then try again.
+- **"Could not resolve pull request #..."** — double-check the PR number
+  and that `<repo>`'s `origin` remote actually points at that PR's
+  repository; `gh`'s own error message (included in the output) usually
+  says exactly what went wrong.
+- **"could not be found" after a successful fetch** — rare: the PR was
+  updated (e.g. force-pushed) between resolution and fetch. Just run
+  `ce review` again.
+
+None of these leave anything behind to clean up — every check above
+happens before `ce review` creates any worktree, workspace, or branch.
