@@ -546,10 +546,10 @@ The lenses shipped today:
 |---|---|
 | `backend-developer` | Backend/server-side code in any language: module boundaries, data access, dependency management, type safety, error handling, testability, database/query design. |
 | `frontend-developer` | Client/UI code in any framework: component boundaries, state ownership, rendering behavior, data-fetching and loading/error states, event handling, DOM/browser behavior. |
-| `typescript-engineer` | TypeScript's type system specifically: soundness, narrowing, generics, discriminated unions, variance, module/declaration boundaries, `any`/`unknown` handling. |
+| `typescript-engineer` | TypeScript's type system specifically: type soundness, narrowing, generics, discriminated unions, variance, module/declaration boundaries, `any`/`unknown` handling. |
 | `accessibility-reviewer` | User-facing markup/UI for accessibility: semantic structure, ARIA usage, keyboard operability, focus management, color/contrast. |
-| `security-reviewer` | Security: trust boundaries, input validation, injection, authn/authz, secrets handling, dependency/supply-chain risk. |
-| `pipeline-data-engineer` | Data pipelines, ingestion jobs, ETL/ELT, scheduled tasks, scraping/enrichment, or any long-running operational script where execution behavior under failure, retry, or concurrency matters. |
+| `security-reviewer` | Security: trust boundaries, input validation, injection, authentication/authorization, secrets handling, dependency/supply-chain risk. |
+| `pipeline-data-engineer` | Data pipelines, ingestion jobs, scheduled tasks, ETL/ELT workflows, scraping or enrichment pipelines, synchronization processes, or long-running operational scripts where execution behavior under failure, retry, or concurrency matters. |
 
 They're discovered from `$CE_LENSES_DIR` (a plain directory of `.md`
 files inside the workspace — never a runner-specific path), so a

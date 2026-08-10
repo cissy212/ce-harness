@@ -1238,9 +1238,9 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/1\. \*\*If no change name provided, prompt for selection\*\*/);
       expect(content).toMatch(/2\. \*\*Check artifact completion status\*\*/);
       expect(content).toMatch(/3\. \*\*Check task completion status\*\*/);
-      expect(content).toMatch(/4\. \*\*Assess delta spec sync state\*\*/);
-      expect(content).toMatch(/5\. \*\*Perform the archive\*\*/);
-      expect(content).toMatch(/6\. \*\*Display summary\*\*/);
+      expect(content).toMatch(/5\. \*\*Assess delta spec sync state\*\*/);
+      expect(content).toMatch(/6\. \*\*Perform the archive\*\*/);
+      expect(content).toMatch(/7\. \*\*Display summary\*\*/);
       expect(content).toMatch(/If any artifacts are not `done`:/);
       expect(content).toMatch(/If incomplete tasks found:/);
       expect(content).toMatch(/Sync now \(recommended\)/);
@@ -1248,6 +1248,63 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/## Archive Complete/);
       expect(content).toMatch(/## Archive Complete \(with warnings\)/);
       expect(content).toMatch(/## Archive Failed/);
+    });
+
+    it("checks for unresolved verify/adversarial-review evidence (Step 4), passively and read-only", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+      const normalized = content.replace(/\s+/g, " ");
+
+      expect(content).toMatch(
+        /4\. \*\*Check for unresolved review evidence \(read-only, informational only\)\*\*/,
+      );
+      expect(normalized).toMatch(
+        /This step never runs `\/verify` or `\/adversarial-review` itself, never\s*requires either to have run, and never modifies any report/i,
+      );
+      expect(normalized).toMatch(
+        /This applies only to OpenSpec implementation changes/i,
+      );
+      expect(content).toMatch(/the most recent `\*-verify\.md` file \(by filename date\)/);
+      expect(content).toMatch(/the most recent `\*-adversarial-review\.md` file \(by filename date\)/);
+      expect(content).toMatch(/## Overall Verdict/);
+      expect(normalized).toMatch(
+        /If a verify report exists and its verdict is not exactly `PASS`/i,
+      );
+      expect(normalized).toMatch(
+        /If an adversarial-review report exists and its verdict is `FAIL` or\s*`PASS WITH GAPS`/i,
+      );
+      expect(normalized).toMatch(/Display a warning identifying the report file and its exact\s*verdict/i);
+      expect(normalized).toMatch(/Prompt user for confirmation to continue\.\s*- Proceed if user confirms\./i);
+      expect(normalized).toMatch(
+        /If no such reports exist, or every report found shows a clean\s*`PASS` verdict.*proceed without a warning -- archive behavior is\s*unchanged/i,
+      );
+    });
+
+    it("never reruns verification and never blocks archive on unresolved review evidence", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+      const normalized = content.replace(/\s+/g, " ");
+
+      expect(normalized).toMatch(
+        /it archives based on artifact\/task completion, plus a passive, read-only surfacing of unresolved evidence/i,
+      );
+      expect(normalized).toMatch(
+        /It never reruns `\/verify` or `\/adversarial-review`, never\s*modifies a report, and never blocks archiving on their findings/i,
+      );
+    });
+
+    it("includes unresolved review evidence as a possible Warnings entry in the output template", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+      const normalized = content.replace(/\s+/g, " ");
+
+      expect(content).toMatch(/- Unresolved review evidence: <report filename> \(<verdict>\)/);
+      expect(normalized).toMatch(
+        /only when at least one holds \(incomplete\s*artifacts, incomplete tasks, a skipped sync, or unresolved review\s*evidence from Step 4\)/i,
+      );
     });
 
     it("resolves archive paths from OpenSpec JSON output, never hardcoded repo-local paths", async () => {

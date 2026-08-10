@@ -49,7 +49,47 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    **If no tasks file exists:** Proceed without task-related warning.
 
-4. **Assess delta spec sync state**
+4. **Check for unresolved review evidence (read-only, informational only)**
+
+   This step never runs `/verify` or `/adversarial-review` itself, never
+   requires either to have run, and never modifies any report -- it only
+   reads whichever reports already exist and surfaces what they already
+   say. This applies only to OpenSpec implementation changes (the only
+   kind `/archive` ever operates on); an Existing PR review's reports
+   live at a different, unrelated location and are not part of this
+   check.
+
+   Look for the most recent report of each kind under `<changeRoot>/reports/`,
+   if any:
+   - the most recent `*-verify.md` file (by filename date)
+   - the most recent `*-adversarial-review.md` file (by filename date)
+
+   For whichever of the two exist, read only their `## Overall Verdict`
+   section.
+
+   **If a verify report exists and its verdict is not exactly `PASS`**
+   (i.e. `PASS WITH GAPS` or `FAIL` -- which per `/verify`'s own verdict
+   rules means at least one requirement is `NOT VERIFIED`, a task is
+   `UNVERIFIED CHECKBOX`, a design commitment is `NOT VERIFIED`, or an
+   item is `BLOCKED`/`PARTIALLY VERIFIED`): note this as unresolved
+   verify evidence.
+
+   **If an adversarial-review report exists and its verdict is `FAIL` or
+   `PASS WITH GAPS`:** note this as unresolved adversarial-review
+   evidence.
+
+   **If either report shows unresolved evidence:**
+   - Display a warning identifying the report file and its exact
+     verdict (e.g. "reports/2026-08-10-verify.md: PASS WITH GAPS", or
+     "reports/2026-08-10-adversarial-review.md: FAIL").
+   - Prompt user for confirmation to continue.
+   - Proceed if user confirms.
+
+   **If no such reports exist, or every report found shows a clean
+   `PASS` verdict:** proceed without a warning -- archive behavior is
+   unchanged from today.
+
+5. **Assess delta spec sync state**
 
    Use `artifactPaths.specs.existingOutputPaths` from status JSON to check for delta specs. If none exist, proceed without sync prompt.
 
@@ -64,7 +104,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
 
-5. **Perform the archive**
+6. **Perform the archive**
 
    Create an `archive` directory under `planningHome.changesDir` if it doesn't exist:
    ```bash
@@ -83,14 +123,15 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    Both `<changeRoot>` and `<planningHome.changesDir>` come from the `status --store "$CE_OPENSPEC_STORE" --json` output in step 2 -- always absolute paths inside the external store. Never substitute a repo-local or hand-constructed path.
 
-6. **Display summary**
+7. **Display summary**
 
    Show archive completion summary including:
    - Change name
    - Schema that was used
    - Archive location
    - Spec sync status (synced / sync skipped / no delta specs)
-   - Note about any warnings (incomplete artifacts/tasks)
+   - Note about any warnings (incomplete artifacts/tasks, unresolved
+     review evidence)
 
 **Output On Success**
 
@@ -106,6 +147,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 - Archived with N incomplete artifacts
 - Archived with N incomplete tasks
 - Delta spec sync was skipped (user chose to skip)
+- Unresolved review evidence: <report filename> (<verdict>)
 
 All artifacts complete. All tasks complete.
 ```
@@ -113,11 +155,12 @@ All artifacts complete. All tasks complete.
 Show whichever single **Specs** value actually applies -- never all
 three. Include the **Warnings** section, listing only the specific
 warnings that actually apply, only when at least one holds (incomplete
-artifacts, incomplete tasks, or a skipped sync); omit the section
-entirely when none apply. When the **Warnings** section is present,
-change the heading to `## Archive Complete (with warnings)` and use
-"Review the archive if this was not intentional." as the closing line
-instead of "All artifacts complete. All tasks complete."
+artifacts, incomplete tasks, a skipped sync, or unresolved review
+evidence from Step 4); omit the section entirely when none apply. When
+the **Warnings** section is present, change the heading to
+`## Archive Complete (with warnings)` and use "Review the archive if
+this was not intentional." as the closing line instead of "All
+artifacts complete. All tasks complete."
 
 **Output On Error (Archive Exists)**
 
@@ -147,6 +190,6 @@ Target archive directory already exists.
 - Never assume repo-local `openspec/` paths -- always use `planningHome`, `changeRoot`, and `artifactPaths` resolved from the CLI's JSON output, which point inside the external store
 - Never modify product/application code during `/archive` -- this command only moves OpenSpec planning artifacts within the external store
 - Never create `openspec/`, `.opencode/`, reports, or any other harness/config file or directory inside the target repository or its Git worktree -- archiving happens only inside the external store at `$CE_OPENSPEC_STORE`
-- This command does not require a prior `/verify` or `/adversarial-review` report; it archives based on artifact/task completion only
+- This command does not require a prior `/verify` or `/adversarial-review` report to archive -- it archives based on artifact/task completion, plus a passive, read-only surfacing of unresolved evidence from the most recent such reports if they exist (Step 4). It never reruns `/verify` or `/adversarial-review`, never modifies a report, and never blocks archiving on their findings -- only informs and confirms, exactly like the other warnings above.
 
 _See `THIRD_PARTY_NOTICES.md` for this command's provenance and licensing._
