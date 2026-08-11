@@ -41,6 +41,7 @@ import { formatLaunchCommand, launchOpenCode } from "../core/opencode.js";
 import { createOpenCodeConfig } from "../core/opencodeConfig.js";
 import { createLensesDir } from "../core/lenses.js";
 import { initializeCodeGraph, writeCodeGraphOpenCodeConfig, type CodeGraphResult } from "../core/codeGraph.js";
+import { detectBootstrapNeeds, type BootstrapCheckResult } from "../core/bootstrap.js";
 import { buildLaunchEnv } from "../core/launchEnv.js";
 
 export interface StartOptions {
@@ -194,12 +195,29 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     managedByHarness: false,
     reason: "CodeGraph setup was not attempted.",
   };
+  let bootstrapResult: BootstrapCheckResult = { required: false, findings: [] };
   let workspace: Workspace;
 
   try {
     await mkdir(dirname(worktreePath), { recursive: true });
     await addWorktree(repoRoot, worktreePath, internalBranch, worktreeSeed);
     worktreeCreated = true;
+
+    // Repository bootstrap detection, immediately after worktree
+    // creation: a successful worktree does not imply a development-
+    // ready workspace (declared dependencies are never installed yet --
+    // node_modules/vendor/etc. are untracked and worktree-local). Purely
+    // read-only and defensive, matching the CodeGraph pattern below:
+    // never allowed to fail `ce start` itself, and never executes
+    // anything in the worktree.
+    try {
+      bootstrapResult = detectBootstrapNeeds(worktreePath);
+    } catch (error) {
+      bootstrapResult = { required: false, findings: [] };
+      console.error(
+        `Warning: repository bootstrap detection failed unexpectedly: ${(error as Error).message}`,
+      );
+    }
 
     await mkdir(workspacePath, { recursive: true });
     workspaceDirCreated = true;
@@ -259,6 +277,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
       ...(baseBranchCommit ? { baseBranchCommit } : {}),
       ...(diffBase && diffHead ? { diffBase, diffHead, diffMergeBase } : {}),
       codeGraph: codeGraphResult,
+      bootstrap: bootstrapResult,
     };
     await writeWorkspace(workspace);
 
@@ -283,6 +302,17 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
 
   console.log(`Workspace ready for project "${project}", issue "${issue}".`);
   console.log(`OpenSpec store: ${openSpecStoreId}`);
+  if (bootstrapResult.required) {
+    console.log("");
+    console.log("This repository needs local setup before normal use:");
+    for (const finding of bootstrapResult.findings) {
+      console.log(`  - ${finding.message}`);
+      console.log(`    Run: ${finding.suggestedCommand}`);
+    }
+    console.log(
+      "ce-harness never runs these automatically -- run them yourself inside the worktree above.",
+    );
+  }
   console.log("");
   console.log(`Launching OpenCode in "${worktreePath}"...`);
 

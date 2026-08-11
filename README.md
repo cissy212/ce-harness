@@ -256,6 +256,17 @@ example `fix-login-bug` or `issue-42`).
   rather than silently substituting a different one — ce-harness never
   fetches automatically. The resolved branch name and its exact commit
   are recorded in `workspace.yml` and shown by `ce status`.
+- **Bootstrap detection.** A successful worktree isn't necessarily a
+  development-ready one — declared dependencies (`node_modules/`,
+  `vendor/`, etc.) are never shared across worktrees, since they're
+  untracked. Immediately after creating the worktree, `ce start`
+  inspects it (read-only — it never installs anything or runs any
+  repository script) for common, repository-agnostic conventions (a
+  `package.json` with no `node_modules/`, a `composer.json` with no
+  `vendor/`, and so on) and prints exactly what's missing and the
+  command to fix it, before OpenCode launches. Running that command is
+  always your own explicit decision; `ce status` shows the same result
+  again later.
 - **Workspace directory.** Alongside the worktree, `ce start` creates a
   workspace directory under `~/.ce-harness/workspaces/<project>/<issue>`.
   This holds everything ce-harness itself owns for that issue: the
@@ -372,6 +383,8 @@ reports:
   worktree is clean or has changed files
 - The OpenCode config directory and whether it exists
 - The reasoning-lenses directory and whether it exists
+- Whether the repository needs bootstrapping (dependencies installed,
+  etc.), and if so, the exact commands to fix it
 - The OpenSpec store id, root path, and health check result
 
 #### `ce cleanup [--force]`
@@ -791,3 +804,13 @@ branches/commits you actually intended to compare.
 
 None of these leave anything behind to clean up — every check above
 happens before `ce review` creates any worktree, workspace, or branch.
+
+### `ce start` printed "This repository needs local setup before normal use"
+
+This is expected the first time you work on a repository whose
+dependencies aren't installed yet in this brand-new worktree (worktrees
+never share `node_modules/`, `vendor/`, etc. with each other or with
+your original clone). Run the exact command(s) printed — ce-harness
+never runs them for you, since they can have side effects — inside the
+worktree path shown, then continue as normal. `ce status` shows the
+same information again if you need a reminder later.

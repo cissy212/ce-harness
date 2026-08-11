@@ -37,6 +37,27 @@ export const CodeGraphMetadataSchema = z
 
 export type CodeGraphMetadata = z.infer<typeof CodeGraphMetadataSchema>;
 
+/**
+ * Optional repository-bootstrap detection result, recorded once at `ce
+ * start` time so `ce status` can show it again later without
+ * re-inspecting the worktree. Purely informational: nothing in
+ * ce-harness ever acts on this beyond displaying it -- see
+ * src/core/bootstrap.ts for the read-only detection itself.
+ */
+export const BootstrapMetadataSchema = z.object({
+  required: z.boolean(),
+  findings: z.array(
+    z.object({
+      ecosystem: z.string().min(1),
+      manifest: z.string().min(1),
+      message: z.string().min(1),
+      suggestedCommand: z.string().min(1),
+    }),
+  ),
+});
+
+export type BootstrapMetadata = z.infer<typeof BootstrapMetadataSchema>;
+
 export const WorkspaceSchema = z
   .object({
     project: z.string().min(1),
@@ -75,6 +96,10 @@ export const WorkspaceSchema = z
     // integration and have no codeGraph block. Readers must treat its
     // absence as valid, exactly like the openSpec block above.
     codeGraph: CodeGraphMetadataSchema.optional(),
+    // Optional: older workspace files predate repository-bootstrap
+    // detection and have no bootstrap block. Readers must treat its
+    // absence as valid, exactly like the codeGraph block above.
+    bootstrap: BootstrapMetadataSchema.optional(),
   })
   .refine((w) => (w.diffBase === undefined) === (w.diffHead === undefined), {
     message: "diffBase and diffHead must both be present or both be absent",

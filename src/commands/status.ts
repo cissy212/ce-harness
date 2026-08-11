@@ -90,6 +90,23 @@ export async function statusCommand(): Promise<void> {
     }
   }
 
+  // Workspaces created before repository-bootstrap detection have no
+  // bootstrap block; skip this section entirely, same convention as the
+  // CodeGraph section above.
+  if (workspace.bootstrap) {
+    if (!workspace.bootstrap.required) {
+      console.log(`Bootstrap:        not required`);
+    } else {
+      console.log(
+        `Bootstrap:        required (${workspace.bootstrap.findings.length} item(s))`,
+      );
+      for (const finding of workspace.bootstrap.findings) {
+        console.log(`  - ${finding.message}`);
+        console.log(`    Run: ${finding.suggestedCommand}`);
+      }
+    }
+  }
+
   // Workspaces created without OpenSpec metadata have no openSpec block;
   // skip the OpenSpec section entirely rather than printing placeholder
   // lines.
