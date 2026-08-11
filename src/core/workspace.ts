@@ -52,6 +52,12 @@ export const BootstrapMetadataSchema = z.object({
       manifest: z.string().min(1),
       message: z.string().min(1),
       suggestedCommand: z.string().min(1),
+      // Optional: set only when suggestedCommand cannot avoid a side
+      // effect beyond the minimum necessary action (e.g. a full install
+      // potentially rewriting a lockfile). Absent for a targeted,
+      // minimal command that doesn't carry that risk. Absent on
+      // findings persisted before this field existed.
+      sideEffectWarning: z.string().min(1).optional(),
     }),
   ),
 });

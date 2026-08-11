@@ -103,6 +103,9 @@ export async function statusCommand(): Promise<void> {
       for (const finding of workspace.bootstrap.findings) {
         console.log(`  - ${finding.message}`);
         console.log(`    Run: ${finding.suggestedCommand}`);
+        if (finding.sideEffectWarning) {
+          console.log(`    Warning: ${finding.sideEffectWarning}`);
+        }
       }
     }
   }

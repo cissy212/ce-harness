@@ -308,6 +308,9 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     for (const finding of bootstrapResult.findings) {
       console.log(`  - ${finding.message}`);
       console.log(`    Run: ${finding.suggestedCommand}`);
+      if (finding.sideEffectWarning) {
+        console.log(`    Warning: ${finding.sideEffectWarning}`);
+      }
     }
     console.log(
       "ce-harness never runs these automatically -- run them yourself inside the worktree above.",

@@ -187,6 +187,69 @@ describe("Repository bootstrap detection (ce start integration)", () => {
     ]);
   });
 
+  it("warns about the possible lockfile side effect when a full install is required, and shows it in ce status too", async () => {
+    await writeFile(join(repoDir, "package.json"), JSON.stringify({ name: "demo" }), "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "add package.json"]);
+
+    const { startCommand } = await import("../../src/commands/start.js");
+    const { statusCommand } = await import("../../src/commands/status.js");
+    const { readWorkspace } = await import("../../src/core/workspace.js");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    logSpy.mockClear();
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+
+    const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+    expect(workspace.bootstrap!.findings[0].sideEffectWarning).toMatch(/lockfile/i);
+
+    let output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toMatch(/Warning: This can modify the lockfile/);
+
+    logSpy.mockClear();
+    await statusCommand();
+    output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toMatch(/Warning: This can modify the lockfile/);
+  });
+
+  it("real-world scenario: dependencies already installed, but the Husky Git-hooks artifact is missing -- suggests the targeted `npm run prepare`, never a full install", async () => {
+    await writeFile(
+      join(repoDir, "package.json"),
+      JSON.stringify({ name: "demo", scripts: { prepare: "husky install" } }),
+      "utf8",
+    );
+    // .husky/ (the tracked hook scripts) is committed, as it normally
+    // would be -- but .husky/_/husky.sh (Husky's own generated helper)
+    // is not, exactly like a worktree whose dependencies were installed
+    // without ever running the "prepare" lifecycle script.
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(join(repoDir, ".husky"), { recursive: true });
+    await writeFile(join(repoDir, ".husky", "pre-commit"), "npx lint-staged\n", "utf8");
+    await mkdir(join(repoDir, "node_modules"), { recursive: true });
+    await writeFile(join(repoDir, "node_modules", ".gitkeep"), "", "utf8");
+    await execa("git", ["-C", repoDir, "add", "-f", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "add package.json, .husky, and node_modules"]);
+
+    const { startCommand } = await import("../../src/commands/start.js");
+    const { readWorkspace } = await import("../../src/core/workspace.js");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    logSpy.mockClear();
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+
+    const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+    expect(workspace.bootstrap!.required).toBe(true);
+    expect(workspace.bootstrap!.findings).toHaveLength(1);
+    expect(workspace.bootstrap!.findings[0].suggestedCommand).toBe("npm run prepare");
+    expect(workspace.bootstrap!.findings[0].suggestedCommand).not.toBe("npm install");
+    expect(workspace.bootstrap!.findings[0].sideEffectWarning).toBeUndefined();
+
+    const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toMatch(/Run: npm run prepare/);
+    expect(output).not.toMatch(/Run: npm install/);
+    expect(output).not.toMatch(/Warning:/);
+  });
+
   it("a bootstrap-detection failure never fails ce start itself", async () => {
     // Simulate an unexpected failure inside detection by making the
     // worktree path briefly unreadable is impractical/platform-fragile

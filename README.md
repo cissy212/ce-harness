@@ -261,12 +261,21 @@ example `fix-login-bug` or `issue-42`).
   `vendor/`, etc.) are never shared across worktrees, since they're
   untracked. Immediately after creating the worktree, `ce start`
   inspects it (read-only — it never installs anything or runs any
-  repository script) for common, repository-agnostic conventions (a
-  `package.json` with no `node_modules/`, a `composer.json` with no
-  `vendor/`, and so on) and prints exactly what's missing and the
-  command to fix it, before OpenCode launches. Running that command is
-  always your own explicit decision; `ce status` shows the same result
-  again later.
+  repository script) for common, repository-agnostic conventions and
+  prints exactly what's missing and the command to fix it, before
+  OpenCode launches. It always suggests the minimum necessary action,
+  never defaulting to a full dependency install: if dependencies are
+  genuinely never installed (`package.json`/`composer.json` present, no
+  `node_modules/`/`vendor/`), it suggests installing them; but if
+  they're already installed and only a declared `"prepare"` script's
+  own local side effect never ran (e.g. Husky's Git hooks — detected via
+  its own `.husky/` marker, never guessed), it suggests re-running just
+  that script instead, since a full reinstall would be needless and can
+  rewrite a lockfile. Whenever a suggested command genuinely can't avoid
+  a side effect like that, it's named explicitly as a warning right
+  next to the command — never left for you to discover afterward.
+  Running any of this is always your own explicit decision; `ce status`
+  shows the same result (including any warning) again later.
 - **Workspace directory.** Alongside the worktree, `ce start` creates a
   workspace directory under `~/.ce-harness/workspaces/<project>/<issue>`.
   This holds everything ce-harness itself owns for that issue: the
@@ -814,3 +823,11 @@ your original clone). Run the exact command(s) printed — ce-harness
 never runs them for you, since they can have side effects — inside the
 worktree path shown, then continue as normal. `ce status` shows the
 same information again if you need a reminder later.
+
+The suggested command is always the minimum necessary one: if
+dependencies are already installed and only a declared `"prepare"`
+script's own setup (e.g. Husky's Git hooks) never ran, it suggests
+re-running just that script (`npm run prepare`) rather than a full
+reinstall. If a `Warning:` line follows the command, that specific
+command can't avoid a side effect (most commonly a full install
+rewriting a lockfile) — read it before deciding whether to run it.
