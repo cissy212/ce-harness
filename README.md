@@ -346,6 +346,14 @@ suggested next step is `/adversarial-review` instead, for an Existing PR
 review workspace — see
 [Reviewing a GitHub pull request](#reviewing-a-github-pull-request).)
 
+Opening that worktree in your editor later — after OpenCode has already
+launched, or in a second terminal — is a single command too, no need to
+copy the path shown above:
+
+```bash
+ce open
+```
+
 From there, work through the
 [workflow inside OpenCode](#the-workflow-inside-opencode): `/explore` or
 `/propose` to plan, `/apply` to implement, `/verify` and
@@ -409,6 +417,16 @@ same environment `ce start` used, in the same worktree. Requires an
 active workspace and creates nothing — no new worktree, workspace,
 OpenSpec store, or CodeGraph index — and never modifies `workspace.yml`.
 See [Resuming a session](#resuming-a-session).
+
+#### `ce open`
+
+Opens the active workspace's worktree directly in an editor (VS Code by
+default — `code <worktree-path>`), so you never have to remember or copy
+the path `ce start`/`ce status` printed. Requires an active workspace
+and creates nothing. Override the editor CLI with `CE_EDITOR_BIN` (any
+`code`-compatible fork — VSCodium, Cursor's own `cursor` CLI, etc. — works
+today with no code change, since they accept the same `<binary> <path>`
+invocation).
 
 #### `ce status`
 
@@ -726,7 +744,11 @@ A few more exist purely to override ce-harness's own defaults (mainly
 useful for development/testing, not day-to-day use): `CE_HARNESS_HOME`
 (defaults to `~/.ce-harness`), `CE_OPENCODE_BIN` / `CE_OPENSPEC_BIN`
 (defaults to `opencode` / `openspec` on `PATH`), and `CE_TEMPLATES_ROOT`
-(defaults to ce-harness's own bundled `templates/` directory).
+(defaults to ce-harness's own bundled `templates/` directory). One more
+is genuinely useful day to day: `CE_EDITOR_BIN` (defaults to `code` on
+`PATH`) overrides which editor CLI `ce open` invokes — set it in your own
+shell profile if you use a `code`-compatible fork instead of vanilla VS
+Code.
 
 ### Directory layout reference
 

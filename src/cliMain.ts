@@ -4,6 +4,7 @@ import { reviewCommand } from "./commands/review.js";
 import { statusCommand } from "./commands/status.js";
 import { cleanupCommand } from "./commands/cleanup.js";
 import { resumeCommand } from "./commands/resume.js";
+import { openCommand } from "./commands/open.js";
 import { formatError } from "./core/errors.js";
 
 /**
@@ -87,6 +88,17 @@ export async function runCli(): Promise<void> {
     )
     .action(async () => {
       await run(() => resumeCommand());
+    });
+
+  program
+    .command("open")
+    .description(
+      "Open the active workspace's worktree directly in an editor (VS Code today) -- " +
+        "no need to remember or copy the path `ce start`/`ce status` printed. Creates " +
+        "nothing, registers nothing, and never modifies workspace.yml.",
+    )
+    .action(async () => {
+      await run(() => openCommand());
     });
 
   program
