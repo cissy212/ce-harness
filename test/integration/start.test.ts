@@ -1914,7 +1914,6 @@ describe("ce start (integration)", () => {
 
       expect(content).not.toMatch(/npm test/);
       expect(content).not.toMatch(/npm run (typecheck|lint)/);
-      expect(content).not.toMatch(/docker compose/i);
       // "Prisma" legitimately appears as an example of a stack this command
       // must NOT assume for verification-command discovery (requirement 7's
       // own wording), and separately as an illustrative example of a
@@ -1924,6 +1923,14 @@ describe("ce start (integration)", () => {
       // fenced shell block this command itself runs).
       expect(content).not.toMatch(/npx prisma/i);
       expect(content).not.toMatch(/```bash\n[^`]*prisma migrate/i);
+      // "docker compose" legitimately appears only within the Docker
+      // safety guardrails, as an illustrative example of what to check
+      // *if* a discovered verification command happens to use it --
+      // never as part of the discovery instructions themselves (i.e.
+      // never presented as an assumed or hardcoded default).
+      const dockerSafetyIdx = content.indexOf("### Docker safety");
+      expect(dockerSafetyIdx).toBeGreaterThan(-1);
+      expect(content.slice(0, dockerSafetyIdx)).not.toMatch(/docker compose/i);
       expect(content).toMatch(/discovered from the repository/i);
       expect(content).toMatch(/do not assume npm, docker, prisma, or any other specific stack/i);
     });
@@ -2276,6 +2283,83 @@ describe("ce start (integration)", () => {
 
         expect(normalized).toMatch(
           /Mutating database schema\/data, infrastructure, external services, or\s*developer configuration always requires either a proven disposable\s*environment.*or explicit user approval/i,
+        );
+      });
+    });
+
+    describe("Docker safety", () => {
+      const readVerify = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+      };
+
+      it("frames Docker ownership/collision checks as read-only diagnosis that always runs, distinct from the mutation classification", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(/### Docker safety/);
+        expect(normalized).toMatch(
+          /This is read-only\s*diagnosis, not mutation -- it always runs, before Environment-mutation\s*safety's Case A\/B\/C classification above even applies to the Docker\s*command itself/i,
+        );
+      });
+
+      it("requires verifying container ownership via the compose working_dir label before reusing any running container", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/\*\*Container ownership\.\*\* Never reuse an already-running container by\s*name or image alone/i);
+        expect(content).toMatch(/com\.docker\.compose\.project\.working_dir/);
+        expect(normalized).toMatch(
+          /it must resolve to `\$CE_WORKTREE` or a path inside it\. If it\s*resolves anywhere else.*that container does not belong to this\s*workspace: never reuse, stop, remove, or otherwise touch it/i,
+        );
+      });
+
+      it("requires detecting Compose project-name collisions before running docker compose up, preferring an explicit project name", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/\*\*Compose project-name collisions\.\*\*/);
+        expect(normalized).toMatch(/docker compose ls/);
+        expect(normalized).toMatch(
+          /reuse it only if its `working_dir` label\s*resolves inside `\$CE_WORKTREE`; otherwise this is a genuine\s*collision -- report it, never silently pick a different name or\s*proceed/i,
+        );
+        expect(normalized).toMatch(
+          /Prefer an explicit `--project-name` \(or\s*`COMPOSE_PROJECT_NAME`\) derived deterministically from `\$CE_WORKTREE`/i,
+        );
+      });
+
+      it("requires checking for port conflicts before startup, never silently picking a different port", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/\*\*Port conflicts\.\*\* Before starting anything, read the compose/i);
+        expect(normalized).toMatch(
+          /check\s*whether each is already in use.*before\s*attempting startup, not after it fails with a cryptic error/i,
+        );
+        expect(normalized).toMatch(
+          /never\s*a signal to silently pick a different port than the one the\s*repository's own configuration specifies/i,
+        );
+      });
+
+      it("reports collisions/conflicts as BLOCKED, never a silent work-around, regardless of a repository's specific Docker setup", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /do not start, reuse, or otherwise proceed\. Mark the\s*affected check `BLOCKED`/i,
+        );
+        expect(normalized).toMatch(
+          /None of this is specific to any one repository's\s*Docker\/Compose setup: the same three checks apply regardless of the\s*service names, ports, or project names a given repository happens to\s*define/i,
+        );
+      });
+
+      it("summarizes the policy in the Guardrails section", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Before interacting with Docker, verify container and Compose-project\s*ownership and check for port conflicts -- see "Docker safety" in\s*Step 8/i,
         );
       });
     });
@@ -2864,6 +2948,18 @@ describe("ce start (integration)", () => {
         expect(normalized).toMatch(/prisma migrate deploy/);
         expect(normalized).toMatch(
           /never run a migration against an\s*existing local test database merely to make the test suite runnable/i,
+        );
+      });
+
+      it("cross-references /verify's Docker safety checks rather than re-deriving them", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /The same applies to Docker specifically: never reuse,\s*stop, or otherwise touch a container or Compose project without first\s*confirming \(via its `com\.docker\.compose\.project\.working_dir` label\)\s*that it actually belongs to `\$CE_WORKTREE`/i,
+        );
+        expect(normalized).toMatch(
+          /see `\/verify`'s "Docker\s*safety" \(Step 8\) for the full ownership\/collision\/port-conflict checks\s*this command relies on rather than re-deriving/i,
         );
       });
     });

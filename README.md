@@ -27,6 +27,7 @@ called out explicitly).
   - [The workflow inside OpenCode](#the-workflow-inside-opencode)
   - [Reasoning lenses](#reasoning-lenses)
   - [Environment-mutation safety](#environment-mutation-safety)
+  - [Docker safety](#docker-safety)
   - [Skills](#skills)
   - [Environment variables reference](#environment-variables-reference)
   - [Directory layout reference](#directory-layout-reference)
@@ -621,6 +622,32 @@ how much latitude they have:
 
 A withheld mutation is reported as a verification limitation (`BLOCKED`,
 or an explicit uncertainty), never silently converted into a defect.
+
+### Docker safety
+
+If a discovered verification command starts, reuses, or depends on
+Docker (e.g. `docker compose up`, a container-backed test database),
+`/verify` verifies three things first — read-only diagnosis, so it
+always runs, before the mutation classification above even applies to
+the Docker command itself:
+
+- **Container ownership** — never reuse an already-running container by
+  name alone. For a Compose-managed container, its
+  `com.docker.compose.project.working_dir` label must resolve inside
+  `$CE_WORKTREE`; if it resolves anywhere else, that container belongs
+  to a different checkout and must never be reused, stopped, or removed.
+- **Compose project-name collisions** — Compose defaults its project
+  name to the worktree's directory name, which isn't guaranteed unique.
+  If a project by that name already exists, the same ownership check
+  applies to it before reuse; otherwise it's a genuine collision to
+  report, never a reason to silently pick a different name.
+- **Port conflicts** — host ports a compose file would bind are checked
+  for existing use *before* startup is attempted, not discovered only
+  after a cryptic failure.
+
+Any problem found here is reported (`BLOCKED`) rather than worked
+around silently. `/adversarial-review` relies on the same checks rather
+than re-deriving them.
 
 ### Skills
 

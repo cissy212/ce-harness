@@ -353,6 +353,72 @@ If a mutation is required but not authorized, mark the affected check
 not an implementation defect, unless other independent evidence already
 shows the requirement fails.
 
+### Docker safety
+
+Docker carries a risk distinct from the mutation question above: reusing
+or colliding with a container, network, or Compose project that belongs
+to a *different* checkout entirely -- a stale or unrelated container
+reused by mistake can silently corrupt this workspace's environment, or
+this workspace's own containers could corrupt someone else's. Before any
+discovered verification command starts, reuses, or otherwise interacts
+with Docker (e.g. `docker compose up`, a container-backed test
+database), verify all three of the following. This is read-only
+diagnosis, not mutation -- it always runs, before Environment-mutation
+safety's Case A/B/C classification above even applies to the Docker
+command itself:
+
+1. **Container ownership.** Never reuse an already-running container by
+   name or image alone. For a Compose-managed container, confirm it was
+   actually created for `$CE_WORKTREE`:
+   ```bash
+   docker inspect <container> --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'
+   ```
+   This reports the exact host directory Compose created the container
+   from -- it must resolve to `$CE_WORKTREE` or a path inside it. If it
+   resolves anywhere else (a different worktree, the original checkout,
+   or an unrelated project), that container does not belong to this
+   workspace: never reuse, stop, remove, or otherwise touch it. For a
+   container not managed by Compose, apply the same principle -- confirm
+   via `docker inspect` (mounts, working directory, labels) that it was
+   created for this exact worktree before touching it, never from its
+   name alone.
+2. **Compose project-name collisions.** Compose defaults its project
+   name to the basename of the directory containing the compose file --
+   for a ce-harness worktree, that is the sanitized issue name, which is
+   not guaranteed unique across projects or across a stale leftover from
+   a prior run under the same path. Before running `docker compose up`,
+   check whether a project by the name Compose would use already exists
+   (`docker compose ls`, or `docker ps --filter
+   label=com.docker.compose.project=<name>`). If one does, apply the
+   ownership check above to it: reuse it only if its `working_dir` label
+   resolves inside `$CE_WORKTREE`; otherwise this is a genuine
+   collision -- report it, never silently pick a different name or
+   proceed. Prefer an explicit `--project-name` (or
+   `COMPOSE_PROJECT_NAME`) derived deterministically from `$CE_WORKTREE`
+   over relying on the directory-basename default, precisely to avoid
+   this collision in the first place.
+3. **Port conflicts.** Before starting anything, read the compose
+   file(s)' `ports:` mappings (or a Dockerfile's exposed ports, if
+   started directly) to learn which host ports would be bound, and check
+   whether each is already in use (e.g. `lsof -i :<port>`, `ss -ltnp`, or
+   `docker ps` for a container already publishing it) -- before
+   attempting startup, not after it fails with a cryptic error. A port
+   already in use by something unrelated is a conflict to report, never
+   a signal to silently pick a different port than the one the
+   repository's own configuration specifies.
+
+If any of the three finds a problem -- an unrelated container, a
+project-name collision that doesn't resolve to this worktree, or a port
+already in use -- do not start, reuse, or otherwise proceed. Mark the
+affected check `BLOCKED` and state exactly what was found (the
+container/project name and its actual `working_dir` label, or the
+specific port and what already holds it) under "Gaps and Blockers" --
+the same diagnostic discipline as any other blocked check, never a
+silent work-around. None of this is specific to any one repository's
+Docker/Compose setup: the same three checks apply regardless of the
+service names, ports, or project names a given repository happens to
+define.
+
 **Handling large output:**
 - Always preserve the exact **exit code** of each command -- this is what
   `PASS`/`FAIL`/`BLOCKED` is ultimately based on.
@@ -517,6 +583,12 @@ Run `/adversarial-review` next for independent defect hunting.
   from a name containing "test") or explicit user approval -- see
   "Environment-mutation safety" in Step 8. A withheld mutation is a
   verification limitation (`BLOCKED`), never converted into a defect.
+- Before interacting with Docker, verify container and Compose-project
+  ownership and check for port conflicts -- see "Docker safety" in
+  Step 8. Never reuse, stop, or otherwise touch a container or Compose
+  project whose `working_dir` label doesn't resolve inside
+  `$CE_WORKTREE`; report a collision or port conflict as `BLOCKED`,
+  never a signal to silently proceed around it.
 - If evidence is ambiguous, state what was found and why it is insufficient.
   Do not guess.
 - Lenses are discovered and read only through `"$CE_LENSES_DIR"` -- never

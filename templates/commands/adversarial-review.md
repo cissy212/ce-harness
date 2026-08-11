@@ -677,7 +677,12 @@ separate, explicit step.
   (Step 4) over re-running the mutation. If additional mutation is
   genuinely necessary to investigate a finding, explain why and ask
   first; never infer an environment is disposable merely because it's
-  named "test".
+  named "test". The same applies to Docker specifically: never reuse,
+  stop, or otherwise touch a container or Compose project without first
+  confirming (via its `com.docker.compose.project.working_dir` label)
+  that it actually belongs to `$CE_WORKTREE` -- see `/verify`'s "Docker
+  safety" (Step 8) for the full ownership/collision/port-conflict checks
+  this command relies on rather than re-deriving.
 - Never check, uncheck, or otherwise edit `tasks.md` or any other OpenSpec
   artifact.
 - Never create `openspec/`, `.opencode/`, `reports/`, or any other
