@@ -44,6 +44,14 @@ export const WorkspaceSchema = z
     issue: z.string().min(1),
     sanitizedIssue: z.string().min(1),
     baseBranch: z.string().min(1),
+    // Optional: the exact commit `baseBranch` resolved to when `ce
+    // start` created this workspace via the default (auto-detected)
+    // flow. Absent for an explicit --base/--head workspace, where
+    // diffBase/diffHead/diffMergeBase already capture the exact commits
+    // -- this field is never set alongside those, to avoid persisting
+    // the same fact twice under two names. Absent on workspaces created
+    // before this field existed.
+    baseBranchCommit: z.string().min(1).optional(),
     internalBranch: z.string().min(1),
     worktreePath: z.string().min(1),
     workspacePath: z.string().min(1),
@@ -73,6 +81,9 @@ export const WorkspaceSchema = z
   })
   .refine((w) => w.diffMergeBase === undefined || (w.diffBase !== undefined && w.diffHead !== undefined), {
     message: "diffMergeBase requires diffBase and diffHead to also be present",
+  })
+  .refine((w) => w.baseBranchCommit === undefined || w.diffBase === undefined, {
+    message: "baseBranchCommit and diffBase must not both be present -- diffBase/diffHead already capture the exact commits for an explicit review range",
   });
 
 export type Workspace = z.infer<typeof WorkspaceSchema>;

@@ -236,10 +236,26 @@ example `fix-login-bug` or `issue-42`).
   worktree](https://git-scm.com/docs/git-worktree) for each issue, under
   `~/.ce-harness/worktrees/<project>/<issue>` — a real, independent
   working directory on its own branch (`ce-harness/<issue>`), checked out
-  from your repository's `main`/`master` tip by default. Your original
+  from your repository's detected base branch by default (see "Base
+  branch detection" below — never hardcoded to `main`). Your original
   clone is never touched: ce-harness refuses to even start if it has
   uncommitted or untracked changes, and all product-code changes happen
   only inside the worktree.
+- **Base branch detection.** `ce start` never assumes `main`. It
+  determines the repository's actual base branch, preferring automatic,
+  repository-agnostic detection: (1) a live, read-only query of the
+  `origin` remote's current default branch (`git ls-remote --symref`,
+  which downloads no objects and updates no local refs — this is what
+  makes a repository using `develop`, `trunk`, or any other name work
+  correctly, with no per-project configuration); (2) if that's
+  unavailable (offline, no such remote), the locally-cached remote
+  default from a prior clone/fetch; (3) only if there is no remote at
+  all (a local-only repository) does it fall back to the `main`/`master`
+  convention names, as a last resort. If a remote clearly names a branch
+  that isn't available locally, `ce start` fails with an actionable error
+  rather than silently substituting a different one — ce-harness never
+  fetches automatically. The resolved branch name and its exact commit
+  are recorded in `workspace.yml` and shown by `ce status`.
 - **Workspace directory.** Alongside the worktree, `ce start` creates a
   workspace directory under `~/.ce-harness/workspaces/<project>/<issue>`.
   This holds everything ce-harness itself owns for that issue: the
@@ -346,6 +362,9 @@ reports:
 - Project, issue, workspace type (`Implementation` or `Existing PR
   review` — derived from whether `--base`/`--head` were used, never a
   separate piece of state), repository path, base branch, internal branch
+- The base branch's exact resolved commit (only shown for the default,
+  auto-detected flow — an explicit `--base`/`--head` range already shows
+  its exact commits via the next line instead)
 - Review base/head/merge-base commits (only shown for an explicit
   `--base`/`--head` range)
 - Worktree and workspace paths, creation time
@@ -725,9 +744,20 @@ run `ce start` again.
 
 ### `ce start` fails with "Neither 'main' nor 'master' branch exists"
 
-`ce start` needs a `main` or `master` branch to create its worktree
-from. Create one of those branches in the target repository (or check
-out the branch you want under one of those names) and try again.
+This only happens for a **local-only repository with no remote at all**
+(see "Base branch detection" above — every other repository is detected
+from its remote, regardless of the branch name it actually uses). Create
+a `main` or `master` branch in the target repository (or check out the
+branch you want under one of those names), or add a remote with a
+default branch, and try again.
+
+### `ce start` fails with "... reports ... as its default branch, but ... does not exist locally"
+
+`ce start` detected your remote's actual default branch (e.g. `develop`),
+but it isn't available in your local clone yet — ce-harness never fetches
+automatically, to avoid silently pulling in history you haven't reviewed.
+Fetch it yourself (the error message includes the exact command, e.g.
+`git -C <repo> fetch origin develop`), then run `ce start` again.
 
 ### `ce start` fails with "A workspace is already active..."
 

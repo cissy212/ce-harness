@@ -79,10 +79,13 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
 
   // worktreeSeed is the ref/commit `git worktree add` starts the
   // internal ce-harness branch from. In the default flow that's the
-  // local main/master tip, exactly as before. In the explicit-range
+  // repository's detected base branch (never assumed to be "main" --
+  // see detectBaseBranch), exactly as before. In the explicit-range
   // flow it's the resolved head commit -- the worktree must actually
   // contain the reviewed head, not just fork from the base.
   let worktreeSeed: string;
+  let baseBranchName: string;
+  let baseBranchCommit: string | undefined;
   let diffBase: string | undefined;
   let diffHead: string | undefined;
   let diffMergeBase: string | undefined;
@@ -100,15 +103,23 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     // two commits share some common history at all.
     diffMergeBase = await resolveMergeBase(repoRoot, diffBase, diffHead);
     worktreeSeed = diffHead;
+    baseBranchName = diffHead;
   } else {
+    // Repository-agnostic by design: never assumes "main". Prefers a
+    // live query of the remote's actual default branch, falls back to
+    // the locally-cached remote default, and only falls back to the
+    // "main"/"master" convention names as a last resort with zero
+    // repository-provided signal (e.g. a local-only repository).
     const detected = await detectBaseBranch(repoRoot);
     if (!detected) {
       throw new CeError(
-        `Neither "main" nor "master" branch exists in "${repoRoot}".`,
-        'Create a "main" or "master" branch in the target repository before running `ce start`.',
+        `Neither "main" nor "master" branch exists in "${repoRoot}", and no remote default branch could be determined.`,
+        'Create a "main" or "master" branch in the target repository, or configure a remote with a default branch, before running `ce start`.',
       );
     }
-    worktreeSeed = detected;
+    worktreeSeed = detected.ref;
+    baseBranchName = detected.name;
+    baseBranchCommit = await resolveCommit(repoRoot, detected.ref);
   }
 
   const internalBranch = `ce-harness/${sanitizedIssue}`;
@@ -236,7 +247,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
       repositoryPath: repoRoot,
       issue,
       sanitizedIssue,
-      baseBranch: worktreeSeed,
+      baseBranch: baseBranchName,
       internalBranch,
       worktreePath,
       workspacePath,
@@ -245,6 +256,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
         storeId: openSpecStoreId,
         root: openSpecRoot,
       },
+      ...(baseBranchCommit ? { baseBranchCommit } : {}),
       ...(diffBase && diffHead ? { diffBase, diffHead, diffMergeBase } : {}),
       codeGraph: codeGraphResult,
     };

@@ -410,7 +410,7 @@ describe("ce cleanup (integration)", () => {
       const worktreePath = buildWorktreePath(project, "issue-1");
       const workspacePath = buildWorkspacePath(project, "issue-1");
       const baseBranch = await detectBaseBranch(repoDir);
-      await addWorktree(repoDir, worktreePath, "ce-harness/issue-1", baseBranch!);
+      await addWorktree(repoDir, worktreePath, "ce-harness/issue-1", baseBranch!.ref);
       await mkdir(workspacePath, { recursive: true });
 
       const legacyYaml = [
@@ -660,7 +660,7 @@ describe("ce cleanup (integration)", () => {
       const worktreePath = buildWorktreePath(project, "issue-1");
       const workspacePath = buildWorkspacePath(project, "issue-1");
       const baseBranch = await detectBaseBranch(repoDir);
-      await addWorktree(repoDir, worktreePath, "ce-harness/issue-1", baseBranch!);
+      await addWorktree(repoDir, worktreePath, "ce-harness/issue-1", baseBranch!.ref);
       await mkdir(workspacePath, { recursive: true });
 
       const legacyYaml = [

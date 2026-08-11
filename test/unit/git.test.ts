@@ -1,9 +1,15 @@
 import { rm, writeFile } from "node:fs/promises";
 import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createTempRepo } from "../helpers/tempRepo.js";
+import { createBareRemote, cloneRepo, createTempRepo } from "../helpers/tempRepo.js";
 import { CeError } from "../../src/core/errors.js";
-import { resolveCommit, resolveMergeBase } from "../../src/core/git.js";
+import {
+  detectBaseBranch,
+  queryRemoteDefaultBranch,
+  readCachedRemoteDefaultBranch,
+  resolveCommit,
+  resolveMergeBase,
+} from "../../src/core/git.js";
 
 describe("resolveCommit / resolveMergeBase", () => {
   let repoDir: string;
@@ -109,5 +115,124 @@ describe("resolveCommit / resolveMergeBase", () => {
     await expect(resolveMergeBase(repoDir, unrelatedSha, headSha)).rejects.toThrow(
       /share no common history/i,
     );
+  });
+});
+
+describe("detectBaseBranch (repository-agnostic base-branch detection)", () => {
+  let repoDir: string;
+  let remoteDir: string | undefined;
+  let cleanupDirs: string[] = [];
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+    if (remoteDir) await rm(remoteDir, { recursive: true, force: true });
+    await Promise.all(cleanupDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+    cleanupDirs = [];
+  });
+
+  it("falls back to main/master when there is no remote at all (local-only repository)", async () => {
+    repoDir = await createTempRepo();
+
+    expect(await queryRemoteDefaultBranch(repoDir)).toBeNull();
+    expect(await readCachedRemoteDefaultBranch(repoDir)).toBeNull();
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "main", ref: "main" });
+  });
+
+  it("returns null when neither a remote signal nor main/master exists", async () => {
+    repoDir = await createTempRepo();
+    await execa("git", ["-C", repoDir, "branch", "-m", "main", "trunk"]);
+
+    await expect(detectBaseBranch(repoDir)).resolves.toBeNull();
+  });
+
+  it('a repository whose remote defaults to "develop" (never "main") resolves to "develop"', async () => {
+    remoteDir = await createBareRemote("develop");
+    repoDir = await cloneRepo(remoteDir);
+
+    expect(await queryRemoteDefaultBranch(repoDir)).toBe("develop");
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "develop", ref: "develop" });
+
+    // No "main" branch exists anywhere in this repository -- confirms
+    // the result is not coincidentally reachable via the old hardcoded
+    // fallback.
+    const branches = (await execa("git", ["-C", repoDir, "branch", "--list"])).stdout;
+    expect(branches).not.toMatch(/\bmain\b/);
+  });
+
+  it('a repository whose remote defaults to "main" continues to resolve to "main" unchanged', async () => {
+    remoteDir = await createBareRemote("main");
+    repoDir = await cloneRepo(remoteDir);
+
+    expect(await queryRemoteDefaultBranch(repoDir)).toBe("main");
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "main", ref: "main" });
+  });
+
+  it("prefers the live remote query over a stale locally-cached default branch", async () => {
+    remoteDir = await createBareRemote("develop");
+    repoDir = await cloneRepo(remoteDir);
+    // repoDir's cached refs/remotes/origin/HEAD now says "develop".
+    expect(await readCachedRemoteDefaultBranch(repoDir)).toBe("develop");
+
+    // The remote's default branch changes to "main" *after* the clone --
+    // repoDir's local cache is now stale, but nothing has re-fetched yet.
+    await execa("git", ["-C", remoteDir, "branch", "main"]);
+    await execa("git", ["-C", remoteDir, "symbolic-ref", "HEAD", "refs/heads/main"]);
+    expect(await queryRemoteDefaultBranch(repoDir)).toBe("main");
+    expect(await readCachedRemoteDefaultBranch(repoDir)).toBe("develop");
+
+    // The user independently fetches the new branch (ce-harness itself
+    // never fetches automatically) -- now "main" is resolvable locally
+    // via the origin/main remote-tracking ref, even though there is no
+    // local "main" branch and the cached HEAD symref still says "develop".
+    await execa("git", ["-C", repoDir, "fetch", "origin"]);
+
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "main", ref: "origin/main" });
+  });
+
+  it("throws a clear, actionable error when the remote's default branch is not resolvable locally, rather than silently falling back", async () => {
+    remoteDir = await createBareRemote("develop");
+    repoDir = await cloneRepo(remoteDir);
+
+    // Simulate the remote's default branch changing after the clone,
+    // with the user never having fetched the new branch at all -- no
+    // local branch and no remote-tracking ref for it exist anywhere.
+    await execa("git", ["-C", remoteDir, "branch", "main"]);
+    await execa("git", ["-C", remoteDir, "symbolic-ref", "HEAD", "refs/heads/main"]);
+
+    await expect(detectBaseBranch(repoDir)).rejects.toThrow(CeError);
+    try {
+      await detectBaseBranch(repoDir);
+      expect.fail("expected detectBaseBranch to throw");
+    } catch (error) {
+      const ceError = error as InstanceType<typeof CeError>;
+      expect(ceError.message).toMatch(/reports "main" as its default branch/);
+      expect(ceError.message).toMatch(/does not exist locally/);
+      expect(ceError.recovery).toMatch(/never fetches automatically/i);
+      expect(ceError.recovery).toMatch(/fetch origin main/);
+    }
+  });
+
+  it("resolves via the remote-tracking ref when only that (not a local branch) is available", async () => {
+    remoteDir = await createBareRemote("develop");
+    repoDir = await cloneRepo(remoteDir);
+    // Move off "develop" and delete the local branch, keeping only the
+    // remote-tracking ref -- exactly what a fetch-without-checkout
+    // leaves behind for a non-default branch.
+    await execa("git", ["-C", repoDir, "checkout", "--detach"]);
+    await execa("git", ["-C", repoDir, "branch", "-D", "develop"]);
+
+    const branches = (await execa("git", ["-C", repoDir, "branch", "--list"])).stdout;
+    expect(branches).not.toMatch(/\bdevelop\b/);
+
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({
+      name: "develop",
+      ref: "origin/develop",
+    });
+  });
+
+  it("queryRemoteDefaultBranch and readCachedRemoteDefaultBranch both return null for an unknown remote name", async () => {
+    repoDir = await createTempRepo();
+    expect(await queryRemoteDefaultBranch(repoDir, "upstream")).toBeNull();
+    expect(await readCachedRemoteDefaultBranch(repoDir, "upstream")).toBeNull();
   });
 });

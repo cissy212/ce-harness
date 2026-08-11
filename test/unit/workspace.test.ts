@@ -322,6 +322,34 @@ describe("workspace serialization and validation", () => {
       }).success,
     ).toBe(true);
   });
+
+  it("accepts baseBranchCommit alone, but rejects it together with diffBase (already captures the same fact)", async () => {
+    const { WorkspaceSchema } = await import("../../src/core/workspace.js");
+    const base = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "develop",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws",
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(
+      WorkspaceSchema.safeParse({ ...base, baseBranchCommit: "d".repeat(40) }).success,
+    ).toBe(true);
+    expect(WorkspaceSchema.safeParse(base).success).toBe(true);
+    expect(
+      WorkspaceSchema.safeParse({
+        ...base,
+        baseBranchCommit: "d".repeat(40),
+        diffBase: "a".repeat(40),
+        diffHead: "b".repeat(40),
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("workspaceType", () => {

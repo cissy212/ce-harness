@@ -58,11 +58,115 @@ export async function isDirty(repoPath: string): Promise<boolean> {
   return (await statusPorcelain(repoPath)).length > 0;
 }
 
-/** Returns "main", "master", or null if neither exists as a local branch. */
-export async function detectBaseBranch(repoPath: string): Promise<string | null> {
+/**
+ * Queries `remote` directly for the branch its `HEAD` symref currently
+ * points at -- a lightweight, read-only round trip (`git ls-remote
+ * --symref`) that downloads no objects and updates no local refs. This
+ * reflects the remote's *current* default branch, unaffected by
+ * whatever was true when this repository was last cloned or fetched.
+ * Returns null if there is no such remote, the query fails (offline,
+ * unreachable, no such remote, etc.), or the response can't be parsed.
+ */
+export async function queryRemoteDefaultBranch(repoPath: string, remote = "origin"): Promise<string | null> {
+  const result = await git(repoPath, ["ls-remote", "--symref", remote, "HEAD"]);
+  if (result.exitCode !== 0) return null;
+  const match = result.stdout.match(/^ref:\s+refs\/heads\/(\S+)\s+HEAD/m);
+  return match ? match[1] : null;
+}
+
+/**
+ * Reads the locally-cached remote default branch at
+ * `refs/remotes/<remote>/HEAD` -- set automatically by `git clone` (or
+ * `git remote set-head`), and readable entirely offline. This can be
+ * stale if the remote's default branch changed since this repository
+ * was cloned; `queryRemoteDefaultBranch` reflects current truth and is
+ * preferred whenever it succeeds. Returns null if the symref doesn't
+ * exist (e.g. no such remote, or it was never set).
+ */
+export async function readCachedRemoteDefaultBranch(
+  repoPath: string,
+  remote = "origin",
+): Promise<string | null> {
+  const result = await git(repoPath, ["symbolic-ref", `refs/remotes/${remote}/HEAD`]);
+  if (result.exitCode !== 0) return null;
+  const match = result.stdout.trim().match(new RegExp(`^refs/remotes/${remote}/(.+)$`));
+  return match ? match[1] : null;
+}
+
+/**
+ * Resolves the exact local ref to seed a worktree from, for a candidate
+ * base-branch name: prefers a local branch of that name, then falls
+ * back to `<remote>/<branch>` (a remote-tracking ref, present after any
+ * prior fetch even without a local branch checked out). Returns null if
+ * neither resolves locally -- ce-harness never fetches automatically to
+ * make one exist; callers surface a clear error instead.
+ */
+async function resolveLocalRefForBranch(
+  repoPath: string,
+  branch: string,
+  remote: string,
+): Promise<string | null> {
+  if (await commitExists(repoPath, branch)) return branch;
+  const remoteRef = `${remote}/${branch}`;
+  if (await commitExists(repoPath, remoteRef)) return remoteRef;
+  return null;
+}
+
+export interface DetectedBaseBranch {
+  /** Clean branch name (e.g. "develop", "main"), for display/metadata. */
+  name: string;
+  /** The exact local ref to seed the worktree from (e.g. "develop" or "origin/develop"). */
+  ref: string;
+}
+
+/**
+ * Determines the repository's intended base branch, preferring
+ * automatic, repository-agnostic detection over any hardcoded name:
+ *
+ * 1. Ask `remote` directly what its current default branch is (a live,
+ *    read-only query -- see `queryRemoteDefaultBranch`).
+ * 2. If that fails (offline, no such remote), fall back to the locally
+ *    cached remote default branch (see `readCachedRemoteDefaultBranch`).
+ * 3. If neither yields a signal at all (no remote configured -- a
+ *    local-only repository), fall back to the common local convention
+ *    names, in order. This is the only place a specific name is ever
+ *    hardcoded, and only as an absolute last resort with zero
+ *    repository-provided signal.
+ *
+ * If the remote clearly names a branch (step 1 or 2) but it cannot be
+ * resolved locally, this throws rather than silently substituting a
+ * different branch -- ce-harness never fetches automatically, and
+ * guessing here would risk exactly the wrong-history problem this
+ * function exists to prevent.
+ *
+ * Extensibility: this is a strict priority chain, each step tried only
+ * if the previous one yielded nothing. A future explicit,
+ * project-specific override (e.g. a config value read from the target
+ * repository) only ever needs to be added as a new step *before* step 1
+ * -- returning early with `{ name, ref }` when present -- with no change
+ * required to the steps below it, `resolveLocalRefForBranch`, or any
+ * caller (which only ever consumes the `{ name, ref }` shape).
+ */
+export async function detectBaseBranch(
+  repoPath: string,
+  remote = "origin",
+): Promise<DetectedBaseBranch | null> {
+  const intended =
+    (await queryRemoteDefaultBranch(repoPath, remote)) ??
+    (await readCachedRemoteDefaultBranch(repoPath, remote));
+
+  if (intended) {
+    const ref = await resolveLocalRefForBranch(repoPath, intended, remote);
+    if (ref) return { name: intended, ref };
+    throw new CeError(
+      `The repository's remote ("${remote}") reports "${intended}" as its default branch, but "${intended}" does not exist locally (neither as a branch nor as "${remote}/${intended}") in "${repoPath}".`,
+      `ce-harness never fetches automatically. Fetch it first (e.g. \`git -C "${repoPath}" fetch ${remote} ${intended}\`), then run \`ce start\` again.`,
+    );
+  }
+
   for (const candidate of ["main", "master"]) {
     if (await branchExists(repoPath, candidate)) {
-      return candidate;
+      return { name: candidate, ref: candidate };
     }
   }
   return null;

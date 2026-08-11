@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execa } from "execa";
-import { createTempRepo, makeDirty } from "../helpers/tempRepo.js";
+import { createBareRemote, cloneRepo, createTempRepo, makeDirty } from "../helpers/tempRepo.js";
 import {
   nonExistentOpenSpecBin,
   setupFakeOpenSpec,
@@ -172,6 +172,128 @@ describe("ce start (integration)", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  describe('Repository-aware base branch detection (never assumes "main")', () => {
+    it('a repository whose remote defaults to "develop" creates the worktree from develop, not main', async () => {
+      const remoteDir = await createBareRemote("develop");
+      const developRepoDir = await cloneRepo(remoteDir);
+      try {
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({ repo: developRepoDir, issue: "issue-1" });
+
+        const workspace = await readWorkspace(basenameOf(developRepoDir), "issue-1");
+        expect(workspace.baseBranch).toBe("develop");
+        expect(workspace.baseBranchCommit).toMatch(/^[0-9a-f]{40}$/);
+
+        const developSha = (
+          await execa("git", ["-C", developRepoDir, "rev-parse", "develop"])
+        ).stdout.trim();
+        expect(workspace.baseBranchCommit).toBe(developSha);
+
+        const worktreeHead = (
+          await execa("git", ["-C", workspace.worktreePath, "rev-parse", "HEAD"])
+        ).stdout.trim();
+        expect(worktreeHead).toBe(developSha);
+
+        // No "main" branch exists anywhere in this repository -- confirms
+        // the worktree genuinely came from "develop", not a coincidental main.
+        const branches = (await execa("git", ["-C", developRepoDir, "branch", "--list"])).stdout;
+        expect(branches).not.toMatch(/\bmain\b/);
+      } finally {
+        await rm(remoteDir, { recursive: true, force: true });
+        await rm(developRepoDir, { recursive: true, force: true });
+      }
+    });
+
+    it("a repository whose remote defaults to main continues to work unchanged", async () => {
+      const remoteDir = await createBareRemote("main");
+      const cloneDir = await cloneRepo(remoteDir);
+      try {
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({ repo: cloneDir, issue: "issue-1" });
+
+        const workspace = await readWorkspace(basenameOf(cloneDir), "issue-1");
+        expect(workspace.baseBranch).toBe("main");
+        expect(workspace.baseBranchCommit).toMatch(/^[0-9a-f]{40}$/);
+      } finally {
+        await rm(remoteDir, { recursive: true, force: true });
+        await rm(cloneDir, { recursive: true, force: true });
+      }
+    });
+
+    it("records the resolved base branch and its exact commit for a local-only repository too (no remote at all)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.baseBranch).toBe("main");
+      const mainSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+      expect(workspace.baseBranchCommit).toBe(mainSha);
+    });
+
+    it('shows "Base branch" and "Base commit" in `ce status` for the default flow', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      logSpy.mockClear();
+
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Base branch:\s+main/);
+      expect(output).toMatch(/Base commit:\s+[0-9a-f]{40}/);
+    });
+
+    it("does not record baseBranchCommit for an explicit --base/--head workspace (already captured by diffBase/diffHead)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+      await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: "main" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.baseBranchCommit).toBeUndefined();
+      expect(workspace.diffBase).toBe(baseSha);
+    });
+
+    it("fails with an actionable error, before creating any persistent resource, when the remote's default branch is not resolvable locally", async () => {
+      const remoteDir = await createBareRemote("develop");
+      const cloneDir = await cloneRepo(remoteDir);
+      try {
+        // The remote's default branch changes after the clone, and the
+        // user never fetches the new branch -- ce-harness must refuse
+        // rather than silently falling back to some other branch.
+        await execa("git", ["-C", remoteDir, "branch", "main"]);
+        await execa("git", ["-C", remoteDir, "symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readActivePointer } = await import("../../src/core/workspace.js");
+
+        await expect(startCommand({ repo: cloneDir, issue: "issue-1" })).rejects.toThrow(
+          /reports "main" as its default branch/,
+        );
+
+        expect(await readActivePointer()).toBeNull();
+        expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+        expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+      } finally {
+        await rm(remoteDir, { recursive: true, force: true });
+        await rm(cloneDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("OpenSpec integration", () => {
