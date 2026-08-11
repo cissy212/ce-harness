@@ -168,6 +168,67 @@ describe("CodeGraph (semantic code navigation) integration", () => {
       await cleanupCommand({});
       expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
     });
+
+    it('".codegraph" never appears as an untracked directory in real, unfiltered `git status` -- not just ce-harness\'s own summary', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      // The real `git status`, run directly -- exactly what a user typing
+      // it themselves (or their editor/IDE) would see. Never routed
+      // through ce-harness's own filterHarnessManagedChanges.
+      const status = await execa("git", ["-C", workspace.worktreePath, "status", "--porcelain"]);
+      expect(status.stdout).toBe("");
+
+      const untracked = await execa("git", [
+        "-C",
+        workspace.worktreePath,
+        "status",
+        "--porcelain",
+        "--ignored",
+      ]);
+      expect(untracked.stdout).toMatch(/!! \.codegraph\//);
+    });
+
+    it("adds the exclude entry to the repository's local, never-committed exclude file -- never a tracked .gitignore change", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const commonDir = (
+        await execa("git", ["-C", repoDir, "rev-parse", "--git-common-dir"])
+      ).stdout.trim();
+      const excludeContent = await readFile(join(repoDir, commonDir, "info", "exclude"), "utf8");
+      expect(excludeContent).toContain("/.codegraph");
+
+      // Never a tracked file change -- confirmed by the original
+      // repository's own status staying clean.
+      const originalStatus = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+      expect(originalStatus.stdout).toBe("");
+      expect(existsSync(join(repoDir, ".gitignore"))).toBe(false);
+    });
+
+    it("a second workspace for a different issue in the same repository never duplicates the exclude entry", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      await cleanupCommand({});
+      await startCommand({ repo: repoDir, issue: "issue-2" });
+
+      const commonDir = (
+        await execa("git", ["-C", repoDir, "rev-parse", "--git-common-dir"])
+      ).stdout.trim();
+      const excludeContent = await readFile(join(repoDir, commonDir, "info", "exclude"), "utf8");
+      const occurrences = excludeContent
+        .split("\n")
+        .filter((line) => line.trim() === "/.codegraph").length;
+      expect(occurrences).toBe(1);
+    });
   });
 
   describe("pre-existing .codegraph/ in the worktree (e.g. tracked by the repository itself)", () => {
@@ -217,6 +278,24 @@ describe("CodeGraph (semantic code navigation) integration", () => {
       await statusCommand();
       expect(logs.some((line) => line.includes("Worktree changes: clean"))).toBe(true);
     });
+
+    it("never adds an exclude entry for a pre-existing, unowned .codegraph directory", async () => {
+      await execa("mkdir", ["-p", join(repoDir, ".codegraph")]);
+      await writeFile(join(repoDir, ".codegraph", "tracked.db"), "committed content\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .codegraph directory"]);
+
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const commonDir = (
+        await execa("git", ["-C", repoDir, "rev-parse", "--git-common-dir"])
+      ).stdout.trim();
+      const excludeFile = join(repoDir, commonDir, "info", "exclude");
+      const excludeContent = existsSync(excludeFile) ? await readFile(excludeFile, "utf8") : "";
+      expect(excludeContent).not.toContain(".codegraph");
+    });
   });
 
   describe("CodeGraph binary not on PATH", () => {
@@ -234,6 +313,20 @@ describe("CodeGraph (semantic code navigation) integration", () => {
 
       const launch = JSON.parse(await readFile(fakeOpenCode.outputFile, "utf8"));
       expect(launch.env.CE_CODE_NAV_AVAILABLE).toBeNull();
+    });
+
+    it("never adds an exclude entry when CodeGraph is unavailable -- nothing to exclude", async () => {
+      process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const commonDir = (
+        await execa("git", ["-C", repoDir, "rev-parse", "--git-common-dir"])
+      ).stdout.trim();
+      const excludeFile = join(repoDir, commonDir, "info", "exclude");
+      const excludeContent = existsSync(excludeFile) ? await readFile(excludeFile, "utf8") : "";
+      expect(excludeContent).not.toContain(".codegraph");
     });
   });
 

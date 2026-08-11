@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
+import { addLocalExcludePattern } from "./git.js";
 import { expectedOpenCodeConfigDir } from "./opencodeConfig.js";
 import type { Workspace } from "./workspace.js";
 
@@ -25,6 +26,11 @@ import type { Workspace } from "./workspace.js";
  *   worktree (almost certainly because the repository itself tracks
  *   one), ce-harness never touches, claims, or deletes it -- CodeGraph
  *   is simply reported as unavailable for this workspace.
+ * - Whenever ce-harness does create and own that index, it also adds it
+ *   to the repository's local, never-committed exclude file (see
+ *   `ignoreCodeGraphIndex`) so `.codegraph/` never shows up as an
+ *   untracked directory in `git status` -- no manual `.gitignore` entry
+ *   ever required.
  *
  * This module is the only place CodeGraph-specific knowledge lives.
  * Everything exposed to workflow templates is generic ("semantic code
@@ -148,6 +154,37 @@ export async function initializeCodeGraph(worktreePath: string): Promise<CodeGra
       managedByHarness: false,
       reason: `CodeGraph setup encountered an unexpected error: ${(error as Error).message}`,
     };
+  }
+}
+
+export interface IgnoreCodeGraphResult {
+  ignored: boolean;
+  reason?: string;
+}
+
+/**
+ * Ensures `.codegraph` never appears as an untracked directory in `git
+ * status` for this worktree, via Git's own local, never-committed
+ * exclude mechanism (see `addLocalExcludePattern`) -- never a tracked
+ * `.gitignore` change, and never anything the user has to remember to
+ * do themselves. Only ever called once CodeGraph is confirmed
+ * `available` and `managedByHarness` for this exact worktree (see
+ * `initializeCodeGraph`'s result) -- a pre-existing `.codegraph/`
+ * ce-harness doesn't own is never touched, and this function is never
+ * even invoked for it.
+ *
+ * Never throws, mirroring `initializeCodeGraph`'s own contract: failing
+ * to add the exclude entry is purely cosmetic (git status would show an
+ * extra untracked directory) and must never fail `ce start` itself.
+ * Returns a result instead so a caller may still choose to surface a
+ * soft warning.
+ */
+export async function ignoreCodeGraphIndex(worktreePath: string): Promise<IgnoreCodeGraphResult> {
+  try {
+    await addLocalExcludePattern(worktreePath, "/.codegraph");
+    return { ignored: true };
+  } catch (error) {
+    return { ignored: false, reason: (error as Error).message };
   }
 }
 

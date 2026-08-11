@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { execa } from "execa";
 import { CeError } from "./errors.js";
 
@@ -251,6 +252,48 @@ export async function readGitConfig(repoPath: string, key: string): Promise<stri
   if (result.exitCode !== 0) return null;
   const value = result.stdout.trim();
   return value.length > 0 ? value : null;
+}
+
+/**
+ * Adds `pattern` to `repoPath`'s local, never-committed exclude file
+ * (`<git-common-dir>/info/exclude`) -- Git's own purpose-built mechanism
+ * for exactly this: a personal ignore rule that never touches any
+ * tracked file (`.gitignore` included) and is never visible to anyone
+ * else. Idempotent (a no-op if `pattern` is already present, checked
+ * line-for-line) and strictly additive -- this only ever appends;
+ * pre-existing content in the file is never modified or removed.
+ *
+ * Note this file lives in the repository's *common* Git directory,
+ * shared by every worktree of the same repository (Git has no
+ * per-worktree equivalent) -- so a pattern added from one worktree also
+ * applies to the original checkout and any other worktree. This is the
+ * intended, standard behavior of Git's own exclude mechanism, not a
+ * ce-harness-specific side effect.
+ */
+export async function addLocalExcludePattern(repoPath: string, pattern: string): Promise<void> {
+  const commonDirResult = await git(repoPath, ["rev-parse", "--git-common-dir"]);
+  if (commonDirResult.exitCode !== 0) {
+    throw new CeError(
+      `Could not resolve the Git common directory for "${repoPath}": ${commonDirResult.stderr.trim()}`,
+    );
+  }
+  const commonDir = resolve(repoPath, commonDirResult.stdout.trim());
+  const excludeFile = join(commonDir, "info", "exclude");
+
+  let existing = "";
+  try {
+    existing = await readFile(excludeFile, "utf8");
+  } catch {
+    // No existing file (or unreadable) -- treated the same as empty.
+  }
+
+  if (existing.split("\n").some((line) => line.trim() === pattern)) {
+    return;
+  }
+
+  await mkdir(dirname(excludeFile), { recursive: true });
+  const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  await writeFile(excludeFile, `${existing}${separator}${pattern}\n`, "utf8");
 }
 
 export async function branchExists(repoPath: string, branch: string): Promise<boolean> {

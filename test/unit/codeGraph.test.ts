@@ -1,8 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createTempRepo } from "../helpers/tempRepo.js";
 import {
   setupFakeCodeGraph,
   teardownFakeCodeGraph,
@@ -98,6 +100,50 @@ describe("initializeCodeGraph", () => {
       available: false,
       managedByHarness: false,
     });
+  });
+});
+
+describe("ignoreCodeGraphIndex", () => {
+  let repoDir: string;
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("adds /.codegraph to the repository's local exclude file, and reports { ignored: true }", async () => {
+    repoDir = await createTempRepo();
+    const { ignoreCodeGraphIndex } = await import("../../src/core/codeGraph.js");
+
+    const result = await ignoreCodeGraphIndex(repoDir);
+
+    expect(result).toEqual({ ignored: true });
+    const commonDir = (
+      await execa("git", ["-C", repoDir, "rev-parse", "--git-common-dir"])
+    ).stdout.trim();
+    const excludeContent = await readFile(join(repoDir, commonDir, "info", "exclude"), "utf8");
+    expect(excludeContent).toContain("/.codegraph");
+  });
+
+  it("makes an actually-created .codegraph directory disappear from git status", async () => {
+    repoDir = await createTempRepo();
+    const { ignoreCodeGraphIndex } = await import("../../src/core/codeGraph.js");
+
+    await ignoreCodeGraphIndex(repoDir);
+    await mkdir(join(repoDir, ".codegraph"), { recursive: true });
+    await writeFile(join(repoDir, ".codegraph", "codegraph.db"), "data", "utf8");
+
+    const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+    expect(status.stdout).toBe("");
+  });
+
+  it("never throws -- reports { ignored: false, reason } when the path is not a Git repository at all", async () => {
+    repoDir = await mkdtemp(join(tmpdir(), "ce-harness-not-a-repo-"));
+    const { ignoreCodeGraphIndex } = await import("../../src/core/codeGraph.js");
+
+    const result = await ignoreCodeGraphIndex(repoDir);
+
+    expect(result.ignored).toBe(false);
+    expect(result.reason).toBeTruthy();
   });
 });
 

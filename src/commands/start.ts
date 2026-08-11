@@ -41,7 +41,12 @@ import {
 import { formatLaunchCommand, launchOpenCode } from "../core/opencode.js";
 import { createOpenCodeConfig } from "../core/opencodeConfig.js";
 import { createLensesDir } from "../core/lenses.js";
-import { initializeCodeGraph, writeCodeGraphOpenCodeConfig, type CodeGraphResult } from "../core/codeGraph.js";
+import {
+  ignoreCodeGraphIndex,
+  initializeCodeGraph,
+  writeCodeGraphOpenCodeConfig,
+  type CodeGraphResult,
+} from "../core/codeGraph.js";
 import { detectBootstrapNeeds, type BootstrapCheckResult } from "../core/bootstrap.js";
 import { renderBranchName, resolveBranchPattern } from "../core/branchNaming.js";
 import { buildStartupSummary, formatStartupSummary } from "../core/startupSummary.js";
@@ -244,6 +249,17 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
       codeGraphResult = await initializeCodeGraph(worktreePath);
       if (codeGraphResult.available) {
         await writeCodeGraphOpenCodeConfig(workspacePath, worktreePath);
+
+        // Purely cosmetic (keeps `.codegraph/` out of `git status`) --
+        // never lets a failure here affect codeGraphResult or fail
+        // `ce start` itself, matching ignoreCodeGraphIndex's own
+        // never-throw contract.
+        const ignoreResult = await ignoreCodeGraphIndex(worktreePath);
+        if (!ignoreResult.ignored) {
+          console.error(
+            `Warning: could not add ".codegraph" to Git's local exclude file: ${ignoreResult.reason}`,
+          );
+        }
       }
     } catch (error) {
       codeGraphResult = {

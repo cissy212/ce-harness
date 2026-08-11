@@ -769,6 +769,15 @@ Code.
     active.yml                      # which single workspace is currently active
 ```
 
+If CodeGraph (semantic code navigation) is available and used, its index
+lives at `<worktree>/.codegraph/` — never inside the workspace directory
+above, and never inside your original repository. You'll never see it as
+an untracked directory in `git status`: `ce start` adds it to the
+repository's own local, never-committed exclude file
+(`<git-common-dir>/info/exclude`) automatically, the same mechanism Git
+itself provides for exactly this — no manual `.gitignore` entry needed,
+and no tracked file is ever touched.
+
 ## Troubleshooting
 
 Work through these in order — most installation problems are one of the

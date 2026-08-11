@@ -1,9 +1,11 @@
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createBareRemote, cloneRepo, createTempRepo } from "../helpers/tempRepo.js";
 import { CeError } from "../../src/core/errors.js";
 import {
+  addLocalExcludePattern,
   detectBaseBranch,
   queryRemoteDefaultBranch,
   readCachedRemoteDefaultBranch,
@@ -234,5 +236,99 @@ describe("detectBaseBranch (repository-agnostic base-branch detection)", () => {
     repoDir = await createTempRepo();
     expect(await queryRemoteDefaultBranch(repoDir, "upstream")).toBeNull();
     expect(await readCachedRemoteDefaultBranch(repoDir, "upstream")).toBeNull();
+  });
+});
+
+describe("addLocalExcludePattern (Git's own local, never-committed exclude mechanism)", () => {
+  let repoDir: string;
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("adds the pattern to <git-common-dir>/info/exclude, and Git actually honors it", async () => {
+    repoDir = await createTempRepo();
+
+    await addLocalExcludePattern(repoDir, "/.codegraph");
+
+    const commonDir = (
+      await execa("git", ["-C", repoDir, "rev-parse", "--git-common-dir"])
+    ).stdout.trim();
+    const excludeContent = await readFile(join(repoDir, commonDir, "info", "exclude"), "utf8");
+    expect(excludeContent).toContain("/.codegraph\n");
+
+    await execa("mkdir", [join(repoDir, ".codegraph")]);
+    const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+    expect(status.stdout).toBe("");
+  });
+
+  it("is idempotent -- calling it twice never duplicates the line", async () => {
+    repoDir = await createTempRepo();
+
+    await addLocalExcludePattern(repoDir, "/.codegraph");
+    await addLocalExcludePattern(repoDir, "/.codegraph");
+
+    const commonDir = (
+      await execa("git", ["-C", repoDir, "rev-parse", "--git-common-dir"])
+    ).stdout.trim();
+    const excludeContent = await readFile(join(repoDir, commonDir, "info", "exclude"), "utf8");
+    const occurrences = excludeContent.split("\n").filter((line) => line.trim() === "/.codegraph").length;
+    expect(occurrences).toBe(1);
+  });
+
+  it("never removes or modifies pre-existing content in the exclude file", async () => {
+    repoDir = await createTempRepo();
+    const commonDir = (
+      await execa("git", ["-C", repoDir, "rev-parse", "--git-common-dir"])
+    ).stdout.trim();
+    const excludeFile = join(repoDir, commonDir, "info", "exclude");
+    await writeFile(excludeFile, "*.local\nsome-other-pattern\n", "utf8");
+
+    await addLocalExcludePattern(repoDir, "/.codegraph");
+
+    const excludeContent = await readFile(excludeFile, "utf8");
+    expect(excludeContent).toContain("*.local");
+    expect(excludeContent).toContain("some-other-pattern");
+    expect(excludeContent).toContain("/.codegraph");
+  });
+
+  it("applies to every worktree of the same repository, since Git's exclude file has no per-worktree equivalent", async () => {
+    repoDir = await createTempRepo();
+    const worktreePath = join(repoDir, "..", "addLocalExcludePattern-worktree");
+    await execa("git", ["-C", repoDir, "worktree", "add", "-b", "feature", worktreePath, "main"]);
+
+    try {
+      // Added from the worktree...
+      await addLocalExcludePattern(worktreePath, "/.codegraph");
+
+      // ...but Git also honors it from the original checkout, since the
+      // exclude file lives in the shared common Git directory.
+      await execa("mkdir", [join(repoDir, ".codegraph")]);
+      const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+      expect(status.stdout).toBe("");
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it("never modifies any tracked file -- .gitignore is untouched", async () => {
+    repoDir = await createTempRepo();
+    await writeFile(join(repoDir, ".gitignore"), "node_modules/\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "add .gitignore"]);
+
+    await addLocalExcludePattern(repoDir, "/.codegraph");
+
+    const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+    expect(status.stdout).toBe("");
+    expect(await readFile(join(repoDir, ".gitignore"), "utf8")).toBe("node_modules/\n");
+  });
+
+  it("throws a CeError when repoPath is not a Git repository at all", async () => {
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    repoDir = await mkdtemp(join(tmpdir(), "ce-harness-not-a-repo-"));
+
+    await expect(addLocalExcludePattern(repoDir, "/.codegraph")).rejects.toThrow(CeError);
   });
 });
