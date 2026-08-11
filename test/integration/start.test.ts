@@ -296,6 +296,146 @@ describe("ce start (integration)", () => {
     });
   });
 
+  describe("Configurable branch naming", () => {
+    it('defaults to "ce-harness/{issue}" -- existing behavior unchanged -- when nothing is configured', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.internalBranch).toBe("ce-harness/issue-1");
+
+      const branches = await execa("git", ["-C", repoDir, "branch", "--list", "ce-harness/issue-1"]);
+      expect(branches.stdout).toContain("ce-harness/issue-1");
+    });
+
+    it.each([
+      ["feature/{issue}", "feature/issue-1"],
+      ["bugfix/{issue}", "bugfix/issue-1"],
+      ["review/{issue}", "review/issue-1"],
+      ["{issue}", "issue-1"],
+    ])(
+      'uses the repository-configured pattern "%s" -> "%s" for the internal branch',
+      async (pattern, expectedBranch) => {
+        await execa("git", [
+          "-C",
+          repoDir,
+          "config",
+          "ce-harness.branch-pattern",
+          pattern,
+        ]);
+
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({ repo: repoDir, issue: "issue-1" });
+
+        const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+        expect(workspace.internalBranch).toBe(expectedBranch);
+
+        const branches = await execa("git", [
+          "-C",
+          repoDir,
+          "branch",
+          "--list",
+          expectedBranch,
+        ]);
+        expect(branches.stdout).toContain(expectedBranch);
+      },
+    );
+
+    it("fails clearly, before creating any persistent resource, when the configured pattern has no {issue} placeholder", async () => {
+      await execa("git", ["-C", repoDir, "config", "ce-harness.branch-pattern", "ce-harness"]);
+
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+
+      await expect(startCommand({ repo: repoDir, issue: "issue-1" })).rejects.toThrow(
+        /does not include the "\{issue\}" placeholder/,
+      );
+
+      expect(await readActivePointer()).toBeNull();
+      expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+      expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+    });
+
+    it("does not affect the resolved base branch, worktree location, or any other workspace field", async () => {
+      await execa("git", ["-C", repoDir, "config", "ce-harness.branch-pattern", "feature/{issue}"]);
+
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.internalBranch).toBe("feature/issue-1");
+      expect(workspace.baseBranch).toBe("main");
+      expect(workspace.worktreePath).toBe(
+        join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1"),
+      );
+    });
+
+    it("a globally-configured pattern (git config --global) applies too, via Git's own resolution", async () => {
+      const globalConfigDir = await mkdtemp(join(tmpdir(), "ce-harness-gitconfig-"));
+      const globalConfigFile = join(globalConfigDir, ".gitconfig");
+      const originalGitConfigGlobal = process.env.GIT_CONFIG_GLOBAL;
+      // GIT_CONFIG_GLOBAL alone redirects every `git config --global`
+      // read/write to this temp file -- never the real developer
+      // machine's ~/.gitconfig.
+      process.env.GIT_CONFIG_GLOBAL = globalConfigFile;
+      try {
+        await execa("git", ["config", "--global", "ce-harness.branch-pattern", "review/{issue}"]);
+
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({ repo: repoDir, issue: "issue-1" });
+
+        const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+        expect(workspace.internalBranch).toBe("review/issue-1");
+      } finally {
+        if (originalGitConfigGlobal === undefined) {
+          delete process.env.GIT_CONFIG_GLOBAL;
+        } else {
+          process.env.GIT_CONFIG_GLOBAL = originalGitConfigGlobal;
+        }
+        await rm(globalConfigDir, { recursive: true, force: true });
+      }
+    });
+
+    it("a repository-local override takes precedence over a global default", async () => {
+      const globalConfigDir = await mkdtemp(join(tmpdir(), "ce-harness-gitconfig-"));
+      const globalConfigFile = join(globalConfigDir, ".gitconfig");
+      const originalGitConfigGlobal = process.env.GIT_CONFIG_GLOBAL;
+      process.env.GIT_CONFIG_GLOBAL = globalConfigFile;
+      try {
+        await execa("git", ["config", "--global", "ce-harness.branch-pattern", "review/{issue}"]);
+        await execa("git", ["-C", repoDir, "config", "ce-harness.branch-pattern", "bugfix/{issue}"]);
+
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({ repo: repoDir, issue: "issue-1" });
+
+        const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+        expect(workspace.internalBranch).toBe("bugfix/issue-1");
+      } finally {
+        if (originalGitConfigGlobal === undefined) {
+          delete process.env.GIT_CONFIG_GLOBAL;
+        } else {
+          process.env.GIT_CONFIG_GLOBAL = originalGitConfigGlobal;
+        }
+        await rm(globalConfigDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("OpenSpec integration", () => {
     it("fails cleanly, before creating any persistent resource, when openspec is unavailable", async () => {
       process.env.CE_OPENSPEC_BIN = nonExistentOpenSpecBin(fakeOpenSpec.dir);

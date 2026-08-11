@@ -238,6 +238,21 @@ export async function commitExists(repoPath: string, sha: string): Promise<boole
   return result.exitCode === 0;
 }
 
+/**
+ * Reads a Git config value for `key` in `repoPath`, using Git's own
+ * resolution order (local repo config, then global, then system) --
+ * never a ce-harness-specific config file or format. Returns null when
+ * unset (or on any other failure -- this never throws). Generic and
+ * reusable for any config key; ce-harness-specific keys and their
+ * defaults are owned by their own call sites, not this function.
+ */
+export async function readGitConfig(repoPath: string, key: string): Promise<string | null> {
+  const result = await git(repoPath, ["config", "--get", key]);
+  if (result.exitCode !== 0) return null;
+  const value = result.stdout.trim();
+  return value.length > 0 ? value : null;
+}
+
 export async function branchExists(repoPath: string, branch: string): Promise<boolean> {
   const result = await git(repoPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
   return result.exitCode === 0;

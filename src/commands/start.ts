@@ -42,6 +42,7 @@ import { createOpenCodeConfig } from "../core/opencodeConfig.js";
 import { createLensesDir } from "../core/lenses.js";
 import { initializeCodeGraph, writeCodeGraphOpenCodeConfig, type CodeGraphResult } from "../core/codeGraph.js";
 import { detectBootstrapNeeds, type BootstrapCheckResult } from "../core/bootstrap.js";
+import { renderBranchName, resolveBranchPattern } from "../core/branchNaming.js";
 import { buildLaunchEnv } from "../core/launchEnv.js";
 
 export interface StartOptions {
@@ -123,7 +124,12 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     baseBranchCommit = await resolveCommit(repoRoot, detected.ref);
   }
 
-  const internalBranch = `ce-harness/${sanitizedIssue}`;
+  // Configurable per repository (or per user, machine-wide) via Git's
+  // own config resolution -- see branchNaming.ts. Existing behavior
+  // ("ce-harness/{issue}") remains the default for every repository
+  // that hasn't opted into a different pattern.
+  const branchPattern = await resolveBranchPattern(repoRoot);
+  const internalBranch = renderBranchName(branchPattern, sanitizedIssue);
   const worktreePath = buildWorktreePath(project, sanitizedIssue);
   const workspacePath = buildWorkspacePath(project, sanitizedIssue);
   const openSpecStoreId = generateStoreId(project, sanitizedIssue, repoRoot);

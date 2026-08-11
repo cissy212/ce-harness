@@ -236,12 +236,25 @@ example `fix-login-bug` or `issue-42`).
 - **Worktree isolation.** `ce start` creates a separate [Git
   worktree](https://git-scm.com/docs/git-worktree) for each issue, under
   `~/.ce-harness/worktrees/<project>/<issue>` — a real, independent
-  working directory on its own branch (`ce-harness/<issue>`), checked out
-  from your repository's detected base branch by default (see "Base
-  branch detection" below — never hardcoded to `main`). Your original
-  clone is never touched: ce-harness refuses to even start if it has
-  uncommitted or untracked changes, and all product-code changes happen
-  only inside the worktree.
+  working directory on its own branch (`ce-harness/<issue>` by default —
+  see "Configurable branch naming" below), checked out from your
+  repository's detected base branch by default (see "Base branch
+  detection" below — never hardcoded to `main`). Your original clone is
+  never touched: ce-harness refuses to even start if it has uncommitted
+  or untracked changes, and all product-code changes happen only inside
+  the worktree.
+- **Configurable branch naming.** The internal branch `ce start` creates
+  defaults to `ce-harness/<issue>`, but different repositories use
+  different conventions. Set the `ce-harness.branch-pattern` Git config
+  key — locally, for one repository (`git config ce-harness.branch-pattern
+  "feature/{issue}"`), or globally, as your own personal default across
+  every repository (`git config --global ce-harness.branch-pattern
+  "feature/{issue}"`) — to any pattern containing the `{issue}`
+  placeholder (e.g. `feature/{issue}`, `bugfix/{issue}`, `review/{issue}`,
+  or just `{issue}` with no prefix at all). Git's own local-overrides-
+  global resolution applies as usual. No pattern is hardcoded to any one
+  repository's convention; the default is simply what an unconfigured
+  repository gets.
 - **Base branch detection.** `ce start` never assumes `main`. It
   determines the repository's actual base branch, preferring automatic,
   repository-agnostic detection: (1) a live, read-only query of the
@@ -807,6 +820,15 @@ but it isn't available in your local clone yet — ce-harness never fetches
 automatically, to avoid silently pulling in history you haven't reviewed.
 Fetch it yourself (the error message includes the exact command, e.g.
 `git -C <repo> fetch origin develop`), then run `ce start` again.
+
+### `ce start` fails with "... does not include the '{issue}' placeholder"
+
+Your configured `ce-harness.branch-pattern` (see "Configurable branch
+naming" above) doesn't contain `{issue}` — every workspace for this
+repository would otherwise render to the exact same branch name. Fix the
+pattern (`git config ce-harness.branch-pattern "feature/{issue}"`), or
+remove the override entirely (`git config --unset
+ce-harness.branch-pattern`) to use the default.
 
 ### `ce start` fails with "A workspace is already active..."
 
