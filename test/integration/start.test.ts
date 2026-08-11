@@ -106,14 +106,23 @@ describe("ce start (integration)", () => {
     expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
   });
 
-  it("prints the OpenSpec store id in the success output", async () => {
+  it("prints a concise startup summary: workspace ready, worktree location, VS Code command, and next step", async () => {
     const { startCommand } = await import("../../src/commands/start.js");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    logSpy.mockClear();
 
     await startCommand({ repo: repoDir, issue: "issue-1" });
 
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
-    expect(output).toMatch(/OpenSpec store: ce-/);
+    const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+    expect(output).toMatch(/Workspace ready\./);
+    expect(output).toMatch(new RegExp(`Worktree\\n${escapeRegExp(worktreePath)}`));
+    expect(output).toMatch(new RegExp(`Open in VS Code\\ncode ${escapeRegExp(worktreePath)}`));
+    expect(output).toMatch(/Next suggested step\n\/explore/);
+    expect(output).toMatch(new RegExp(`Launching OpenCode in "${escapeRegExp(worktreePath)}"`));
+    // Deliberately not part of ce start's own concise summary anymore --
+    // available via `ce status` instead (see test/integration/status.test.ts).
+    expect(output).not.toMatch(/OpenSpec store:/);
   });
 
   it("refuses to start when the source repository has uncommitted changes", async () => {
@@ -885,6 +894,27 @@ describe("ce start (integration)", () => {
       const launch = JSON.parse(await readFile(fakeOpenCode.outputFile, "utf8"));
       expect(launch.env.CE_DIFF_BASE).toBe(baseSha);
       expect(launch.env.CE_DIFF_HEAD).toBe(headSha);
+    });
+
+    it('suggests "/adversarial-review" (never "/explore") in the startup summary for an Existing PR review workspace', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+
+      const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(join(repoDir, "feature.txt"), "new feature\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "feature commit"]);
+      const headSha = (await execa("git", ["-C", repoDir, "rev-parse", "feature"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: headSha });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Next suggested step\n\/adversarial-review/);
+      expect(output).not.toMatch(/\/explore/);
     });
 
     it("accepts short SHAs and branch names as --base/--head and resolves both to full SHAs", async () => {
@@ -3234,4 +3264,8 @@ describe("ce start (integration)", () => {
 
 function basenameOf(path: string): string {
   return (path.split("/").filter(Boolean).at(-1) as string).toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

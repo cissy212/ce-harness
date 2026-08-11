@@ -24,6 +24,7 @@ import {
   readActivePointer,
   removeWorkspaceDir,
   workspaceExistsOnDisk,
+  workspaceType,
   writeActivePointer,
   writeWorkspace,
   type Workspace,
@@ -43,6 +44,7 @@ import { createLensesDir } from "../core/lenses.js";
 import { initializeCodeGraph, writeCodeGraphOpenCodeConfig, type CodeGraphResult } from "../core/codeGraph.js";
 import { detectBootstrapNeeds, type BootstrapCheckResult } from "../core/bootstrap.js";
 import { renderBranchName, resolveBranchPattern } from "../core/branchNaming.js";
+import { buildStartupSummary, formatStartupSummary } from "../core/startupSummary.js";
 import { buildLaunchEnv } from "../core/launchEnv.js";
 
 export interface StartOptions {
@@ -306,22 +308,18 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     throw error;
   }
 
-  console.log(`Workspace ready for project "${project}", issue "${issue}".`);
-  console.log(`OpenSpec store: ${openSpecStoreId}`);
-  if (bootstrapResult.required) {
-    console.log("");
-    console.log("This repository needs local setup before normal use:");
-    for (const finding of bootstrapResult.findings) {
-      console.log(`  - ${finding.message}`);
-      console.log(`    Run: ${finding.suggestedCommand}`);
-      if (finding.sideEffectWarning) {
-        console.log(`    Warning: ${finding.sideEffectWarning}`);
-      }
-    }
-    console.log(
-      "ce-harness never runs these automatically -- run them yourself inside the worktree above.",
-    );
-  }
+  // A concise, extensible summary: an ordered list of independent
+  // sections (see startupSummary.ts) so a future addition never
+  // requires redesigning how this command formats or prints output.
+  console.log(
+    formatStartupSummary(
+      buildStartupSummary({
+        worktreePath,
+        workspaceType: workspaceType(workspace),
+        bootstrap: bootstrapResult,
+      }),
+    ),
+  );
   console.log("");
   console.log(`Launching OpenCode in "${worktreePath}"...`);
 

@@ -323,7 +323,30 @@ ce start /path/to/your/repository fix-login-bug
 
 This validates the repository, creates the worktree and workspace,
 provisions the OpenSpec store, and launches OpenCode inside the worktree
-with everything wired up. From there, work through the
+with everything wired up. Before OpenCode launches, it prints a concise
+summary of what to do next:
+
+```
+Workspace ready.
+
+Worktree
+~/.ce-harness/worktrees/your-repository/fix-login-bug
+
+Open in VS Code
+code ~/.ce-harness/worktrees/your-repository/fix-login-bug
+
+Next suggested step
+/explore
+```
+
+(If the repository needs local setup first, a "Bootstrap needed" section
+appears between "Open in VS Code" and "Next suggested step" — see
+"Bootstrap detection" under [Core concepts](#core-concepts). The
+suggested next step is `/adversarial-review` instead, for an Existing PR
+review workspace — see
+[Reviewing a GitHub pull request](#reviewing-a-github-pull-request).)
+
+From there, work through the
 [workflow inside OpenCode](#the-workflow-inside-opencode): `/explore` or
 `/propose` to plan, `/apply` to implement, `/verify` and
 `/adversarial-review` to check the work, `/archive` to finish.
