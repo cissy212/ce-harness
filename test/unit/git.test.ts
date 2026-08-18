@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -6,9 +7,14 @@ import { createBareRemote, cloneRepo, createTempRepo } from "../helpers/tempRepo
 import { CeError } from "../../src/core/errors.js";
 import {
   addLocalExcludePattern,
+  addWorktree,
+  branchExists,
+  deleteBranch,
   detectBaseBranch,
+  isRegisteredWorktree,
   queryRemoteDefaultBranch,
   readCachedRemoteDefaultBranch,
+  removeWorktree,
   resolveCommit,
   resolveMergeBase,
 } from "../../src/core/git.js";
@@ -330,5 +336,109 @@ describe("addLocalExcludePattern (Git's own local, never-committed exclude mecha
     repoDir = await mkdtemp(join(tmpdir(), "ce-harness-not-a-repo-"));
 
     await expect(addLocalExcludePattern(repoDir, "/.codegraph")).rejects.toThrow(CeError);
+  });
+});
+
+describe("deleteBranch (idempotent -- a missing branch is a no-op, never a failure)", () => {
+  let repoDir: string;
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("deletes an existing branch", async () => {
+    repoDir = await createTempRepo();
+    await execa("git", ["-C", repoDir, "branch", "some-branch"]);
+    expect(await branchExists(repoDir, "some-branch")).toBe(true);
+
+    await deleteBranch(repoDir, "some-branch");
+
+    expect(await branchExists(repoDir, "some-branch")).toBe(false);
+  });
+
+  it("is a no-op, not an error, when the branch does not exist at all", async () => {
+    repoDir = await createTempRepo();
+
+    await expect(deleteBranch(repoDir, "never-existed")).resolves.toBeUndefined();
+  });
+
+  it("is idempotent -- deleting the same branch twice in a row never throws", async () => {
+    repoDir = await createTempRepo();
+    await execa("git", ["-C", repoDir, "branch", "some-branch"]);
+
+    await deleteBranch(repoDir, "some-branch");
+    await expect(deleteBranch(repoDir, "some-branch")).resolves.toBeUndefined();
+  });
+
+  it("this is a real fix for a real bug: never depends on git's own (locale-dependent, human-readable) error text", async () => {
+    repoDir = await createTempRepo();
+
+    // Simulate exactly the failure mode that broke this before the fix:
+    // a non-English Git locale renders "not found" as something else
+    // entirely (e.g. Spanish: "no encontrada"), which a naive
+    // string/regex match against stderr would silently miss. Since the
+    // fix checks existence via `branchExists` (locale-independent) and
+    // never inspects `git`'s human-readable stderr for this decision at
+    // all, the actual locale is irrelevant -- this passes under any
+    // LANG/LC_ALL, not just an English one.
+    await expect(
+      deleteBranch(repoDir, "ce-harness/blog-domain-entities"),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("removeWorktree / isRegisteredWorktree (idempotent -- a missing worktree is a no-op, never a failure)", () => {
+  let repoDir: string;
+  let worktreePath: string;
+
+  beforeEach(async () => {
+    repoDir = await createTempRepo();
+    worktreePath = join(repoDir, "..", `ce-harness-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  });
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+    await rm(worktreePath, { recursive: true, force: true });
+  });
+
+  it("isRegisteredWorktree is true right after addWorktree, and false after removeWorktree", async () => {
+    await addWorktree(repoDir, worktreePath, "feature", "main");
+    expect(await isRegisteredWorktree(repoDir, worktreePath)).toBe(true);
+
+    await removeWorktree(repoDir, worktreePath, false);
+
+    expect(await isRegisteredWorktree(repoDir, worktreePath)).toBe(false);
+  });
+
+  it("removeWorktree actually removes the directory from disk", async () => {
+    await addWorktree(repoDir, worktreePath, "feature", "main");
+    expect(existsSync(worktreePath)).toBe(true);
+
+    await removeWorktree(repoDir, worktreePath, false);
+
+    expect(existsSync(worktreePath)).toBe(false);
+  });
+
+  it("is a no-op, not an error, when the path was never a registered worktree at all", async () => {
+    await expect(removeWorktree(repoDir, worktreePath, false)).resolves.toBeUndefined();
+  });
+
+  it("is idempotent -- removing the same worktree twice in a row never throws", async () => {
+    await addWorktree(repoDir, worktreePath, "feature", "main");
+
+    await removeWorktree(repoDir, worktreePath, false);
+    await expect(removeWorktree(repoDir, worktreePath, false)).resolves.toBeUndefined();
+  });
+
+  it("is a no-op even after the worktree directory was already deleted directly from disk (bypassing `git worktree remove`)", async () => {
+    await addWorktree(repoDir, worktreePath, "feature", "main");
+    await rm(worktreePath, { recursive: true, force: true });
+    expect(existsSync(worktreePath)).toBe(false);
+
+    // Still registered in Git's internal bookkeeping (a "prunable"
+    // worktree) even though the directory itself is gone -- this must
+    // still be handled as a clean removal, not surface a raw Git error.
+    expect(await isRegisteredWorktree(repoDir, worktreePath)).toBe(true);
+    await expect(removeWorktree(repoDir, worktreePath, false)).resolves.toBeUndefined();
   });
 });

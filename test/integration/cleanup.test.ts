@@ -160,6 +160,130 @@ describe("ce cleanup (integration)", () => {
     await expect(cleanupCommand({})).resolves.toBeUndefined();
   });
 
+  describe("Idempotent cleanup when Git resources are already missing (regression)", () => {
+    it("succeeds when the worktree is already missing but the branch still exists", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+
+      // Simulate the worktree already having been removed some other
+      // way (manually, or by an interrupted previous cleanup), while
+      // the branch is left fully intact -- exactly as `ce status` would
+      // report "Worktree exists: no" / "Branch exists: yes".
+      await execa("git", ["-C", repoDir, "worktree", "remove", "--force", worktreePath]);
+      expect(existsSync(worktreePath)).toBe(false);
+      const branchesBefore = await execa("git", [
+        "-C",
+        repoDir,
+        "branch",
+        "--list",
+        "ce-harness/issue-1",
+      ]);
+      expect(branchesBefore.stdout).toContain("ce-harness/issue-1");
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+
+      const branchesAfter = await execa("git", [
+        "-C",
+        repoDir,
+        "branch",
+        "--list",
+        "ce-harness/issue-1",
+      ]);
+      expect(branchesAfter.stdout.trim()).toBe("");
+      expect(existsSync(workspacePath)).toBe(false);
+      expect(await readActivePointer()).toBeNull();
+    });
+
+    it("succeeds when the branch is already missing but the worktree still exists", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+
+      // `git branch -D` itself refuses to delete a branch still checked
+      // out in a worktree, so first detach the worktree's HEAD (e.g. as
+      // if some tool inside it had done its own detached checkout) to
+      // free the branch up, then delete it normally -- leaving a
+      // perfectly clean worktree that is simply no longer on that
+      // branch, exactly as `ce status` would report "Worktree exists:
+      // yes" / "Branch exists: no".
+      await execa("git", ["-C", worktreePath, "checkout", "--detach"]);
+      await execa("git", ["-C", repoDir, "branch", "-D", "ce-harness/issue-1"]);
+      const showRef = await execa(
+        "git",
+        ["-C", repoDir, "show-ref", "--verify", "--quiet", "refs/heads/ce-harness/issue-1"],
+        { reject: false },
+      );
+      expect(showRef.exitCode).not.toBe(0);
+      expect(existsSync(worktreePath)).toBe(true);
+      const statusBefore = await execa("git", ["-C", worktreePath, "status", "--porcelain"]);
+      expect(statusBefore.stdout).toBe("");
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+
+      expect(existsSync(worktreePath)).toBe(false);
+      expect(existsSync(workspacePath)).toBe(false);
+      expect(await readActivePointer()).toBeNull();
+    });
+
+    it("succeeds when BOTH the worktree and the branch are already missing (the exact reported scenario)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+
+      // Remove the worktree first (a normal branch delete works fine
+      // once nothing has it checked out), then the branch -- exactly
+      // `ce status` reporting "Worktree exists: no" / "Branch exists: no"
+      // while the active workspace pointer and workspace.yml are still
+      // present.
+      await execa("git", ["-C", repoDir, "worktree", "remove", "--force", worktreePath]);
+      await execa("git", ["-C", repoDir, "branch", "-D", "ce-harness/issue-1"]);
+      expect(existsSync(worktreePath)).toBe(false);
+      const branches = await execa("git", ["-C", repoDir, "branch", "--list", "ce-harness/issue-1"]);
+      expect(branches.stdout.trim()).toBe("");
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+
+      expect(existsSync(workspacePath)).toBe(false);
+      expect(await readActivePointer()).toBeNull();
+    });
+
+    it("repeated cleanup after both resources were already missing stays idempotent -- the second call is a clean no-op", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      await execa("git", ["-C", repoDir, "worktree", "remove", "--force", worktreePath]);
+      await execa("git", ["-C", repoDir, "branch", "-D", "ce-harness/issue-1"]);
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+      expect(await readActivePointer()).toBeNull();
+
+      logSpy.mockClear();
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+      expect(logSpy).toHaveBeenCalledWith("No active workspace to clean up.");
+      expect(await readActivePointer()).toBeNull();
+    });
+  });
+
   describe("cwd-inside-worktree protection", () => {
     it("refuses cleanup when the current working directory is the worktree root itself", async () => {
       const { startCommand } = await import("../../src/commands/start.js");

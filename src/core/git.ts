@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { execa } from "execa";
 import { CeError } from "./errors.js";
 
@@ -8,9 +8,28 @@ async function git(cwd: string, args: string[]) {
   return execa("git", args, { cwd, reject: false });
 }
 
-/** True if `stderr` shows the operation's target was already gone -- a no-op, not a failure. */
-function isAlreadyGone(stderr: string, pattern: RegExp): boolean {
-  return pattern.test(stderr);
+/**
+ * Resolves `path` to the same canonical (symlink-free) form Git itself
+ * stores when a worktree is added -- e.g. macOS's `/tmp`/`/var` are
+ * themselves symlinks, so a plain lexical `path.resolve` alone is not
+ * enough to match what `git worktree list` reports. Falls back to
+ * resolving just the parent directory (which -- for every path this is
+ * ever called with -- was created before the leaf could ever have been
+ * deleted) when `path` itself no longer exists on disk, since `realpath`
+ * requires the full path to exist. Never throws: the last resort is a
+ * plain lexical resolve, which is still strictly better than comparing
+ * two arbitrarily-spelled paths as raw strings.
+ */
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    try {
+      return join(await realpath(dirname(path)), basename(path));
+    } catch {
+      return resolve(path);
+    }
+  }
 }
 
 /** Resolves the canonical Git repository root for `path`, or throws. */
@@ -323,24 +342,70 @@ export async function addWorktree(
   }
 }
 
+/**
+ * True if `worktreePath` is still one of `repoPath`'s registered
+ * worktrees, per `git worktree list --porcelain` -- Git's own
+ * structured, locale-independent bookkeeping, never a human-readable
+ * (and therefore locale-dependent) error message. Compares resolved
+ * paths, so it holds regardless of trailing slashes or how the path was
+ * originally spelled; never requires `worktreePath` to exist on disk
+ * (a worktree whose directory was deleted out-of-band still shows up
+ * here as prunable, exactly the case this function must still say
+ * "yes, registered" for).
+ */
+export async function isRegisteredWorktree(repoPath: string, worktreePath: string): Promise<boolean> {
+  const result = await git(repoPath, ["worktree", "list", "--porcelain"]);
+  if (result.exitCode !== 0) return false;
+
+  // Git reports paths already resolved to their canonical form (it
+  // resolved them once, when the worktree was added), so registered
+  // entries are compared as-is; only our own `worktreePath` argument
+  // needs canonicalizing to match that same form.
+  const target = await canonicalPath(worktreePath);
+  return result.stdout
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .some((line) => line.slice("worktree ".length).trim() === target);
+}
+
+/**
+ * Removes `worktreePath` from `repoPath`. A no-op, not a failure, if
+ * `worktreePath` is already not a registered worktree at all --
+ * checked directly via `isRegisteredWorktree` rather than by pattern-
+ * matching `git`'s own (human-readable, locale-dependent) error text,
+ * so this is never fooled by a non-English Git locale or a differently
+ * worded message in a different Git version.
+ */
 export async function removeWorktree(
   repoPath: string,
   worktreePath: string,
   force: boolean,
 ): Promise<void> {
+  if (!(await isRegisteredWorktree(repoPath, worktreePath))) return;
+
   const args = ["worktree", "remove", worktreePath];
   if (force) args.push("--force");
   const result = await git(repoPath, args);
-  if (result.exitCode !== 0 && !isAlreadyGone(result.stderr, /is not a working tree/i)) {
+  if (result.exitCode !== 0) {
     throw new CeError(
       `Failed to remove Git worktree at "${worktreePath}": ${result.stderr.trim()}`,
     );
   }
 }
 
+/**
+ * Deletes `branch`. A no-op, not a failure, if `branch` doesn't exist
+ * at all -- checked directly via `branchExists` rather than by pattern-
+ * matching `git`'s own (human-readable, locale-dependent) error text,
+ * so this is never fooled by a non-English Git locale (e.g. Git
+ * reporting "rama ... no encontrada" instead of "branch ... not
+ * found") or a differently worded message in a different Git version.
+ */
 export async function deleteBranch(repoPath: string, branch: string): Promise<void> {
+  if (!(await branchExists(repoPath, branch))) return;
+
   const result = await git(repoPath, ["branch", "-D", branch]);
-  if (result.exitCode !== 0 && !isAlreadyGone(result.stderr, /not found/i)) {
+  if (result.exitCode !== 0) {
     throw new CeError(`Failed to delete branch "${branch}": ${result.stderr.trim()}`);
   }
 }
