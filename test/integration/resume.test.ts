@@ -16,6 +16,7 @@ import {
   teardownFakeOpenCode,
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
+import { setupFakeClaude, teardownFakeClaude, type FakeClaudeEnv } from "../helpers/fakeClaude.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
 
 describe("ce resume (integration)", () => {
@@ -282,6 +283,67 @@ describe("ce resume (integration)", () => {
     const launch = JSON.parse(await readFile(fakeOpenCode.outputFile, "utf8"));
     expect(launch.env.CE_DIFF_BASE).toBe(baseSha);
     expect(launch.env.CE_DIFF_HEAD).toBe(headSha);
+  });
+
+  describe("Runner selection (persisted in workspace.yml)", () => {
+    let fakeClaude: FakeClaudeEnv;
+
+    beforeEach(async () => {
+      fakeClaude = await setupFakeClaude();
+    });
+
+    afterEach(async () => {
+      await teardownFakeClaude(fakeClaude);
+    });
+
+    it("resolves the runner persisted by `ce start --runner claude` and relaunches Claude Code, not OpenCode", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { resumeCommand } = await import("../../src/commands/resume.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+      const startLaunch = JSON.parse(await readFile(fakeClaude.outputFile, "utf8"));
+
+      await resumeCommand();
+
+      const resumeLaunch = JSON.parse(await readFile(fakeClaude.outputFile, "utf8"));
+      expect(resumeLaunch.cwd).toBe(startLaunch.cwd);
+      expect(existsSync(fakeOpenCode.outputFile)).toBe(false);
+    });
+
+    it("a plain OpenCode workspace (no --runner) still resumes into OpenCode, never Claude", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { resumeCommand } = await import("../../src/commands/resume.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      await resumeCommand();
+
+      expect(existsSync(fakeOpenCode.outputFile)).toBe(true);
+      expect(existsSync(fakeClaude.outputFile)).toBe(false);
+    });
+
+    it("reports a Claude Code launch failure with a manual-entry recovery command", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { resumeCommand } = await import("../../src/commands/resume.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      const { nonExistentClaudeBin } = await import("../helpers/fakeClaude.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+      process.env.CE_CLAUDE_BIN = nonExistentClaudeBin(fakeClaude.dir);
+      try {
+        await resumeCommand();
+        expect.fail("expected resumeCommand to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CeError);
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/Failed to launch Claude Code/);
+        expect(ceError.recovery).toMatch(/Enter the workspace manually with/);
+      } finally {
+        delete process.env.CE_CLAUDE_BIN;
+      }
+    });
   });
 });
 

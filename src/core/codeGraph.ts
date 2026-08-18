@@ -1,9 +1,7 @@
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
 import { addLocalExcludePattern } from "./git.js";
-import { expectedOpenCodeConfigDir } from "./opencodeConfig.js";
 import type { Workspace } from "./workspace.js";
 
 /**
@@ -49,11 +47,6 @@ export function codeGraphBinary(): string {
 /** The only path a workspace's CodeGraph index may live at: inside the isolated worktree. */
 export function expectedCodeGraphIndexPath(worktreePath: string): string {
   return join(worktreePath, ".codegraph");
-}
-
-/** The only path the workspace-owned OpenCode MCP config for CodeGraph may live at. */
-export function expectedCodeGraphOpenCodeConfigPath(workspacePath: string): string {
-  return join(expectedOpenCodeConfigDir(workspacePath), "opencode.json");
 }
 
 export interface CodeGraphResult {
@@ -186,33 +179,6 @@ export async function ignoreCodeGraphIndex(worktreePath: string): Promise<Ignore
   } catch (error) {
     return { ignored: false, reason: (error as Error).message };
   }
-}
-
-/**
- * Writes the workspace-owned OpenCode config that registers CodeGraph's
- * MCP server, scoped to this workspace only -- never the user's global
- * OpenCode config. Injected via the `OPENCODE_CONFIG` environment
- * variable (distinct from `OPENCODE_CONFIG_DIR`), so it merges
- * additively with whatever the user already has globally rather than
- * replacing it.
- */
-export async function writeCodeGraphOpenCodeConfig(
-  workspacePath: string,
-  worktreePath: string,
-): Promise<string> {
-  const configPath = expectedCodeGraphOpenCodeConfigPath(workspacePath);
-  const config = {
-    $schema: "https://opencode.ai/config.json",
-    mcp: {
-      codegraph: {
-        type: "local",
-        command: [codeGraphBinary(), "serve", "--mcp", "--path", worktreePath],
-        enabled: true,
-      },
-    },
-  };
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  return configPath;
 }
 
 /**

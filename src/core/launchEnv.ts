@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { expectedLensesDir } from "./lenses.js";
-import { expectedOpenCodeConfigDir } from "./opencodeConfig.js";
-import { expectedCodeGraphOpenCodeConfigPath, resolveTrustedCodeGraph } from "./codeGraph.js";
+import { resolveTrustedCodeGraph } from "./codeGraph.js";
+import { resolveRunner } from "./runners/index.js";
 import { resolveTrustedOpenSpec, type Workspace } from "./workspace.js";
 
 /**
@@ -22,7 +22,6 @@ export function buildLaunchEnv(workspace: Workspace): Record<string, string> {
     CE_PROJECT: workspace.project,
     CE_ISSUE: workspace.issue,
     CE_LENSES_DIR: expectedLensesDir(workspace.workspacePath),
-    OPENCODE_CONFIG_DIR: expectedOpenCodeConfigDir(workspace.workspacePath),
   };
 
   // Present for every workspace `ce start` itself creates (a store is
@@ -53,8 +52,15 @@ export function buildLaunchEnv(workspace: Workspace): Record<string, string> {
   if (trustedCodeGraph?.indexPath && existsSync(trustedCodeGraph.indexPath)) {
     launchEnv.CE_CODE_NAV_AVAILABLE = "1";
     launchEnv.CE_CODE_NAV_PROVIDER = "codegraph";
-    launchEnv.OPENCODE_CONFIG = expectedCodeGraphOpenCodeConfigPath(workspace.workspacePath);
   }
+
+  // Runner-specific env vars (e.g. OpenCode's OPENCODE_CONFIG_DIR/
+  // OPENCODE_CONFIG) are contributed by the runner itself -- never
+  // hardcoded here -- so this function stays runner-agnostic. Resolved
+  // from the workspace's own persisted `runner` field (absent for every
+  // workspace created before runner selection existed, which resolves to
+  // the same OpenCode default those workspaces have always used).
+  Object.assign(launchEnv, resolveRunner(workspace.runner).buildEnv(workspace));
 
   return launchEnv;
 }

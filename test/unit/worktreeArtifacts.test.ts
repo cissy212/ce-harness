@@ -97,4 +97,69 @@ describe("filterHarnessManagedChanges", () => {
 
     expect(filterHarnessManagedChanges(changes, workspace)).toEqual([]);
   });
+
+  describe("runner-managed worktree artifacts (e.g. Claude Code's .claude//.mcp.json)", () => {
+    function claudeWorkspace(overrides: Partial<Record<string, unknown>> = {}) {
+      return workspaceWithCodeGraph({ codeGraph: undefined, runner: "claude", ...overrides });
+    }
+
+    it("excludes .claude when the selected runner reports it as managed", () => {
+      const workspace = claudeWorkspace({
+        runnerWorktreeArtifacts: { commandsManaged: true },
+      });
+      const changes = ["?? .claude/commands/workspace.md", " M src/index.ts"];
+
+      expect(filterHarnessManagedChanges(changes, workspace)).toEqual([" M src/index.ts"]);
+    });
+
+    it("excludes .mcp.json when the selected runner reports it as managed", () => {
+      const workspace = claudeWorkspace({
+        runnerWorktreeArtifacts: { commandsManaged: true, mcpManaged: true },
+      });
+      const changes = ["?? .claude/commands/workspace.md", "?? .mcp.json", " M src/index.ts"];
+
+      expect(filterHarnessManagedChanges(changes, workspace)).toEqual([" M src/index.ts"]);
+    });
+
+    it('never excludes .claude when commandsManaged is false -- e.g. a pre-existing, untracked ".claude/" ce-harness safely skipped rather than wrote', () => {
+      const workspace = claudeWorkspace({
+        runnerWorktreeArtifacts: { commandsManaged: false },
+      });
+      const changes = ["?? .claude/settings.local.json", " M src/index.ts"];
+
+      // Nothing about this path is harness-owned, so it counts as a real
+      // change like any other -- exactly the property that prevents
+      // ce-harness from ever silently discarding it on `ce cleanup`.
+      expect(filterHarnessManagedChanges(changes, workspace)).toEqual(changes);
+    });
+
+    it('never excludes .mcp.json when mcpManaged is false/absent -- a pre-existing, untracked ".mcp.json" is treated as a real change', () => {
+      const workspace = claudeWorkspace({
+        runnerWorktreeArtifacts: { commandsManaged: true },
+      });
+      const changes = ["?? .mcp.json", " M src/index.ts"];
+
+      expect(filterHarnessManagedChanges(changes, workspace)).toEqual(changes);
+    });
+
+    it("never excludes anything when runnerWorktreeArtifacts is absent entirely (legacy workspace, or nothing was ever written)", () => {
+      const workspace = claudeWorkspace();
+      const changes = ["?? .claude/commands/workspace.md", " M src/index.ts"];
+
+      expect(filterHarnessManagedChanges(changes, workspace)).toEqual(changes);
+    });
+
+    it('never excludes ".claude" for an OpenCode workspace, even if runnerWorktreeArtifacts is somehow present', () => {
+      const workspace = workspaceWithCodeGraph({
+        codeGraph: undefined,
+        runner: "opencode",
+        runnerWorktreeArtifacts: { commandsManaged: true, mcpManaged: true },
+      });
+      const changes = ["?? .claude/commands/workspace.md", "?? .mcp.json", " M src/index.ts"];
+
+      // OpenCode never writes anything inside the worktree, regardless of
+      // what a (tampered or stale) runnerWorktreeArtifacts block claims.
+      expect(filterHarnessManagedChanges(changes, workspace)).toEqual(changes);
+    });
+  });
 });

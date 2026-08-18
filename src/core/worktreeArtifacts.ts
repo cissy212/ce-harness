@@ -1,5 +1,6 @@
 import { relative } from "node:path";
 import { resolveTrustedCodeGraph } from "./codeGraph.js";
+import { resolveRunner } from "./runners/index.js";
 import type { Workspace } from "./workspace.js";
 
 /**
@@ -14,12 +15,15 @@ import type { Workspace } from "./workspace.js";
  * "dirty" detection: `ce status` and `ce cleanup` must never let a
  * harness-managed ephemeral artifact register as a change a human needs
  * to review or would lose on cleanup. Crucially, this is never a
- * by-name exclusion ("always ignore `.codegraph/`") -- it only ever
- * excludes a path that the workspace's own cross-checked metadata
- * proves ce-harness created and owns in this exact workspace (see
- * `resolveTrustedCodeGraph`). A pre-existing `.codegraph/` the
- * repository itself tracks, or one a user created some other way, is
- * never excluded and always counts as a real change like any other.
+ * by-name exclusion ("always ignore `.codegraph/`" or "always ignore
+ * `.claude/`") -- it only ever excludes a path that the workspace's own
+ * cross-checked metadata (CodeGraph, via `resolveTrustedCodeGraph`) or
+ * its selected runner (via `RunnerSpec.managedWorktreeRelativePaths`,
+ * see core/runners/) proves ce-harness created and owns in this exact
+ * workspace. A pre-existing `.codegraph/`, `.claude/`, or `.mcp.json`
+ * the repository itself tracks, or one that appeared some other way
+ * ce-harness didn't create, is never excluded and always counts as a
+ * real change like any other.
  */
 
 /**
@@ -43,6 +47,13 @@ function harnessManagedRelativePaths(workspace: Workspace): string[] {
   if (codeGraph?.indexPath) {
     paths.push(relative(workspace.worktreePath, codeGraph.indexPath));
   }
+
+  // Runner-agnostic on purpose: this module never names a specific
+  // runner or path (e.g. ".claude") -- it only asks the workspace's own
+  // selected runner which worktree-relative paths it actually wrote and
+  // owns (see RunnerSpec.managedWorktreeRelativePaths). OpenCode always
+  // answers `[]`, since its config never lives inside the worktree.
+  paths.push(...resolveRunner(workspace.runner).managedWorktreeRelativePaths(workspace));
 
   return paths;
 }

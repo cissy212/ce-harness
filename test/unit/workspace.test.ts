@@ -40,6 +40,51 @@ describe("workspace serialization and validation", () => {
     expect(loaded).toEqual(workspace);
   });
 
+  it("round-trips an explicit runner field", async () => {
+    const { writeWorkspace, readWorkspace } = await import("../../src/core/workspace.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "Issue #1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: join(tempHome, "worktrees", "demo", "issue-1"),
+      workspacePath: join(tempHome, "workspaces", "demo", "issue-1"),
+      createdAt: new Date().toISOString(),
+      runner: "claude",
+    };
+
+    await writeWorkspace(workspace);
+    const loaded = await readWorkspace("demo", "issue-1");
+    expect(loaded.runner).toBe("claude");
+  });
+
+  it("reads a legacy workspace file with no runner field as valid, with runner left undefined", async () => {
+    const { readWorkspace } = await import("../../src/core/workspace.js");
+    const dir = join(tempHome, "workspaces", "demo", "legacy");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "workspace.yml"),
+      [
+        "project: demo",
+        "repositoryPath: /tmp/demo",
+        "issue: Issue #1",
+        "sanitizedIssue: legacy",
+        "baseBranch: main",
+        "internalBranch: ce-harness/legacy",
+        `worktreePath: ${join(tempHome, "worktrees", "demo", "legacy")}`,
+        `workspacePath: ${dir}`,
+        `createdAt: ${new Date().toISOString()}`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const loaded = await readWorkspace("demo", "legacy");
+    expect(loaded.runner).toBeUndefined();
+  });
+
   it("throws a CeError when the workspace file is missing", async () => {
     const { readWorkspace } = await import("../../src/core/workspace.js");
     const { CeError } = await import("../../src/core/errors.js");

@@ -17,6 +17,7 @@ import {
   teardownFakeOpenCode,
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
+import { setupFakeClaude, teardownFakeClaude, type FakeClaudeEnv } from "../helpers/fakeClaude.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
 
 describe("ce start (integration)", () => {
@@ -3260,7 +3261,186 @@ describe("ce start (integration)", () => {
       });
     });
   });
+
+  describe("Runner selection (--runner)", () => {
+    let fakeClaude: FakeClaudeEnv;
+
+    beforeEach(async () => {
+      fakeClaude = await setupFakeClaude();
+    });
+
+    afterEach(async () => {
+      await teardownFakeClaude(fakeClaude);
+    });
+
+    it("defaults to OpenCode and persists runner: \"opencode\" when --runner is omitted", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.runner).toBe("opencode");
+      expect(existsSync(fakeOpenCode.outputFile)).toBe(true);
+      expect(existsSync(fakeClaude.outputFile)).toBe(false);
+    });
+
+    it('--runner claude launches Claude Code (not OpenCode) and persists runner: "claude"', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.runner).toBe("claude");
+      expect(existsSync(fakeOpenCode.outputFile)).toBe(false);
+
+      const { readFile } = await import("node:fs/promises");
+      const launch = JSON.parse(await readFile(fakeClaude.outputFile, "utf8"));
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      expect(launch.cwd).toBe(await realpathOf(worktreePath));
+      expect(launch.argv).toEqual([]);
+    });
+
+    it("rejects an unknown --runner before creating any persistent resource, listing supported runner ids", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      const { CeError } = await import("../../src/core/errors.js");
+
+      try {
+        await startCommand({ repo: repoDir, issue: "issue-1", runner: "cursor" });
+        expect.fail("expected startCommand to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CeError);
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/Unknown runner "cursor"/);
+        expect(ceError.recovery).toContain("opencode");
+        expect(ceError.recovery).toContain("claude");
+      }
+
+      expect(await readActivePointer()).toBeNull();
+      expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+      expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+      const branches = await execa("git", ["-C", repoDir, "branch", "--list", "ce-harness/issue-1"]);
+      expect(branches.stdout.trim()).toBe("");
+    });
+
+    it("provisions <worktree>/.claude/commands from the canonical templates for Claude, without leaving any tracked change in the target repository", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedPath = join(workspace.worktreePath, ".claude", "commands", "workspace.md");
+      const sourcePath = join(templatesRoot(), "commands", "workspace.md");
+      expect(existsSync(copiedPath)).toBe(true);
+      const { readFile } = await import("node:fs/promises");
+      expect(await readFile(copiedPath, "utf8")).toBe(await readFile(sourcePath, "utf8"));
+
+      // The canonical workflow's own promise (see "OpenCode external
+      // configuration" above) holds for Claude too: no tracked change
+      // appears in the worktree's real, unfiltered `git status`, and
+      // nothing at all appears in the original repository.
+      const status = await execa("git", ["-C", workspace.worktreePath, "status", "--porcelain"]);
+      expect(status.stdout).toBe("");
+      expect(existsSync(join(repoDir, ".claude"))).toBe(false);
+      expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
+    });
+
+    it("propagates Claude Code's exit code as ce's own exit code", async () => {
+      process.env.FAKE_CLAUDE_EXIT_CODE = "4";
+      try {
+        const { startCommand } = await import("../../src/commands/start.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+        expect(process.exitCode).toBe(4);
+      } finally {
+        delete process.env.FAKE_CLAUDE_EXIT_CODE;
+      }
+    });
+
+    describe("pre-existing .claude/ safety (Q1/Q2/Q3/Q4 follow-up)", () => {
+      it('a repository whose base branch already tracks its own ".claude/" is never clobbered, and workspace.yml records commandsManaged: false', async () => {
+        const { mkdir: mkdirP, writeFile, readFile } = await import("node:fs/promises");
+        await mkdirP(join(repoDir, ".claude", "commands"), { recursive: true });
+        await writeFile(
+          join(repoDir, ".claude", "commands", "custom.md"),
+          "the repository's own tracked command\n",
+          "utf8",
+        );
+        await execa("git", ["-C", repoDir, "add", "."]);
+        await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .claude directory"]);
+
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+        await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+        const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+        expect(workspace.runnerWorktreeArtifacts?.commandsManaged).toBe(false);
+
+        // Untouched: the repository's own command survives, and no
+        // ce-harness command (e.g. workspace.md) was mixed in alongside it.
+        expect(
+          await readFile(join(workspace.worktreePath, ".claude", "commands", "custom.md"), "utf8"),
+        ).toBe("the repository's own tracked command\n");
+        expect(existsSync(join(workspace.worktreePath, ".claude", "commands", "workspace.md"))).toBe(
+          false,
+        );
+
+        const status = await execa("git", ["-C", workspace.worktreePath, "status", "--porcelain"]);
+        expect(status.stdout).toBe("");
+        expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("already exists"))).toBe(
+          true,
+        );
+      });
+
+      it('ce cleanup succeeds WITHOUT --force after a fresh --runner claude start writes .claude/ and .mcp.json (CodeGraph available)', async () => {
+        const { setupFakeCodeGraph, teardownFakeCodeGraph } = await import("../helpers/fakeCodeGraph.js");
+        delete process.env.CE_CODEGRAPH_BIN;
+        setupFakeCodeGraph();
+        try {
+          const { startCommand } = await import("../../src/commands/start.js");
+          const { readWorkspace } = await import("../../src/core/workspace.js");
+          vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+          await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+          const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+          expect(workspace.runnerWorktreeArtifacts).toEqual({ commandsManaged: true, mcpManaged: true });
+          expect(existsSync(join(workspace.worktreePath, ".claude"))).toBe(true);
+          expect(existsSync(join(workspace.worktreePath, ".mcp.json"))).toBe(true);
+
+          // The real, unfiltered `git status` is clean -- both paths were
+          // added to the local exclude file -- so cleanup needs no --force.
+          const status = await execa("git", ["-C", workspace.worktreePath, "status", "--porcelain"]);
+          expect(status.stdout).toBe("");
+
+          const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+          await expect(cleanupCommand({})).resolves.not.toThrow();
+          expect(existsSync(workspace.worktreePath)).toBe(false);
+        } finally {
+          teardownFakeCodeGraph();
+          process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+        }
+      });
+    });
+  });
 });
+
+async function realpathOf(path: string): Promise<string> {
+  const { realpath } = await import("node:fs/promises");
+  return realpath(path);
+}
 
 function basenameOf(path: string): string {
   return (path.split("/").filter(Boolean).at(-1) as string).toLowerCase();

@@ -38,13 +38,12 @@ import {
   storeDoctor,
   unregisterStore,
 } from "../core/openspec.js";
-import { formatLaunchCommand, launchOpenCode } from "../core/opencode.js";
-import { createOpenCodeConfig } from "../core/opencodeConfig.js";
+import { resolveRunner } from "../core/runners/index.js";
 import { createLensesDir } from "../core/lenses.js";
 import {
+  codeGraphBinary,
   ignoreCodeGraphIndex,
   initializeCodeGraph,
-  writeCodeGraphOpenCodeConfig,
   type CodeGraphResult,
 } from "../core/codeGraph.js";
 import { detectBootstrapNeeds, type BootstrapCheckResult } from "../core/bootstrap.js";
@@ -59,12 +58,16 @@ export interface StartOptions {
   base?: string;
   /** Exact head ref/commit for an explicit review range. Requires `base`. */
   head?: string;
+  /** Coding-agent runner id (e.g. "opencode", "claude"). Defaults to "opencode". */
+  runner?: string;
 }
 
-export async function startCommand({ repo, issue, base, head }: StartOptions): Promise<void> {
+export async function startCommand({ repo, issue, base, head, runner }: StartOptions): Promise<void> {
   // Pure input-shape validation, checked before touching the filesystem
   // at all: an explicit review range requires both --base and --head,
-  // never just one.
+  // never just one. Resolving the runner is validated here too, for the
+  // same reason -- an unsupported --runner must never leave a worktree,
+  // workspace, or OpenSpec store behind.
   if ((base && !head) || (!base && head)) {
     throw new CeError(
       "--base and --head must both be provided together (or neither).",
@@ -73,6 +76,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
         : "Add --base <ref> to specify the exact review range.",
     );
   }
+  const selectedRunner = resolveRunner(runner);
 
   const repoRoot = await resolveTargetRepo(repo);
 
@@ -209,6 +213,15 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     reason: "CodeGraph setup was not attempted.",
   };
   let bootstrapResult: BootstrapCheckResult = { required: false, findings: [] };
+  // Populated unconditionally from the two writeConfig/writeCodeGraphConfig
+  // calls below, regardless of which runner is selected -- never gated on
+  // a runner id check here, so this command stays runner-agnostic. See
+  // RunnerSpec.managedWorktreeRelativePaths for how each runner turns
+  // these flags into the paths `ce cleanup`/`ce status` treat as
+  // harness-owned.
+  let runnerWorktreeArtifacts: { commandsManaged: boolean; mcpManaged?: boolean } = {
+    commandsManaged: false,
+  };
   let workspace: Workspace;
 
   try {
@@ -235,7 +248,10 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     await mkdir(workspacePath, { recursive: true });
     workspaceDirCreated = true;
 
-    await createOpenCodeConfig(workspacePath);
+    runnerWorktreeArtifacts.commandsManaged = await selectedRunner.writeConfig({
+      workspacePath,
+      worktreePath,
+    });
     await createLensesDir(workspacePath);
     // Both directories are nested under workspacePath, so workspace rollback
     // and cleanup cover them.
@@ -248,7 +264,10 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     try {
       codeGraphResult = await initializeCodeGraph(worktreePath);
       if (codeGraphResult.available) {
-        await writeCodeGraphOpenCodeConfig(workspacePath, worktreePath);
+        runnerWorktreeArtifacts.mcpManaged = await selectedRunner.writeCodeGraphConfig(
+          { workspacePath, worktreePath },
+          codeGraphBinary(),
+        );
 
         // Purely cosmetic (keeps `.codegraph/` out of `git status`) --
         // never lets a failure here affect codeGraphResult or fail
@@ -302,6 +321,8 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
       ...(diffBase && diffHead ? { diffBase, diffHead, diffMergeBase } : {}),
       codeGraph: codeGraphResult,
       bootstrap: bootstrapResult,
+      runner: selectedRunner.id,
+      runnerWorktreeArtifacts,
     };
     await writeWorkspace(workspace);
 
@@ -337,7 +358,7 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
     ),
   );
   console.log("");
-  console.log(`Launching OpenCode in "${worktreePath}"...`);
+  console.log(`Launching ${selectedRunner.label} in "${worktreePath}"...`);
 
   // Everything the workspace needs (worktree, workspace dir, OpenSpec
   // store, workspace.yml, active pointer) is fully created and committed
@@ -348,11 +369,11 @@ export async function startCommand({ repo, issue, base, head }: StartOptions): P
   // `ce resume` uses, from the just-written `workspace` object -- so the
   // two commands can never define two different launch environments.
   const launchEnv = buildLaunchEnv(workspace);
-  const launchResult = await launchOpenCode({ cwd: worktreePath, env: launchEnv });
+  const launchResult = await selectedRunner.launch({ cwd: worktreePath, env: launchEnv });
   if (!launchResult.launched) {
     throw new CeError(
-      `Failed to launch OpenCode: ${launchResult.message}`,
-      `The workspace was created successfully; enter it manually with:\n  ${formatLaunchCommand(worktreePath, launchEnv)}`,
+      `Failed to launch ${selectedRunner.label}: ${launchResult.message}`,
+      `The workspace was created successfully; enter it manually with:\n  ${selectedRunner.formatLaunchCommand(worktreePath, launchEnv)}`,
     );
   }
 

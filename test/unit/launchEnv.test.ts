@@ -162,6 +162,38 @@ describe("buildLaunchEnv", () => {
     expect(env.CE_CODE_NAV_AVAILABLE).toBeUndefined();
   });
 
+  it('delegates runner-specific env vars to the resolved runner: workspace.runner = "claude" omits OPENCODE_CONFIG_DIR entirely', async () => {
+    const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
+    const workspace = baseWorkspace({
+      workspacePath: join(tempDir, "workspace"),
+      worktreePath: join(tempDir, "worktree"),
+      runner: "claude",
+    });
+
+    const env = buildLaunchEnv(workspace);
+
+    expect(env.OPENCODE_CONFIG_DIR).toBeUndefined();
+    expect(env.OPENCODE_CONFIG).toBeUndefined();
+    // The generic CE_* contract is unaffected by which runner is selected.
+    expect(env.CE_WORKSPACE).toBe(join(tempDir, "workspace"));
+    expect(env.CE_LENSES_DIR).toBe(join(tempDir, "workspace", "lenses"));
+  });
+
+  it('workspace.runner = "opencode" behaves exactly like an absent runner field', async () => {
+    const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
+    const workspaceWithId = baseWorkspace({
+      workspacePath: join(tempDir, "workspace"),
+      worktreePath: join(tempDir, "worktree"),
+      runner: "opencode",
+    });
+    const workspaceWithoutField = baseWorkspace({
+      workspacePath: join(tempDir, "workspace"),
+      worktreePath: join(tempDir, "worktree"),
+    });
+
+    expect(buildLaunchEnv(workspaceWithId)).toEqual(buildLaunchEnv(workspaceWithoutField));
+  });
+
   it("never mutates the workspace object it's given", async () => {
     const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
     const workspace = baseWorkspace({ diffBase: "a".repeat(40), diffHead: "b".repeat(40) });

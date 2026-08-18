@@ -13,6 +13,8 @@ export interface ReviewOptions {
   repo: string;
   /** Raw CLI argument -- validated as a positive integer before use. */
   prNumber: string;
+  /** Coding-agent runner id (e.g. "opencode", "claude"). Defaults to "opencode". */
+  runner?: string;
 }
 
 const PR_NUMBER_PATTERN = /^[1-9]\d*$/;
@@ -33,7 +35,7 @@ const PR_NUMBER_PATTERN = /^[1-9]\d*$/;
  * logic is never duplicated. `ce start` itself remains entirely
  * GitHub-independent; this module is the only caller of `../core/github.js`.
  */
-export async function reviewCommand({ repo, prNumber }: ReviewOptions): Promise<void> {
+export async function reviewCommand({ repo, prNumber, runner }: ReviewOptions): Promise<void> {
   const trimmed = prNumber.trim();
   if (!PR_NUMBER_PATTERN.test(trimmed)) {
     throw new CeError(
@@ -89,6 +91,7 @@ export async function reviewCommand({ repo, prNumber }: ReviewOptions): Promise<
     issue: `review-pr-${pr.number}`,
     base: pr.baseRefOid,
     head: pr.headRefOid,
+    runner,
   });
 }
 

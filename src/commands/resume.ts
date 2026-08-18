@@ -2,16 +2,17 @@ import { existsSync } from "node:fs";
 import { CeError } from "../core/errors.js";
 import { readActivePointer, readWorkspace, resolveTrustedOpenSpec, type Workspace } from "../core/workspace.js";
 import { buildLaunchEnv } from "../core/launchEnv.js";
-import { formatLaunchCommand, launchOpenCode } from "../core/opencode.js";
+import { resolveRunner } from "../core/runners/index.js";
 
 /**
- * Re-enters the currently active workspace by relaunching OpenCode with
- * exactly the same environment `ce start` used -- without creating,
- * registering, or initializing anything. Purely "re-enter the existing
- * workspace": no worktree, workspace, OpenSpec store, or CodeGraph index
- * is created, and workspace.yml is never modified.
+ * Re-enters the currently active workspace by relaunching the same
+ * runner `ce start` used (see `workspace.runner`, resolved via
+ * core/runners/index.js) with exactly the same environment -- without
+ * creating, registering, or initializing anything. Purely "re-enter the
+ * existing workspace": no worktree, workspace, OpenSpec store, or
+ * CodeGraph index is created, and workspace.yml is never modified.
  *
- * Exists so that resuming a session after OpenCode exits is a normal,
+ * Exists so that resuming a session after the runner exits is a normal,
  * one-command workflow instead of the user having to reconstruct the
  * long environment-variable launch command themselves.
  */
@@ -65,19 +66,21 @@ export async function resumeCommand(): Promise<void> {
     );
   }
 
+  const runner = resolveRunner(workspace.runner);
+
   console.log(
     `Resuming workspace for project "${workspace.project}", issue "${workspace.issue}".`,
   );
-  console.log(`Launching OpenCode in "${workspace.worktreePath}"...`);
+  console.log(`Launching ${runner.label} in "${workspace.worktreePath}"...`);
 
   // Built by the exact same helper `ce start` uses, from the workspace
   // metadata already on disk -- never rebuilt or reconstructed here.
   const launchEnv = buildLaunchEnv(workspace);
-  const launchResult = await launchOpenCode({ cwd: workspace.worktreePath, env: launchEnv });
+  const launchResult = await runner.launch({ cwd: workspace.worktreePath, env: launchEnv });
   if (!launchResult.launched) {
     throw new CeError(
-      `Failed to launch OpenCode: ${launchResult.message}`,
-      `Enter the workspace manually with:\n  ${formatLaunchCommand(workspace.worktreePath, launchEnv)}`,
+      `Failed to launch ${runner.label}: ${launchResult.message}`,
+      `Enter the workspace manually with:\n  ${runner.formatLaunchCommand(workspace.worktreePath, launchEnv)}`,
     );
   }
 

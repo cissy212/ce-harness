@@ -54,9 +54,21 @@ export async function runCli(): Promise<void> {
     .argument("<issue>", "issue identifier (e.g. an issue number or short slug)")
     .option("--base <ref>", "exact base ref/commit to review from (requires --head)")
     .option("--head <ref>", "exact head ref/commit to review to (requires --base)")
-    .action(async (repo: string, issue: string, options: { base?: string; head?: string }) => {
-      await run(() => startCommand({ repo, issue, base: options.base, head: options.head }));
-    });
+    .option(
+      "--runner <runner>",
+      'coding-agent runner to launch: "opencode" (default) or "claude"',
+    )
+    .action(
+      async (
+        repo: string,
+        issue: string,
+        options: { base?: string; head?: string; runner?: string },
+      ) => {
+        await run(() =>
+          startCommand({ repo, issue, base: options.base, head: options.head, runner: options.runner }),
+        );
+      },
+    );
 
   program
     .command("review")
@@ -74,17 +86,21 @@ export async function runCli(): Promise<void> {
     )
     .argument("<repo>", "path to the target Git repository")
     .argument("<pr-number>", "GitHub pull request number")
-    .action(async (repo: string, prNumber: string) => {
-      await run(() => reviewCommand({ repo, prNumber }));
+    .option(
+      "--runner <runner>",
+      'coding-agent runner to launch: "opencode" (default) or "claude"',
+    )
+    .action(async (repo: string, prNumber: string, options: { runner?: string }) => {
+      await run(() => reviewCommand({ repo, prNumber, runner: options.runner }));
     });
 
   program
     .command("resume")
     .description(
-      "Re-enter the active workspace by relaunching OpenCode with the same environment " +
-        "`ce start` used -- creates nothing, registers nothing, and never modifies " +
-        "workspace.yml. Use this instead of reconstructing the launch command by hand " +
-        "after OpenCode exits.",
+      "Re-enter the active workspace by relaunching the same runner (opencode or claude) " +
+        "`ce start` used, with the same environment -- creates nothing, registers nothing, " +
+        "and never modifies workspace.yml. Use this instead of reconstructing the launch " +
+        "command by hand after the runner exits.",
     )
     .action(async () => {
       await run(() => resumeCommand());

@@ -64,6 +64,30 @@ export const BootstrapMetadataSchema = z.object({
 
 export type BootstrapMetadata = z.infer<typeof BootstrapMetadataSchema>;
 
+/**
+ * Records which worktree-local artifacts the selected runner (see
+ * `runner` below and core/runners/index.ts) actually wrote and owns for
+ * this workspace, as opposed to safely skipping because a pre-existing
+ * path it did not create was already there. Deliberately runner-agnostic
+ * in name and shape -- it is written unconditionally by `ce start` from
+ * the boolean `RunnerSpec.writeConfig`/`writeCodeGraphConfig` already
+ * return, never gated on which runner id was selected, so this schema
+ * carries no runner-specific knowledge itself (e.g. it says nothing
+ * about `.claude` or `.mcp.json` by name -- only each RunnerSpec's own
+ * `managedWorktreeRelativePaths` interprets these flags into paths).
+ *
+ * `commandsManaged`/`mcpManaged` being `false` (or absent) is the normal,
+ * expected value for a runner whose config never lives inside the
+ * worktree at all (e.g. OpenCode) -- it is not itself a sign of a
+ * conflict.
+ */
+export const RunnerWorktreeArtifactsSchema = z.object({
+  commandsManaged: z.boolean(),
+  mcpManaged: z.boolean().optional(),
+});
+
+export type RunnerWorktreeArtifacts = z.infer<typeof RunnerWorktreeArtifactsSchema>;
+
 export const WorkspaceSchema = z
   .object({
     project: z.string().min(1),
@@ -106,6 +130,17 @@ export const WorkspaceSchema = z
     // detection and have no bootstrap block. Readers must treat its
     // absence as valid, exactly like the codeGraph block above.
     bootstrap: BootstrapMetadataSchema.optional(),
+    // Optional: the coding-agent runner id (e.g. "opencode", "claude")
+    // `ce start` launched for this workspace, so `ce resume` launches
+    // the same one. Absent on workspaces created before runner
+    // selection existed -- readers must treat its absence as meaning
+    // "opencode" (see core/runners/index.ts's resolveRunner), never as
+    // an error.
+    runner: z.string().min(1).optional(),
+    // Optional: see RunnerWorktreeArtifactsSchema above. Absent on
+    // workspaces created before this field existed, and on any
+    // workspace whose runner never writes anything inside the worktree.
+    runnerWorktreeArtifacts: RunnerWorktreeArtifactsSchema.optional(),
   })
   .refine((w) => (w.diffBase === undefined) === (w.diffHead === undefined), {
     message: "diffBase and diffHead must both be present or both be absent",
