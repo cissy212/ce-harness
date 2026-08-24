@@ -15,6 +15,7 @@ import {
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import { deregisterWorktreeBookkeeping } from "../helpers/deregisterWorktree.js";
 
 describe("ce status (integration)", () => {
   let harnessHomeDir: string;
@@ -103,6 +104,68 @@ describe("ce status (integration)", () => {
 
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
     expect(output).toMatch(/Worktree changes:\s+1 changed file\(s\)/);
+  });
+
+  describe("orphaned worktree (directory exists, but Git no longer registers it)", () => {
+    it("reports the orphaned state clearly instead of crashing", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+
+      // Exactly the state a partially-failed `git worktree remove`
+      // leaves behind: Git's own bookkeeping is gone, but the directory
+      // (and whatever real content it still has) survives. Constructed
+      // deterministically here -- no Docker, no macOS ACL involved.
+      await deregisterWorktreeBookkeeping(repoDir, worktreePath);
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await expect(statusCommand()).resolves.toBeUndefined();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Worktree exists:\s+yes/);
+      expect(output).toMatch(/Worktree registered:\s+no \(orphaned\)/);
+      expect(output).toMatch(/Worktree changes:\s+orphaned/i);
+      expect(output).toMatch(/no longer registers it/i);
+    });
+
+    it("never attempts a plain `git status` against the orphaned directory (it would fail outright)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      await deregisterWorktreeBookkeeping(repoDir, worktreePath);
+
+      // Confirms the premise: a real `git status` here really would
+      // fail outright, which is exactly why statusCommand must not run
+      // one -- this is what used to crash `ce status`.
+      const { execa } = await import("execa");
+      const rawStatus = await execa("git", ["-C", worktreePath, "status", "--porcelain"], {
+        reject: false,
+      });
+      expect(rawStatus.exitCode).not.toBe(0);
+
+      await expect(statusCommand()).resolves.toBeUndefined();
+    });
+
+    it("a normal, still-registered worktree is unaffected by this check", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).not.toMatch(/Worktree registered:/);
+      expect(output).toMatch(/Worktree changes:\s+clean/);
+    });
   });
 
   describe("OpenSpec status", () => {

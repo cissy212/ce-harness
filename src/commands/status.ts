@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { branchExists, statusPorcelain } from "../core/git.js";
+import { branchExists, isRegisteredWorktree, statusPorcelain } from "../core/git.js";
 import {
   readActivePointer,
   readWorkspace,
@@ -21,10 +21,27 @@ export async function statusCommand(): Promise<void> {
   const workspace = await readWorkspace(pointer.project, pointer.sanitizedIssue);
 
   const worktreeExists = existsSync(workspace.worktreePath);
+  // `existsSync` alone is never proof this is still a valid, usable Git
+  // worktree: a previous `ce cleanup`/`git worktree remove` can fail
+  // partway through in a way that removes Git's own registration while
+  // the physical directory survives (see core/git.ts's
+  // `isRegisteredWorktree` doc comment). Running a plain `git status`
+  // against that orphaned directory would fail outright (it is no
+  // longer a Git repository at all) -- checked explicitly here instead
+  // of assumed, so that failure mode is reported clearly rather than
+  // crashing this command.
+  const worktreeRegistered =
+    worktreeExists && (await isRegisteredWorktree(workspace.repositoryPath, workspace.worktreePath));
   const branchStillExists = await branchExists(workspace.repositoryPath, workspace.internalBranch);
 
-  let changesSummary = "worktree does not exist";
-  if (worktreeExists) {
+  let changesSummary: string;
+  if (!worktreeExists) {
+    changesSummary = "worktree does not exist";
+  } else if (!worktreeRegistered) {
+    changesSummary =
+      "orphaned -- directory exists, but Git no longer registers it as a worktree (a previous " +
+      "`ce cleanup` likely failed partway through; re-run `ce cleanup` to finish removing it)";
+  } else {
     const changes = await statusPorcelain(workspace.worktreePath);
     // Excludes only entries proven, via cross-checked workspace metadata,
     // to be a harness-managed ephemeral artifact (e.g. a CodeGraph index
@@ -62,6 +79,14 @@ export async function statusCommand(): Promise<void> {
   console.log(`Workspace path:   ${workspace.workspacePath}`);
   console.log(`Created at:       ${workspace.createdAt}`);
   console.log(`Worktree exists:  ${worktreeExists ? "yes" : "no"}`);
+  // Only printed when it's actually informative: absent for a worktree
+  // that doesn't exist at all (nothing to be registered either way) and
+  // for the normal case (exists and is registered), so this line's mere
+  // presence itself flags the orphaned state to a human skimming the
+  // output.
+  if (worktreeExists && !worktreeRegistered) {
+    console.log(`Worktree registered: no (orphaned)`);
+  }
   console.log(`Branch exists:    ${branchStillExists ? "yes" : "no"}`);
   console.log(`Worktree changes: ${changesSummary}`);
 

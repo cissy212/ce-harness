@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,14 @@ import {
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import {
+  nonExistentDockerBin,
+  setupFakeDocker,
+  setupFakeDockerNotInstalled,
+  setupFakeDockerUnavailable,
+  teardownFakeDocker,
+} from "../helpers/fakeDocker.js";
+import { deregisterWorktreeBookkeeping } from "../helpers/deregisterWorktree.js";
 
 describe("ce cleanup (integration)", () => {
   let harnessHomeDir: string;
@@ -36,6 +44,11 @@ describe("ce cleanup (integration)", () => {
     // the real `codegraph` on PATH -- CodeGraph behavior itself is
     // covered by test/integration/codeGraph.test.ts.
     process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+    // Deterministic regardless of whether this machine happens to have
+    // Docker installed/running, and regardless of what containers
+    // happen to exist on it -- never touches a real Docker installation
+    // unless a specific test opts into the fake one below.
+    process.env.CE_DOCKER_BIN = nonExistentDockerBin();
   });
 
   afterEach(async () => {
@@ -49,6 +62,7 @@ describe("ce cleanup (integration)", () => {
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
     delete process.env.CE_CODEGRAPH_BIN;
+    teardownFakeDocker();
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });
@@ -809,6 +823,278 @@ describe("ce cleanup (integration)", () => {
       expect(existsSync(worktreePath)).toBe(false);
       expect(existsSync(workspacePath)).toBe(false);
       const { readActivePointer } = await import("../../src/core/workspace.js");
+      expect(await readActivePointer()).toBeNull();
+    });
+  });
+
+  describe("Docker safety check (running container bind-mounted inside the worktree)", () => {
+    it("aborts BEFORE touching Git/workspace state when a running container is bind-mounted inside the worktree", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readActivePointer, readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      setupFakeDocker([
+        {
+          id: "abc123",
+          name: "scv-ai-frontend",
+          mounts: [{ source: join(workspace.worktreePath, "packages/scv-ai/frontend"), type: "bind" }],
+        },
+      ]);
+
+      const registryBefore = await readFile(fakeOpenSpec.registryFile, "utf8");
+
+      await expect(cleanupCommand({})).rejects.toThrow(/running docker container/i);
+
+      // Nothing was mutated: worktree, branch, workspace dir, active
+      // pointer, and the OpenSpec registration are all exactly as they
+      // were before this call.
+      expect(existsSync(workspace.worktreePath)).toBe(true);
+      expect(existsSync(workspace.workspacePath)).toBe(true);
+      const branches = await execa("git", ["-C", repoDir, "branch", "--list", "ce-harness/issue-1"]);
+      expect(branches.stdout).toContain("ce-harness/issue-1");
+      expect(await readActivePointer()).toEqual({ project: basenameOf(repoDir), sanitizedIssue: "issue-1" });
+      expect(await readFile(fakeOpenSpec.registryFile, "utf8")).toBe(registryBefore);
+    });
+
+    it("names the blocking container in the error", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      setupFakeDocker([
+        {
+          id: "abc123",
+          name: "scv-ai-frontend",
+          mounts: [{ source: join(workspace.worktreePath, "packages/scv-ai/frontend"), type: "bind" }],
+        },
+      ]);
+
+      await expect(cleanupCommand({})).rejects.toThrow(/scv-ai-frontend/);
+    });
+
+    it("--force does not bypass the Docker check (force only ever means \"discard uncommitted changes\")", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      setupFakeDocker([
+        { id: "abc123", name: "blocker", mounts: [{ source: workspace.worktreePath, type: "bind" }] },
+      ]);
+
+      await expect(cleanupCommand({ force: true })).rejects.toThrow(/running docker container/i);
+      expect(existsSync(workspace.worktreePath)).toBe(true);
+    });
+
+    it("a container mounted at an unrelated, merely similarly-named path never blocks cleanup", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      setupFakeDocker([
+        // A sibling path that merely shares a string prefix with the
+        // worktree path (e.g. "…/issue-1" vs "…/issue-10") must never
+        // be treated as "inside" it.
+        { id: "abc123", name: "unrelated", mounts: [{ source: `${workspace.worktreePath}0`, type: "bind" }] },
+      ]);
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+      expect(existsSync(workspace.worktreePath)).toBe(false);
+    });
+
+    it("a container mounted via a named volume (not a bind mount) never blocks cleanup", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      setupFakeDocker([
+        {
+          id: "abc123",
+          name: "unrelated",
+          mounts: [{ source: join(workspace.worktreePath, "node_modules"), type: "volume" }],
+        },
+      ]);
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+    });
+
+    it("proceeds with normal cleanup when Docker is not installed", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      setupFakeDockerNotInstalled();
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+    });
+
+    it("proceeds with normal cleanup when the Docker daemon is unreachable", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      setupFakeDockerUnavailable();
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+    });
+
+    it("proceeds with normal cleanup when Docker reports no running containers at all", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      setupFakeDocker([]);
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+    });
+  });
+
+  describe("Partial Git worktree-removal recovery (recoverFromWorktreeRemovalFailure)", () => {
+    it("still-registered worktree: rethrows the original error, preserving everything", async () => {
+      const { recoverFromWorktreeRemovalFailure } = await import("../../src/commands/cleanup.js");
+      const originalError = new Error("simulated git worktree remove failure");
+
+      // A real, currently-registered worktree -- `isRegisteredWorktree`
+      // must see it as such.
+      const worktreePath = join(harnessHomeDir, "still-registered-wt");
+      await execa("git", ["-C", repoDir, "worktree", "add", "-b", "still-registered", worktreePath, "main"]);
+
+      await expect(
+        recoverFromWorktreeRemovalFailure(repoDir, worktreePath, false, originalError),
+      ).rejects.toBe(originalError);
+
+      // Nothing about the worktree itself was touched by the recovery path.
+      expect(existsSync(worktreePath)).toBe(true);
+      const list = await execa("git", ["-C", repoDir, "worktree", "list"]);
+      expect(list.stdout).toContain("still-registered-wt");
+    });
+
+    it("deregistered + already-empty residual directory: removes it and resolves, without needing --force", async () => {
+      const { recoverFromWorktreeRemovalFailure } = await import("../../src/commands/cleanup.js");
+
+      const worktreePath = join(harnessHomeDir, "orphaned-empty-wt");
+      await mkdir(join(worktreePath, "nested"), { recursive: true }); // dirs only, zero files
+      // Never registered as a worktree at all -- isRegisteredWorktree
+      // correctly reports false without any Git bookkeeping to remove.
+
+      await expect(
+        recoverFromWorktreeRemovalFailure(repoDir, worktreePath, false, new Error("boom")),
+      ).resolves.toBeUndefined();
+
+      expect(existsSync(worktreePath)).toBe(false);
+    });
+
+    it("deregistered + residual directory still has files, no --force: refuses and preserves the directory", async () => {
+      const { recoverFromWorktreeRemovalFailure } = await import("../../src/commands/cleanup.js");
+      const { CeError } = await import("../../src/core/errors.js");
+
+      const worktreePath = join(harnessHomeDir, "orphaned-with-files-wt");
+      await mkdir(worktreePath, { recursive: true });
+      await writeFile(join(worktreePath, "real-work.txt"), "uncommitted work\n", "utf8");
+
+      await expect(
+        recoverFromWorktreeRemovalFailure(repoDir, worktreePath, false, new Error("boom")),
+      ).rejects.toThrow(CeError);
+
+      expect(existsSync(join(worktreePath, "real-work.txt"))).toBe(true);
+      expect(await readFile(join(worktreePath, "real-work.txt"), "utf8")).toBe("uncommitted work\n");
+    });
+
+    it("deregistered + residual directory still has files, WITH --force: removes it and resolves", async () => {
+      const { recoverFromWorktreeRemovalFailure } = await import("../../src/commands/cleanup.js");
+
+      const worktreePath = join(harnessHomeDir, "orphaned-with-files-forced-wt");
+      await mkdir(worktreePath, { recursive: true });
+      await writeFile(join(worktreePath, "leftover.txt"), "leftover\n", "utf8");
+
+      await expect(
+        recoverFromWorktreeRemovalFailure(repoDir, worktreePath, true, new Error("boom")),
+      ).resolves.toBeUndefined();
+
+      expect(existsSync(worktreePath)).toBe(false);
+    });
+
+    it("end-to-end: cleanup preserves branch/workspace/active-pointer when the residual directory has files, then finishes cleanly with --force", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace, readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      // Simulate exactly the partial-removal state this feature
+      // recovers from: Git's own worktree bookkeeping is gone (matching
+      // the real incident precisely -- deleting `.git/worktrees/<name>`
+      // is what a failed `git worktree remove --force` itself left
+      // behind), but the directory and a real file inside it survive.
+      await deregisterWorktreeBookkeeping(repoDir, workspace.worktreePath);
+      await writeFile(join(workspace.worktreePath, "possibly-real-work.txt"), "?\n", "utf8");
+
+      await expect(cleanupCommand({})).rejects.toThrow(/no longer registers/i);
+
+      // Refused safely: everything ce-harness owns is still intact.
+      expect(existsSync(workspace.worktreePath)).toBe(true);
+      expect(existsSync(join(workspace.worktreePath, "possibly-real-work.txt"))).toBe(true);
+      expect(existsSync(workspace.workspacePath)).toBe(true);
+      expect(await readActivePointer()).toEqual({ project: basenameOf(repoDir), sanitizedIssue: "issue-1" });
+
+      // Re-running with --force finishes the job completely.
+      await expect(cleanupCommand({ force: true })).resolves.toBeUndefined();
+      expect(existsSync(workspace.worktreePath)).toBe(false);
+      expect(existsSync(workspace.workspacePath)).toBe(false);
+      expect(await readActivePointer()).toBeNull();
+      const branches = await execa("git", ["-C", repoDir, "branch", "--list", "ce-harness/issue-1"]);
+      expect(branches.stdout.trim()).toBe("");
+    });
+
+    it("end-to-end: an already-empty orphaned directory (no files at all) finishes cleanup completely, without needing --force", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace, readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      // Deregister, but this time leave nothing of value behind at all
+      // (not even the repository's own tracked README.md) -- mirrors
+      // the exact real-world recovery: a partially-successful `git
+      // worktree remove` had already deleted everything except one
+      // stubborn, now-empty directory by the time Git's own bookkeeping
+      // disappeared.
+      await deregisterWorktreeBookkeeping(repoDir, workspace.worktreePath);
+      const remainingEntries = await readdir(workspace.worktreePath);
+      await Promise.all(
+        remainingEntries.map((entry) => rm(join(workspace.worktreePath, entry), { recursive: true, force: true })),
+      );
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+
+      expect(existsSync(workspace.worktreePath)).toBe(false);
+      expect(existsSync(workspace.workspacePath)).toBe(false);
       expect(await readActivePointer()).toBeNull();
     });
   });
