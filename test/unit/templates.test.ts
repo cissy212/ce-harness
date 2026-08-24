@@ -126,4 +126,110 @@ describe("templates (generic copy mechanism)", () => {
     expect(copied.sort()).toEqual(["explore.md", "workspace.md"]);
     expect((await readdir(destinationDir)).sort()).toEqual(["explore.md", "workspace.md"]);
   });
+
+  describe("copyTemplatesSkippingCollisions (per top-level-entry collision safety)", () => {
+    it("copies every entry when the destination is empty, reporting them all as written", async () => {
+      const { copyTemplatesSkippingCollisions } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await writeFile(join(commandsDir, "workspace.md"), "workspace\n", "utf8");
+      await writeFile(join(commandsDir, "explore.md"), "explore\n", "utf8");
+
+      const result = await copyTemplatesSkippingCollisions("commands", destinationDir);
+
+      expect(result.written.sort()).toEqual(["explore.md", "workspace.md"]);
+      expect(result.skipped).toEqual([]);
+      expect(await readFile(join(destinationDir, "workspace.md"), "utf8")).toBe("workspace\n");
+    });
+
+    it("skips only the colliding top-level entry, copying every other one in, and leaves the collision untouched", async () => {
+      const { copyTemplatesSkippingCollisions } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await writeFile(join(commandsDir, "workspace.md"), "template content\n", "utf8");
+      await writeFile(join(commandsDir, "explore.md"), "explore\n", "utf8");
+
+      await mkdir(destinationDir, { recursive: true });
+      await writeFile(join(destinationDir, "workspace.md"), "the caller's own content\n", "utf8");
+
+      const result = await copyTemplatesSkippingCollisions("commands", destinationDir);
+
+      expect(result.written).toEqual(["explore.md"]);
+      expect(result.skipped).toEqual(["workspace.md"]);
+      expect(await readFile(join(destinationDir, "workspace.md"), "utf8")).toBe(
+        "the caller's own content\n",
+      );
+      expect(await readFile(join(destinationDir, "explore.md"), "utf8")).toBe("explore\n");
+    });
+
+    it("treats a whole skill directory as one collision unit, without merging into a same-named pre-existing directory", async () => {
+      const { copyTemplatesSkippingCollisions } = await import("../../src/core/templates.js");
+      const skillsDir = join(fakeTemplatesRoot, "skills");
+      await mkdir(join(skillsDir, "openspec-sync-specs"), { recursive: true });
+      await writeFile(join(skillsDir, "openspec-sync-specs", "SKILL.md"), "template skill\n", "utf8");
+      await mkdir(join(skillsDir, "composition-patterns"), { recursive: true });
+      await writeFile(join(skillsDir, "composition-patterns", "SKILL.md"), "other skill\n", "utf8");
+
+      await mkdir(join(destinationDir, "openspec-sync-specs"), { recursive: true });
+      await writeFile(
+        join(destinationDir, "openspec-sync-specs", "SKILL.md"),
+        "the repository's own skill\n",
+        "utf8",
+      );
+
+      const result = await copyTemplatesSkippingCollisions("skills", destinationDir);
+
+      expect(result.written).toEqual(["composition-patterns"]);
+      expect(result.skipped).toEqual(["openspec-sync-specs"]);
+      expect(await readFile(join(destinationDir, "openspec-sync-specs", "SKILL.md"), "utf8")).toBe(
+        "the repository's own skill\n",
+      );
+      expect(await readFile(join(destinationDir, "composition-patterns", "SKILL.md"), "utf8")).toBe(
+        "other skill\n",
+      );
+    });
+
+    it("is a no-op (and creates no destination directory) when the template category doesn't exist yet", async () => {
+      const { copyTemplatesSkippingCollisions } = await import("../../src/core/templates.js");
+
+      const result = await copyTemplatesSkippingCollisions("skills", destinationDir);
+
+      expect(result).toEqual({ written: [], skipped: [], blockedByNonDirectory: false });
+      expect(existsSync(destinationDir)).toBe(false);
+    });
+
+    it("returns blockedByNonDirectory: true (and touches nothing) when the destination already exists as a file", async () => {
+      const { copyTemplatesSkippingCollisions } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await writeFile(join(commandsDir, "workspace.md"), "workspace\n", "utf8");
+
+      // destinationDir itself is a plain file, not a directory.
+      await writeFile(destinationDir, "not a directory\n", "utf8");
+
+      const result = await copyTemplatesSkippingCollisions("commands", destinationDir);
+
+      expect(result).toEqual({ written: [], skipped: [], blockedByNonDirectory: true });
+      expect(await readFile(destinationDir, "utf8")).toBe("not a directory\n");
+    });
+  });
+
+  describe("existsAsNonDirectory", () => {
+    it("returns false for a path that does not exist at all", async () => {
+      const { existsAsNonDirectory } = await import("../../src/core/templates.js");
+      expect(existsAsNonDirectory(join(tempDir, "nope"))).toBe(false);
+    });
+
+    it("returns false for a path that exists as a directory", async () => {
+      const { existsAsNonDirectory } = await import("../../src/core/templates.js");
+      await mkdir(destinationDir, { recursive: true });
+      expect(existsAsNonDirectory(destinationDir)).toBe(false);
+    });
+
+    it("returns true for a path that exists as a file", async () => {
+      const { existsAsNonDirectory } = await import("../../src/core/templates.js");
+      await writeFile(destinationDir, "a file\n", "utf8");
+      expect(existsAsNonDirectory(destinationDir)).toBe(true);
+    });
+  });
 });

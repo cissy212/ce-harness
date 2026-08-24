@@ -21,12 +21,13 @@ function expectedCodeGraphOpenCodeConfigPath(workspacePath: string): string {
   return join(expectedOpenCodeConfigDir(workspacePath), "opencode.json");
 }
 
-async function writeConfig(paths: RunnerWorkspacePaths): Promise<boolean> {
+async function writeConfig(paths: RunnerWorkspacePaths): Promise<string[]> {
   await createOpenCodeConfig(paths.workspacePath);
-  // Always written: OpenCode's config lives entirely under the workspace
-  // directory, never inside the worktree, so there is no pre-existing
-  // path it could ever conflict with.
-  return true;
+  // OpenCode's config lives entirely under the workspace directory,
+  // never inside the worktree, so it has no worktree-relative paths to
+  // report -- there is no pre-existing path it could ever conflict with
+  // either.
+  return [];
 }
 
 /**

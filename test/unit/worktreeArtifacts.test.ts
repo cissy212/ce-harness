@@ -149,6 +149,54 @@ describe("filterHarnessManagedChanges", () => {
       expect(filterHarnessManagedChanges(changes, workspace)).toEqual(changes);
     });
 
+    describe("per-item array form (current writeConfig contract)", () => {
+      it("excludes only the specific commands/skills the array names, not the whole .claude directory", () => {
+        const workspace = claudeWorkspace({
+          runnerWorktreeArtifacts: {
+            commandsManaged: ["commands/adversarial-review.md", "skills/openspec-sync-specs"],
+          },
+        });
+        const changes = [
+          "?? .claude/commands/adversarial-review.md",
+          "?? .claude/skills/openspec-sync-specs/SKILL.md",
+          " M src/index.ts",
+        ];
+
+        expect(filterHarnessManagedChanges(changes, workspace)).toEqual([" M src/index.ts"]);
+      });
+
+      it("the Oz scenario: excludes the ce-harness-written skill but never the unrelated, repository-owned setup-service-infra skill", () => {
+        const workspace = claudeWorkspace({
+          runnerWorktreeArtifacts: {
+            commandsManaged: ["commands/adversarial-review.md", "skills/openspec-sync-specs"],
+          },
+        });
+        // setup-service-infra is tracked and unmodified in the real
+        // scenario (so it would never appear in porcelain output at
+        // all) -- modeled here as an untracked sibling to prove the
+        // filter itself, not git's own tracked/untracked distinction,
+        // is what keeps it out of the exclusion.
+        const changes = [
+          "?? .claude/commands/adversarial-review.md",
+          "?? .claude/skills/openspec-sync-specs/SKILL.md",
+          "?? .claude/skills/setup-service-infra/SKILL.md",
+          " M src/index.ts",
+        ];
+
+        expect(filterHarnessManagedChanges(changes, workspace)).toEqual([
+          "?? .claude/skills/setup-service-infra/SKILL.md",
+          " M src/index.ts",
+        ]);
+      });
+
+      it("returns changes unmodified when the array is empty -- every template collided", () => {
+        const workspace = claudeWorkspace({ runnerWorktreeArtifacts: { commandsManaged: [] } });
+        const changes = ["?? .claude/skills/setup-service-infra/SKILL.md", " M src/index.ts"];
+
+        expect(filterHarnessManagedChanges(changes, workspace)).toEqual(changes);
+      });
+    });
+
     it('never excludes ".claude" for an OpenCode workspace, even if runnerWorktreeArtifacts is somehow present', () => {
       const workspace = workspaceWithCodeGraph({
         codeGraph: undefined,

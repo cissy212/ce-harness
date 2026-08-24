@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
 import { addLocalExcludePattern } from "../git.js";
-import { copyTemplates } from "../templates.js";
+import { copyTemplatesSkippingCollisions, existsAsNonDirectory } from "../templates.js";
 import type { Workspace } from "../workspace.js";
 import type { RunnerLaunchResult, RunnerSpec, RunnerWorkspacePaths } from "./types.js";
 
@@ -27,15 +27,24 @@ import type { RunnerLaunchResult, RunnerSpec, RunnerWorkspacePaths } from "./typ
  * Because this places generated files inside the worktree -- unlike
  * OpenCode's config, which lives entirely outside it, under the
  * workspace directory -- both `writeConfig` and `writeCodeGraphConfig`
- * refuse to touch a pre-existing `.claude/` or `.mcp.json` (whether
- * tracked, untracked, or gitignored -- the check is a plain filesystem
- * existence check, not a Git-tracking query, so it holds regardless of
- * how the path got there) rather than overwriting, merging into, or
- * otherwise taking ownership of it. Each returns whether it actually
- * wrote (vs. safely skipped), which `ce start` persists on the
- * workspace so `managedWorktreeRelativePaths` can tell `ce cleanup`/
- * `ce status` exactly which worktree-local paths are harness-owned and
- * disposable -- never more than that, and never by guessing.
+ * refuse to touch a pre-existing destination path (whether tracked,
+ * untracked, or gitignored -- the check is a plain filesystem existence
+ * check, not a Git-tracking query, so it holds regardless of how the
+ * path got there) rather than overwriting, merging into, or otherwise
+ * taking ownership of it.
+ *
+ * `writeConfig` makes that check per individual command file and per
+ * skill directory, not once against the whole `.claude/` directory: a
+ * repository that already tracks its own, unrelated `.claude/skills/`
+ * entry still gets every ce-harness command and every other skill
+ * installed alongside it, with only the colliding entry left alone (and
+ * a warning naming it). `writeCodeGraphConfig`'s `.mcp.json` has no
+ * such internal structure, so it stays a single all-or-nothing file.
+ * Each returns exactly which worktree-relative paths it actually wrote
+ * (never more, never fewer), which `ce start` persists on the workspace
+ * so `managedWorktreeRelativePaths` can tell `ce cleanup`/`ce status`
+ * exactly which worktree-local paths are harness-owned and disposable --
+ * never more than that, and never by guessing.
  */
 
 /** Resolves the Claude Code executable to invoke. Overridable for tests. */
@@ -82,34 +91,102 @@ function shellQuote(value: string): string {
   return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
+/** Strips a command template's `.md` extension to get its slash-command name. */
+function commandNameFrom(templateFileName: string): string {
+  return templateFileName.endsWith(".md") ? templateFileName.slice(0, -3) : templateFileName;
+}
+
+/** Warns that one specific command or skill was left alone because the repository already owns that path. */
+function warnAboutCollision(category: "commands" | "skills", entryName: string): void {
+  const claudeRelativePath = join(".claude", category, entryName);
+  const whatItWouldHaveBeen =
+    category === "commands" ? `the "/${commandNameFrom(entryName)}" command` : `the "${entryName}" skill`;
+  console.error(
+    `Warning: "${claudeRelativePath}" already exists in this worktree (tracked by the repository, ` +
+      "or otherwise already present) -- ce-harness will not overwrite, merge into, or take " +
+      `ownership of it, so ${whatItWouldHaveBeen} will not be available to Claude Code in this ` +
+      "workspace. Remove or rename that path yourself and re-run `ce start` if you want ce-harness " +
+      "to provision it.",
+  );
+}
+
+/**
+ * Warns that an entire category (or `.claude` itself) is blocked because
+ * something other than a directory already sits at that exact path --
+ * distinct from `warnAboutCollision`, which is about one specific,
+ * already-named command or skill. Nothing under `claudeRelativePath`
+ * could even be attempted, so nothing under it is named individually.
+ */
+function warnBlockedByNonDirectory(claudeRelativePath: string): void {
+  console.error(
+    `Warning: "${claudeRelativePath}" already exists in this worktree as a file, not a directory ` +
+      "(tracked by the repository, or otherwise already present) -- ce-harness cannot install " +
+      "anything under it. Commands and/or skills that would live there will not be available to " +
+      "Claude Code in this workspace. Remove or rename that path yourself and re-run `ce start` if " +
+      "you want ce-harness to provision it.",
+  );
+}
+
 /**
  * Materializes `<worktree>/.claude/{commands,skills}` from the harness's
  * canonical template library -- the exact same source templates
  * OpenCode's config is built from (see runners/opencode.ts), so the
- * workflow itself is never duplicated or forked per runner. Skipped
- * entirely (with a console warning) if the repository already tracks
- * its own `.claude/` directory in this worktree, so a repository that
- * happens to have its own Claude Code configuration is never clobbered.
+ * workflow itself is never duplicated or forked per runner.
+ *
+ * Collision-safe per individual command file and per skill directory
+ * (see `copyTemplatesSkippingCollisions`): a path the repository already
+ * owns at that exact location is left completely untouched, with a
+ * warning naming it, while every other template is still installed.
+ * Returns the `.claude`-relative paths (e.g.
+ * `"commands/adversarial-review.md"`, `"skills/openspec-sync-specs"`)
+ * actually written, each added individually to the local exclude file --
+ * never a single blanket `/.claude` pattern, which would also hide any
+ * unrelated, non-harness-owned content the repository keeps alongside
+ * them (tracked or not).
+ *
+ * The same collision-safety extends to `.claude`, `.claude/commands`,
+ * and `.claude/skills` themselves existing as a plain file rather than a
+ * directory: each is checked with `existsAsNonDirectory` before any
+ * `mkdir` is attempted, so that case degrades to a warning (naming
+ * whichever of the three is blocked) instead of an unhandled `EEXIST`/
+ * `ENOTDIR` crashing `ce start`. `.claude` being blocked skips both
+ * commands and skills at once, since neither can be placed under it
+ * either; `.claude/commands` or `.claude/skills` alone being blocked
+ * only costs that one category.
  */
-async function writeConfig(paths: RunnerWorkspacePaths): Promise<boolean> {
+async function writeConfig(paths: RunnerWorkspacePaths): Promise<string[]> {
   const configDir = claudeConfigDir(paths.worktreePath);
-  if (existsSync(configDir)) {
-    console.error(
-      `Warning: "${configDir}" already exists -- ce-harness did not create it (tracked by the ` +
-        "repository, or otherwise already present) and will not overwrite, merge into, or take " +
-        "ownership of it. The /explore, /propose, /apply, /verify, /adversarial-review, /archive, " +
-        "and /workspace commands (and the openspec-sync-specs skill) will not be available to " +
-        "Claude Code in this workspace. Remove or rename that directory yourself and re-run " +
-        "`ce start` if you want ce-harness to provision it.",
-    );
-    return false;
+
+  if (existsAsNonDirectory(configDir)) {
+    warnBlockedByNonDirectory(".claude");
+    return [];
   }
 
   await mkdir(configDir, { recursive: true });
-  await copyTemplates("commands", join(configDir, "commands"));
-  await copyTemplates("skills", join(configDir, "skills"));
-  await addLocalExcludePattern(paths.worktreePath, "/.claude");
-  return true;
+
+  const written: string[] = [];
+
+  const commands = await copyTemplatesSkippingCollisions("commands", join(configDir, "commands"));
+  if (commands.blockedByNonDirectory) {
+    warnBlockedByNonDirectory(join(".claude", "commands"));
+  } else {
+    for (const name of commands.written) written.push(join("commands", name));
+    for (const name of commands.skipped) warnAboutCollision("commands", name);
+  }
+
+  const skills = await copyTemplatesSkippingCollisions("skills", join(configDir, "skills"));
+  if (skills.blockedByNonDirectory) {
+    warnBlockedByNonDirectory(join(".claude", "skills"));
+  } else {
+    for (const name of skills.written) written.push(join("skills", name));
+    for (const name of skills.skipped) warnAboutCollision("skills", name);
+  }
+
+  for (const relativePath of written) {
+    await addLocalExcludePattern(paths.worktreePath, `/${join(".claude", relativePath)}`);
+  }
+
+  return written;
 }
 
 /**
@@ -162,17 +239,32 @@ function buildEnv(_workspace: Workspace): Record<string, string> {
  * (never re-derived from `existsSync`, and never assumed), so a path
  * `writeConfig`/`writeCodeGraphConfig` safely skipped (pre-existing,
  * not harness-owned) is correctly excluded here too. This is what lets
- * `ce cleanup`/`ce status` (see core/worktreeArtifacts.ts) treat a
- * harness-written `.claude/`/`.mcp.json` as a harmless, disposable
- * artifact -- exactly like CodeGraph's index -- without ever extending
- * that same treatment to a same-named path the repository itself owns.
+ * `ce cleanup`/`ce status` (see core/worktreeArtifacts.ts) treat each
+ * harness-written command file, skill directory, or `.mcp.json` as a
+ * harmless, disposable artifact -- exactly like CodeGraph's index --
+ * without ever extending that same treatment to a same-named sibling
+ * path the repository itself owns.
+ *
+ * `commandsManaged` is normally the array `writeConfig` now returns:
+ * each entry is a path relative to `.claude/` (e.g.
+ * `"commands/adversarial-review.md"`, `"skills/openspec-sync-specs"`),
+ * reported here as `.claude/<entry>`. A plain `boolean` is also accepted
+ * -- a workspace.yml persisted before per-item tracking existed, where
+ * `true` meant the whole `.claude/` directory was harness-written.
  */
 function managedWorktreeRelativePaths(workspace: Workspace): string[] {
   const artifacts = workspace.runnerWorktreeArtifacts;
   if (!artifacts) return [];
 
   const paths: string[] = [];
-  if (artifacts.commandsManaged) paths.push(".claude");
+  const commandsManaged = artifacts.commandsManaged;
+  if (typeof commandsManaged === "boolean") {
+    if (commandsManaged) paths.push(".claude");
+  } else {
+    for (const relativePath of commandsManaged) {
+      paths.push(join(".claude", relativePath));
+    }
+  }
   if (artifacts.mcpManaged) paths.push(".mcp.json");
   return paths;
 }

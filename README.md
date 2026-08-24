@@ -514,14 +514,20 @@ each runner's config is materialized:
   only discovers project-scoped commands/skills relative to its working
   directory, with no environment-variable override, so this is placed
   inside the isolated, ce-harness-owned worktree instead (never your
-  original repository) and added to Git's local, never-committed exclude
-  file — the same treatment `.codegraph/` already gets (see
+  original repository) and each command file/skill directory ce-harness
+  actually writes is added individually to Git's local, never-committed
+  exclude file — the same treatment `.codegraph/` already gets (see
   [Environment-mutation safety](#environment-mutation-safety)) — so it
   never appears as an untracked change and is removed automatically by
-  `ce cleanup`. If the worktree's base branch already tracks its own
-  `.claude/` directory (or `.mcp.json`, for CodeGraph's MCP registration
-  — see below), ce-harness never overwrites it; it's left exactly as the
-  repository has it, and a warning is printed instead.
+  `ce cleanup`. The check is per command file and per skill directory,
+  not once against the whole `.claude/` directory: if the worktree's
+  base branch already tracks its own command or skill at one of those
+  exact paths, only that one is left exactly as the repository has it
+  (with a warning printed naming it) — every other command and skill
+  still installs alongside it. `.mcp.json` (CodeGraph's MCP registration
+  — see below) has no such internal structure, so it stays a single
+  file: if the repository already tracks it, ce-harness never overwrites
+  it, and a warning is printed instead.
 
 If CodeGraph is available for the workspace (see
 [Reasoning lenses](#reasoning-lenses) and the environment variables

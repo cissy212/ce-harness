@@ -3367,16 +3367,16 @@ describe("ce start (integration)", () => {
     });
 
     describe("pre-existing .claude/ safety (Q1/Q2/Q3/Q4 follow-up)", () => {
-      it('a repository whose base branch already tracks its own ".claude/" is never clobbered, and workspace.yml records commandsManaged: false', async () => {
+      it('a repository whose base branch already tracks a colliding ".claude/commands/workspace.md" is never clobbered, and every other command still installs', async () => {
         const { mkdir: mkdirP, writeFile, readFile } = await import("node:fs/promises");
         await mkdirP(join(repoDir, ".claude", "commands"), { recursive: true });
         await writeFile(
-          join(repoDir, ".claude", "commands", "custom.md"),
+          join(repoDir, ".claude", "commands", "workspace.md"),
           "the repository's own tracked command\n",
           "utf8",
         );
         await execa("git", ["-C", repoDir, "add", "."]);
-        await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .claude directory"]);
+        await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .claude/commands/workspace.md"]);
 
         const { startCommand } = await import("../../src/commands/start.js");
         const { readWorkspace } = await import("../../src/core/workspace.js");
@@ -3386,22 +3386,125 @@ describe("ce start (integration)", () => {
         await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
 
         const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
-        expect(workspace.runnerWorktreeArtifacts?.commandsManaged).toBe(false);
+        const commandsManaged = workspace.runnerWorktreeArtifacts?.commandsManaged;
+        expect(Array.isArray(commandsManaged)).toBe(true);
+        expect(commandsManaged).not.toContain(join("commands", "workspace.md"));
+        // The collision costs only the one colliding file -- every other
+        // command still installs alongside the repository's own.
+        expect(commandsManaged).toContain(join("commands", "adversarial-review.md"));
 
-        // Untouched: the repository's own command survives, and no
-        // ce-harness command (e.g. workspace.md) was mixed in alongside it.
+        // Untouched: the repository's own command survives, and
+        // ce-harness's own workspace.md was never mixed in alongside it.
         expect(
-          await readFile(join(workspace.worktreePath, ".claude", "commands", "custom.md"), "utf8"),
+          await readFile(join(workspace.worktreePath, ".claude", "commands", "workspace.md"), "utf8"),
         ).toBe("the repository's own tracked command\n");
-        expect(existsSync(join(workspace.worktreePath, ".claude", "commands", "workspace.md"))).toBe(
-          false,
-        );
+        expect(
+          existsSync(join(workspace.worktreePath, ".claude", "commands", "adversarial-review.md")),
+        ).toBe(true);
 
         const status = await execa("git", ["-C", workspace.worktreePath, "status", "--porcelain"]);
         expect(status.stdout).toBe("");
-        expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("already exists"))).toBe(
-          true,
+        expect(
+          errorSpy.mock.calls.some(
+            (call) => String(call[0]).includes("already exists") && String(call[0]).includes("/workspace"),
+          ),
+        ).toBe(true);
+      });
+
+      it('the Oz scenario: a repository tracking only an unrelated ".claude/skills/setup-service-infra/" still gets every ce-harness command and skill installed, /adversarial-review included, and cleanup succeeds WITHOUT --force', async () => {
+        const { mkdir: mkdirP, writeFile, readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const ownSkillDir = join(repoDir, ".claude", "skills", "setup-service-infra");
+        await mkdirP(ownSkillDir, { recursive: true });
+        await writeFile(join(ownSkillDir, "SKILL.md"), "the repository's own skill\n", "utf8");
+        await execa("git", ["-C", repoDir, "add", "."]);
+        await execa("git", ["-C", repoDir, "commit", "-m", "vendor a setup-service-infra skill"]);
+
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+        // vi.spyOn reuses (rather than replaces) an already-mocked
+        // console.error across tests in this file, so mockClear() here
+        // guarantees this test only sees calls it caused itself.
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        errorSpy.mockClear();
+
+        await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+        const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+        const commandsManaged = workspace.runnerWorktreeArtifacts?.commandsManaged;
+        expect(Array.isArray(commandsManaged)).toBe(true);
+        // Zero collisions: nothing about setup-service-infra's name
+        // matches any ce-harness template, so nothing was skipped.
+        expect(
+          errorSpy.mock.calls.some((call) => String(call[0]).includes("setup-service-infra")),
+        ).toBe(false);
+        expect(errorSpy).not.toHaveBeenCalled();
+
+        // /adversarial-review is materialized...
+        const adversarialReviewPath = join(
+          workspace.worktreePath,
+          ".claude",
+          "commands",
+          "adversarial-review.md",
         );
+        expect(existsSync(adversarialReviewPath)).toBe(true);
+        expect(await readFile(adversarialReviewPath, "utf8")).toBe(
+          await readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8"),
+        );
+        // ...alongside every other ce-harness command...
+        for (const command of ["explore", "propose", "apply", "verify", "archive", "workspace"]) {
+          expect(existsSync(join(workspace.worktreePath, ".claude", "commands", `${command}.md`))).toBe(
+            true,
+          );
+        }
+        // ...and ce-harness's own skill.
+        expect(
+          existsSync(join(workspace.worktreePath, ".claude", "skills", "openspec-sync-specs", "SKILL.md")),
+        ).toBe(true);
+
+        // setup-service-infra remains untouched.
+        expect(
+          await readFile(join(workspace.worktreePath, ".claude", "skills", "setup-service-infra", "SKILL.md"), "utf8"),
+        ).toBe("the repository's own skill\n");
+
+        const status = await execa("git", ["-C", workspace.worktreePath, "status", "--porcelain"]);
+        expect(status.stdout).toBe("");
+
+        // Cleanup removes only ce-harness-owned artifacts: the dirty
+        // check passes without --force even though the repository's own
+        // tracked skill still sits inside .claude alongside them.
+        await expect(cleanupCommand({})).resolves.not.toThrow();
+        expect(existsSync(workspace.worktreePath)).toBe(false);
+      });
+
+      it("cleanup still requires --force when an untracked, non-harness-owned file sits alongside harness-managed .claude/ content", async () => {
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+        const { CeError } = await import("../../src/core/errors.js");
+        const { writeFile } = await import("node:fs/promises");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+        const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+        // Never written by ce-harness -- some unrelated file that
+        // happens to land under .claude/ mid-session. Deliberately not
+        // named "settings.local.json": that exact path is a common
+        // global-gitignore convention for personal Claude Code settings,
+        // which would make this test depend on the machine's own global
+        // Git config instead of ce-harness's own exclusion logic.
+        await writeFile(join(workspace.worktreePath, ".claude", "unrelated-note.txt"), "hi\n", "utf8");
+
+        // Per-item ownership tracking means this unrelated file is never
+        // swept into the harness-managed exclusion -- cleanup must still
+        // treat it as a real change and refuse without --force.
+        await expect(cleanupCommand({})).rejects.toThrow(CeError);
+        expect(existsSync(workspace.worktreePath)).toBe(true);
+
+        await expect(cleanupCommand({ force: true })).resolves.not.toThrow();
       });
 
       it('ce cleanup succeeds WITHOUT --force after a fresh --runner claude start writes .claude/ and .mcp.json (CodeGraph available)', async () => {
@@ -3416,7 +3519,10 @@ describe("ce start (integration)", () => {
           await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
 
           const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
-          expect(workspace.runnerWorktreeArtifacts).toEqual({ commandsManaged: true, mcpManaged: true });
+          const commandsManaged = workspace.runnerWorktreeArtifacts?.commandsManaged;
+          expect(Array.isArray(commandsManaged)).toBe(true);
+          expect((commandsManaged as string[]).length).toBeGreaterThan(0);
+          expect(workspace.runnerWorktreeArtifacts?.mcpManaged).toBe(true);
           expect(existsSync(join(workspace.worktreePath, ".claude"))).toBe(true);
           expect(existsSync(join(workspace.worktreePath, ".mcp.json"))).toBe(true);
 

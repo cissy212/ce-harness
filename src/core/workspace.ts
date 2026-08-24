@@ -70,19 +70,30 @@ export type BootstrapMetadata = z.infer<typeof BootstrapMetadataSchema>;
  * this workspace, as opposed to safely skipping because a pre-existing
  * path it did not create was already there. Deliberately runner-agnostic
  * in name and shape -- it is written unconditionally by `ce start` from
- * the boolean `RunnerSpec.writeConfig`/`writeCodeGraphConfig` already
+ * whatever `RunnerSpec.writeConfig`/`writeCodeGraphConfig` already
  * return, never gated on which runner id was selected, so this schema
  * carries no runner-specific knowledge itself (e.g. it says nothing
  * about `.claude` or `.mcp.json` by name -- only each RunnerSpec's own
- * `managedWorktreeRelativePaths` interprets these flags into paths).
+ * `managedWorktreeRelativePaths` interprets these values into paths).
  *
- * `commandsManaged`/`mcpManaged` being `false` (or absent) is the normal,
- * expected value for a runner whose config never lives inside the
- * worktree at all (e.g. OpenCode) -- it is not itself a sign of a
+ * `commandsManaged` is an array of the individual, runner-config-root-
+ * relative paths (e.g. `"commands/adversarial-review.md"`,
+ * `"skills/openspec-sync-specs"`) actually written this run -- per-item
+ * ownership, not an all-or-nothing flag, so a repository that already
+ * owns one command or skill doesn't cost every other one. It also
+ * accepts a plain `boolean`, for reading a workspace.yml persisted by a
+ * version of ce-harness that predates per-item tracking: `true` meant
+ * "the whole config directory was freshly written" and `false` meant
+ * "safely skipped entirely" -- readers must still treat both legacy
+ * shapes as valid.
+ *
+ * `commandsManaged`/`mcpManaged` being `false`/`[]` (or absent) is the
+ * normal, expected value for a runner whose config never lives inside
+ * the worktree at all (e.g. OpenCode) -- it is not itself a sign of a
  * conflict.
  */
 export const RunnerWorktreeArtifactsSchema = z.object({
-  commandsManaged: z.boolean(),
+  commandsManaged: z.union([z.boolean(), z.array(z.string().min(1))]),
   mcpManaged: z.boolean().optional(),
 });
 

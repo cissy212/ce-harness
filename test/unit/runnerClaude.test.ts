@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTempRepo } from "../helpers/tempRepo.js";
 import {
   setupFakeClaude,
@@ -107,7 +107,7 @@ describe("Claude Code runner (core/runners/claude.ts)", () => {
       await rm(repoDir, { recursive: true, force: true });
     });
 
-    it("materializes <worktree>/.claude/{commands,skills} from the canonical templates, and returns true", async () => {
+    it("materializes <worktree>/.claude/{commands,skills} from the canonical templates, and returns every path it wrote", async () => {
       const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
       const { templatesRoot } = await import("../../src/core/templates.js");
 
@@ -115,10 +115,13 @@ describe("Claude Code runner (core/runners/claude.ts)", () => {
         workspacePath: "/tmp/unused-workspace",
         worktreePath: repoDir,
       });
-      expect(written).toBe(true);
+      expect(written).toContain(join("commands", "workspace.md"));
+      expect(written).toContain(join("commands", "adversarial-review.md"));
+      expect(written).toContain(join("skills", "openspec-sync-specs"));
 
       const claudeDir = join(repoDir, ".claude");
       expect(existsSync(join(claudeDir, "commands", "workspace.md"))).toBe(true);
+      expect(existsSync(join(claudeDir, "commands", "adversarial-review.md"))).toBe(true);
       expect(existsSync(join(claudeDir, "skills", "openspec-sync-specs", "SKILL.md"))).toBe(true);
 
       const copied = await readFile(join(claudeDir, "commands", "workspace.md"), "utf8");
@@ -126,73 +129,321 @@ describe("Claude Code runner (core/runners/claude.ts)", () => {
       expect(copied).toBe(source);
     });
 
-    it("adds /.claude to the repository's local, never-committed exclude file", async () => {
+    it("adds each written path individually to the repository's local, never-committed exclude file", async () => {
       const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
 
       await CLAUDE_RUNNER.writeConfig({ workspacePath: "/tmp/unused-workspace", worktreePath: repoDir });
 
       const excludeContent = await readFile(join(repoDir, ".git", "info", "exclude"), "utf8");
-      expect(excludeContent).toContain("/.claude");
+      expect(excludeContent).toContain("/.claude/commands/workspace.md");
+      expect(excludeContent).toContain("/.claude/skills/openspec-sync-specs");
+      // Never a single blanket pattern -- that would also hide unrelated,
+      // non-harness-owned content the repository might keep under .claude.
+      expect(excludeContent).not.toMatch(/^\/\.claude$/m);
 
       const { execa } = await import("execa");
       const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
       expect(status.stdout).toBe("");
     });
 
-    it('never overwrites a pre-existing, UNTRACKED ".claude/" directory, and returns false', async () => {
+    it('leaves a colliding, UNTRACKED command file untouched, warns about it by name, and still installs every non-colliding template', async () => {
       const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
 
-      // Deliberately never `git add`/`git commit`ed -- this is untracked,
-      // local-only content (e.g. the user's own personal Claude Code
-      // settings), the exact case the existence check must catch even
-      // though Git itself has no record of this path at all.
+      // Deliberately never `git add`/`git commit`ed -- untracked,
+      // local-only content (e.g. the user's own personal command) that
+      // happens to share a name with one of ce-harness's own templates.
       const preExistingDir = join(repoDir, ".claude", "commands");
       await mkdir(preExistingDir, { recursive: true });
-      await writeFile(join(preExistingDir, "custom.md"), "the user's own untracked command\n", "utf8");
+      await writeFile(join(preExistingDir, "workspace.md"), "the user's own untracked command\n", "utf8");
 
+      // vi.spyOn reuses (rather than replaces) an already-mocked
+      // console.error across tests in this file, so mockClear() here
+      // guarantees this test only sees calls it caused itself.
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      errorSpy.mockClear();
       const written = await CLAUDE_RUNNER.writeConfig({
         workspacePath: "/tmp/unused-workspace",
         worktreePath: repoDir,
       });
-      expect(written).toBe(false);
 
-      // Untouched: no workspace.md was copied in, and the pre-existing
-      // file survives exactly as it was. Never added to the local
-      // exclude file either -- it was never harness-written, so it must
-      // keep showing up as a real untracked change in `git status`.
-      expect(existsSync(join(repoDir, ".claude", "commands", "workspace.md"))).toBe(false);
-      expect(await readFile(join(preExistingDir, "custom.md"), "utf8")).toBe(
+      // The colliding entry is never claimed...
+      expect(written).not.toContain(join("commands", "workspace.md"));
+      // ...but nothing else pays for that collision.
+      expect(written).toContain(join("commands", "adversarial-review.md"));
+      expect(written).toContain(join("skills", "openspec-sync-specs"));
+
+      // The pre-existing file survives exactly as it was.
+      expect(await readFile(join(preExistingDir, "workspace.md"), "utf8")).toBe(
         "the user's own untracked command\n",
       );
+      // Every other template was installed alongside it.
+      expect(existsSync(join(repoDir, ".claude", "commands", "adversarial-review.md"))).toBe(true);
+      expect(existsSync(join(repoDir, ".claude", "skills", "openspec-sync-specs", "SKILL.md"))).toBe(
+        true,
+      );
+
+      expect(
+        errorSpy.mock.calls.some(
+          (call) => String(call[0]).includes("commands/workspace.md") && String(call[0]).includes("/workspace"),
+        ),
+      ).toBe(true);
+
+      // The untouched, non-harness-owned file was never added to the
+      // exclude file, so it still shows up as a real untracked change --
+      // but the harness-written siblings were, so they do not. (Matching
+      // core/git.ts's own statusPorcelain, `--untracked-files=all` is
+      // needed here so an untracked directory expands to individual
+      // files instead of collapsing to one summary line.)
       const { execa } = await import("execa");
-      const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
-      expect(status.stdout).toContain(".claude/");
+      const status = await execa("git", [
+        "-C",
+        repoDir,
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+      ]);
+      expect(status.stdout).toContain(".claude/commands/workspace.md");
+      expect(status.stdout).not.toContain("adversarial-review.md");
       const excludeContent = existsSync(join(repoDir, ".git", "info", "exclude"))
         ? await readFile(join(repoDir, ".git", "info", "exclude"), "utf8")
         : "";
-      expect(excludeContent).not.toContain("/.claude");
+      expect(excludeContent).not.toContain("/.claude/commands/workspace.md");
+      expect(excludeContent).toContain("/.claude/commands/adversarial-review.md");
     });
 
-    it('never overwrites a pre-existing, TRACKED ".claude/" directory (committed by the repository itself), and returns false', async () => {
+    it('leaves a colliding, TRACKED command file untouched (committed by the repository itself), and still installs every non-colliding template', async () => {
       const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
       const { execa } = await import("execa");
 
       const trackedDir = join(repoDir, ".claude", "commands");
       await mkdir(trackedDir, { recursive: true });
-      await writeFile(join(trackedDir, "custom.md"), "the repository's own tracked command\n", "utf8");
+      await writeFile(join(trackedDir, "workspace.md"), "the repository's own tracked command\n", "utf8");
       await execa("git", ["-C", repoDir, "add", "."]);
-      await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .claude directory"]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .claude/commands/workspace.md"]);
 
       const written = await CLAUDE_RUNNER.writeConfig({
         workspacePath: "/tmp/unused-workspace",
         worktreePath: repoDir,
       });
-      expect(written).toBe(false);
 
-      expect(existsSync(join(repoDir, ".claude", "commands", "workspace.md"))).toBe(false);
-      expect(await readFile(join(trackedDir, "custom.md"), "utf8")).toBe(
+      expect(written).not.toContain(join("commands", "workspace.md"));
+      expect(written).toContain(join("commands", "adversarial-review.md"));
+      expect(await readFile(join(trackedDir, "workspace.md"), "utf8")).toBe(
         "the repository's own tracked command\n",
       );
+      expect(existsSync(join(repoDir, ".claude", "commands", "adversarial-review.md"))).toBe(true);
+
+      // Clean: the tracked file is unmodified (so it shows nothing on its
+      // own), and every harness-written sibling was excluded individually.
+      const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+      expect(status.stdout).toBe("");
+    });
+
+    it("installs ce-harness commands and skills alongside an unrelated, pre-existing repository skill (the Oz scenario), leaving it untouched", async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      const { execa } = await import("execa");
+
+      // The repository's base branch already tracks its own, unrelated
+      // skill -- nothing about its name collides with any ce-harness
+      // command or skill template.
+      const ownSkillDir = join(repoDir, ".claude", "skills", "setup-service-infra");
+      await mkdir(ownSkillDir, { recursive: true });
+      await writeFile(join(ownSkillDir, "SKILL.md"), "the repository's own skill\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "vendor a setup-service-infra skill"]);
+
+      // vi.spyOn reuses (rather than replaces) an already-mocked
+      // console.error across tests in this file, so mockClear() here
+      // guarantees this test only sees calls it caused itself.
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      errorSpy.mockClear();
+      const written = await CLAUDE_RUNNER.writeConfig({
+        workspacePath: "/tmp/unused-workspace",
+        worktreePath: repoDir,
+      });
+
+      // Zero collisions -- every ce-harness command and skill installs.
+      expect(written).toContain(join("commands", "adversarial-review.md"));
+      expect(written).toContain(join("commands", "explore.md"));
+      expect(written).toContain(join("commands", "propose.md"));
+      expect(written).toContain(join("commands", "apply.md"));
+      expect(written).toContain(join("commands", "verify.md"));
+      expect(written).toContain(join("commands", "archive.md"));
+      expect(written).toContain(join("commands", "workspace.md"));
+      expect(written).toContain(join("skills", "openspec-sync-specs"));
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      // /adversarial-review is materialized.
+      expect(existsSync(join(repoDir, ".claude", "commands", "adversarial-review.md"))).toBe(true);
+
+      // The repository's own skill is completely untouched.
+      expect(await readFile(join(ownSkillDir, "SKILL.md"), "utf8")).toBe(
+        "the repository's own skill\n",
+      );
+
+      const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+      expect(status.stdout).toBe("");
+    });
+
+    it('leaves a colliding, TRACKED skill directory untouched (committed by the repository itself), warns about it by name, and still installs every other command and skill', async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      const { execa } = await import("execa");
+
+      // The repository's base branch already tracks its own content at
+      // the exact same path as one of ce-harness's own skill templates.
+      const trackedSkillDir = join(repoDir, ".claude", "skills", "openspec-sync-specs");
+      await mkdir(trackedSkillDir, { recursive: true });
+      await writeFile(
+        join(trackedSkillDir, "SKILL.md"),
+        "the repository's own openspec-sync-specs skill\n",
+        "utf8",
+      );
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "vendor a colliding openspec-sync-specs skill"]);
+
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      errorSpy.mockClear();
+      const written = await CLAUDE_RUNNER.writeConfig({
+        workspacePath: "/tmp/unused-workspace",
+        worktreePath: repoDir,
+      });
+
+      // The colliding skill is never claimed...
+      expect(written).not.toContain(join("skills", "openspec-sync-specs"));
+      // ...but every command and the other skill still install.
+      expect(written).toContain(join("commands", "adversarial-review.md"));
+      expect(written).toContain(join("skills", "composition-patterns"));
+
+      // The repository's own skill content survives exactly as it was.
+      expect(await readFile(join(trackedSkillDir, "SKILL.md"), "utf8")).toBe(
+        "the repository's own openspec-sync-specs skill\n",
+      );
+      expect(existsSync(join(repoDir, ".claude", "commands", "adversarial-review.md"))).toBe(true);
+      expect(existsSync(join(repoDir, ".claude", "skills", "composition-patterns", "SKILL.md"))).toBe(
+        true,
+      );
+
+      expect(
+        errorSpy.mock.calls.some(
+          (call) =>
+            String(call[0]).includes("skills/openspec-sync-specs") &&
+            String(call[0]).includes('"openspec-sync-specs" skill'),
+        ),
+      ).toBe(true);
+
+      const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+      expect(status.stdout).toBe("");
+    });
+
+    it('degrades gracefully instead of crashing when ".claude" itself already exists as a FILE, warns about it, and never touches it', async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      const { execa } = await import("execa");
+
+      await writeFile(join(repoDir, ".claude"), "not a directory\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .claude FILE"]);
+
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      errorSpy.mockClear();
+
+      const written = await CLAUDE_RUNNER.writeConfig({
+        workspacePath: "/tmp/unused-workspace",
+        worktreePath: repoDir,
+      });
+
+      // Nothing at all could be installed -- neither commands nor skills
+      // have anywhere to go -- but this must not throw.
+      expect(written).toEqual([]);
+      expect(existsSync(join(repoDir, ".claude", "commands"))).toBe(false);
+      expect(existsSync(join(repoDir, ".claude", "skills"))).toBe(false);
+
+      // The repository's own file survives exactly as it was.
+      expect(await readFile(join(repoDir, ".claude"), "utf8")).toBe("not a directory\n");
+
+      expect(
+        errorSpy.mock.calls.some(
+          (call) => String(call[0]).includes('".claude"') && String(call[0]).includes("not a directory"),
+        ),
+      ).toBe(true);
+
+      const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+      expect(status.stdout).toBe("");
+    });
+
+    it('degrades gracefully when ".claude/commands" exists as a FILE, installing skills normally while warning about commands', async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      const { execa } = await import("execa");
+
+      await mkdir(join(repoDir, ".claude"), { recursive: true });
+      await writeFile(join(repoDir, ".claude", "commands"), "not a directory\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .claude/commands FILE"]);
+
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      errorSpy.mockClear();
+
+      const written = await CLAUDE_RUNNER.writeConfig({
+        workspacePath: "/tmp/unused-workspace",
+        worktreePath: repoDir,
+      });
+
+      // No command could be installed...
+      expect(written.some((path) => path.startsWith(join("commands", "")))).toBe(false);
+      // ...but skills are entirely unaffected by the blocked sibling.
+      expect(written).toContain(join("skills", "openspec-sync-specs"));
+      expect(existsSync(join(repoDir, ".claude", "skills", "openspec-sync-specs", "SKILL.md"))).toBe(
+        true,
+      );
+
+      // The repository's own file survives exactly as it was.
+      expect(await readFile(join(repoDir, ".claude", "commands"), "utf8")).toBe("not a directory\n");
+
+      expect(
+        errorSpy.mock.calls.some(
+          (call) =>
+            String(call[0]).includes(join(".claude", "commands")) &&
+            String(call[0]).includes("not a directory"),
+        ),
+      ).toBe(true);
+
+      const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
+      expect(status.stdout).toBe("");
+    });
+
+    it('degrades gracefully when ".claude/skills" exists as a FILE, installing commands normally while warning about skills', async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      const { execa } = await import("execa");
+
+      await mkdir(join(repoDir, ".claude"), { recursive: true });
+      await writeFile(join(repoDir, ".claude", "skills"), "not a directory\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "vendor a .claude/skills FILE"]);
+
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      errorSpy.mockClear();
+
+      const written = await CLAUDE_RUNNER.writeConfig({
+        workspacePath: "/tmp/unused-workspace",
+        worktreePath: repoDir,
+      });
+
+      // No skill could be installed...
+      expect(written.some((path) => path.startsWith(join("skills", "")))).toBe(false);
+      // ...but commands are entirely unaffected by the blocked sibling.
+      expect(written).toContain(join("commands", "adversarial-review.md"));
+      expect(existsSync(join(repoDir, ".claude", "commands", "adversarial-review.md"))).toBe(true);
+
+      // The repository's own file survives exactly as it was.
+      expect(await readFile(join(repoDir, ".claude", "skills"), "utf8")).toBe("not a directory\n");
+
+      expect(
+        errorSpy.mock.calls.some(
+          (call) =>
+            String(call[0]).includes(join(".claude", "skills")) &&
+            String(call[0]).includes("not a directory"),
+        ),
+      ).toBe(true);
+
       const status = await execa("git", ["-C", repoDir, "status", "--porcelain"]);
       expect(status.stdout).toBe("");
     });
@@ -290,26 +541,73 @@ describe("Claude Code runner (core/runners/claude.ts)", () => {
       expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(baseWorkspace())).toEqual([]);
     });
 
-    it("returns [\".claude\"] when only commandsManaged is true", async () => {
-      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
-      const workspace = baseWorkspace({ runnerWorktreeArtifacts: { commandsManaged: true } });
-      expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([".claude"]);
+    describe("per-item array form (current writeConfig contract)", () => {
+      it("returns each entry as a .claude-relative path", async () => {
+        const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+        const workspace = baseWorkspace({
+          runnerWorktreeArtifacts: {
+            commandsManaged: [join("commands", "adversarial-review.md"), join("skills", "openspec-sync-specs")],
+          },
+        });
+        expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([
+          join(".claude", "commands", "adversarial-review.md"),
+          join(".claude", "skills", "openspec-sync-specs"),
+        ]);
+      });
+
+      it("never includes an unrelated, pre-existing repository entry the array does not name (e.g. setup-service-infra)", async () => {
+        const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+        const workspace = baseWorkspace({
+          runnerWorktreeArtifacts: { commandsManaged: [join("commands", "adversarial-review.md")] },
+        });
+        const managed = CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace);
+        expect(managed).not.toContain(join(".claude", "skills", "setup-service-infra"));
+        expect(managed).not.toContain(".claude");
+      });
+
+      it("returns [] when the array is empty -- every template collided", async () => {
+        const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+        const workspace = baseWorkspace({ runnerWorktreeArtifacts: { commandsManaged: [] } });
+        expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([]);
+      });
+
+      it('includes ".mcp.json" alongside the per-item paths when mcpManaged is true', async () => {
+        const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+        const workspace = baseWorkspace({
+          runnerWorktreeArtifacts: {
+            commandsManaged: [join("commands", "workspace.md")],
+            mcpManaged: true,
+          },
+        });
+        expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([
+          join(".claude", "commands", "workspace.md"),
+          ".mcp.json",
+        ]);
+      });
     });
 
-    it('returns [".claude", ".mcp.json"] when both are managed', async () => {
-      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
-      const workspace = baseWorkspace({
-        runnerWorktreeArtifacts: { commandsManaged: true, mcpManaged: true },
+    describe("legacy boolean form (workspace.yml persisted before per-item tracking existed)", () => {
+      it("returns [\".claude\"] when only commandsManaged is true", async () => {
+        const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+        const workspace = baseWorkspace({ runnerWorktreeArtifacts: { commandsManaged: true } });
+        expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([".claude"]);
       });
-      expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([".claude", ".mcp.json"]);
-    });
 
-    it("never includes a path whose flag is false -- a pre-existing, safely-skipped path is never claimed", async () => {
-      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
-      const workspace = baseWorkspace({
-        runnerWorktreeArtifacts: { commandsManaged: false, mcpManaged: false },
+      it('returns [".claude", ".mcp.json"] when both are managed', async () => {
+        const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+        const workspace = baseWorkspace({
+          runnerWorktreeArtifacts: { commandsManaged: true, mcpManaged: true },
+        });
+        expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([".claude", ".mcp.json"]);
       });
-      expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([]);
+
+      it("never includes a path whose flag is false -- a pre-existing, safely-skipped path is never claimed", async () => {
+        const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+        const workspace = baseWorkspace({
+          runnerWorktreeArtifacts: { commandsManaged: false, mcpManaged: false },
+        });
+        expect(CLAUDE_RUNNER.managedWorktreeRelativePaths(workspace)).toEqual([]);
+      });
     });
   });
 });

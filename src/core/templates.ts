@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { copyFile, mkdir, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,19 @@ export function templatesRoot(): string {
 }
 
 /**
+ * True if `path` exists but is something other than a directory (e.g. a
+ * plain file a repository happens to track at a path ce-harness needs
+ * to create as a directory, such as `.claude` or `.claude/commands`).
+ * `mkdir(path, { recursive: true })` throws in that situation rather
+ * than treating it as "already there" -- callers use this to detect the
+ * case up front and degrade gracefully (warn and skip) instead of
+ * letting that throw surface as a raw, unhandled filesystem error.
+ */
+export function existsAsNonDirectory(path: string): boolean {
+  return existsSync(path) && !statSync(path).isDirectory();
+}
+
+/**
  * Copies every file inside templates/<name>/ into `destinationDir`,
  * recursively (so nested directories like a skill's own folder, e.g.
  * templates/skills/openspec-sync-specs/SKILL.md, are preserved at the
@@ -51,6 +64,78 @@ export async function copyTemplates(name: string, destinationDir: string): Promi
 
   await mkdir(destinationDir, { recursive: true });
   return copyDirectoryContents(sourceDir, destinationDir);
+}
+
+/**
+ * The result of a collision-aware copy: which top-level entries under
+ * `templates/<name>/` were actually written, and which were left alone
+ * because something already existed at that destination path.
+ */
+export interface CollisionAwareCopyResult {
+  /** Top-level entry names (e.g. "workspace.md", "openspec-sync-specs") actually copied in. */
+  written: string[];
+  /** Top-level entry names left completely untouched due to a pre-existing destination path. */
+  skipped: string[];
+  /**
+   * True if `destinationDir` itself exists but is not a directory (e.g.
+   * `.claude/commands` tracked as a plain file), so nothing under it
+   * could even be attempted -- `written`/`skipped` are both `[]` in that
+   * case, since no individual entry was ever inspected.
+   */
+  blockedByNonDirectory: boolean;
+}
+
+/**
+ * Like `copyTemplates`, but collision-safe at the granularity of each
+ * top-level entry under `templates/<name>/` (a single command file, or a
+ * whole skill directory) rather than the whole category. A top-level
+ * entry whose destination path already exists -- whatever put it there,
+ * tracked or not -- is left completely untouched (not merged into, not
+ * partially overwritten); every other entry is copied in normally. This
+ * is what lets ce-harness coexist with a repository that already owns
+ * some, but not all, of `.claude/commands/` or `.claude/skills/`, instead
+ * of an all-or-nothing directory-level check locking out every template
+ * over a single unrelated pre-existing entry.
+ *
+ * If `destinationDir` itself already exists as something other than a
+ * directory, this returns immediately with `blockedByNonDirectory: true`
+ * rather than letting `mkdir` throw -- there is nowhere to even attempt
+ * placing an entry, so every entry is left alone as a whole, and the
+ * pre-existing path is never touched.
+ */
+export async function copyTemplatesSkippingCollisions(
+  name: string,
+  destinationDir: string,
+): Promise<CollisionAwareCopyResult> {
+  const sourceDir = join(templatesRoot(), name);
+  if (!existsSync(sourceDir)) return { written: [], skipped: [], blockedByNonDirectory: false };
+
+  if (existsAsNonDirectory(destinationDir)) {
+    return { written: [], skipped: [], blockedByNonDirectory: true };
+  }
+
+  await mkdir(destinationDir, { recursive: true });
+
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  const written: string[] = [];
+  const skipped: string[] = [];
+  for (const entry of entries) {
+    const destinationPath = join(destinationDir, entry.name);
+    if (existsSync(destinationPath)) {
+      skipped.push(entry.name);
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      await mkdir(destinationPath, { recursive: true });
+      await copyDirectoryContents(join(sourceDir, entry.name), destinationPath);
+    } else if (entry.isFile()) {
+      await copyFile(join(sourceDir, entry.name), destinationPath);
+    }
+    written.push(entry.name);
+  }
+
+  return { written, skipped, blockedByNonDirectory: false };
 }
 
 /** Recursive worker behind copyTemplates(); `prefix` tracks the relative path so far. */

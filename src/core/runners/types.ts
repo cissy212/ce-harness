@@ -36,14 +36,20 @@ export interface RunnerSpec {
    * canonical template library. Side-effecting; called exactly once, by
    * `ce start`, never by `ce resume`.
    *
-   * Returns `true` if this call actually wrote/owns the configuration,
-   * or `false` if it was safely skipped because a pre-existing path it
-   * did not create was already there (e.g. the repository's own base
-   * branch tracks it). A runner whose config never lives inside the
+   * Returns the worktree-relative paths, relative to this runner's own
+   * config root, that this call actually wrote and now owns (e.g.
+   * `"commands/adversarial-review.md"`, `"skills/openspec-sync-specs"`).
+   * Collision-safe per individual path: an entry whose destination
+   * already existed (e.g. the repository's own base branch tracks it) is
+   * left untouched and simply absent from the returned list -- this is
+   * never an all-or-nothing check against one directory, so a single
+   * pre-existing, unrelated entry never blocks every other template from
+   * being installed. A runner whose config never lives inside the
    * worktree (e.g. OpenCode's, which lives entirely under the workspace
-   * directory) has no such conflict and always returns `true`.
+   * directory) has no worktree-relative paths to report and always
+   * returns `[]`.
    */
-  writeConfig(paths: RunnerWorkspacePaths): Promise<boolean>;
+  writeConfig(paths: RunnerWorkspacePaths): Promise<string[]>;
 
   /**
    * Wires up CodeGraph's MCP server for this runner. Side-effecting;

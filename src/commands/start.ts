@@ -217,10 +217,11 @@ export async function startCommand({ repo, issue, base, head, runner }: StartOpt
   // calls below, regardless of which runner is selected -- never gated on
   // a runner id check here, so this command stays runner-agnostic. See
   // RunnerSpec.managedWorktreeRelativePaths for how each runner turns
-  // these flags into the paths `ce cleanup`/`ce status` treat as
-  // harness-owned.
-  let runnerWorktreeArtifacts: { commandsManaged: boolean; mcpManaged?: boolean } = {
-    commandsManaged: false,
+  // this value into the paths `ce cleanup`/`ce status` treat as
+  // harness-owned. `commandsManaged` is the individual, per-item paths
+  // `writeConfig` actually wrote -- never an all-or-nothing flag.
+  let runnerWorktreeArtifacts: { commandsManaged: string[]; mcpManaged?: boolean } = {
+    commandsManaged: [],
   };
   let workspace: Workspace;
 
