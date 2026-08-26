@@ -140,6 +140,21 @@ describe("buildLaunchEnv", () => {
     expect(buildLaunchEnv(workspace).CE_BASE_BRANCH).toBeUndefined();
   });
 
+  it("includes CE_BASE_BRANCH for an explicit --from workspace exactly like the auto-detected case -- no special-casing needed", async () => {
+    const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
+    const workspace = baseWorkspace({
+      baseBranch: "feature/scv-ai-jano-auth",
+      baseBranchCommit: "c".repeat(40),
+      baseRefExplicit: true,
+    });
+
+    const env = buildLaunchEnv(workspace);
+
+    expect(env.CE_BASE_BRANCH).toBe("feature/scv-ai-jano-auth");
+    expect(env.CE_DIFF_BASE).toBeUndefined();
+    expect(env.CE_DIFF_HEAD).toBeUndefined();
+  });
+
   it("includes CE_CODE_NAV_* and OPENCODE_CONFIG only when CodeGraph metadata is trusted AND the index still exists on disk", async () => {
     const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
     const worktreePath = join(tempDir, "worktree");

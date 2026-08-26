@@ -163,12 +163,30 @@ export const WorkspaceSchema = z
     // workspaces created before this field existed, and on any
     // workspace whose runner never writes anything inside the worktree.
     runnerWorktreeArtifacts: RunnerWorktreeArtifactsSchema.optional(),
+    // Optional: true only when `ce start --from <ref>` explicitly chose
+    // this workspace's starting point, rather than `detectBaseBranch`
+    // auto-detecting it. Pure provenance -- `baseBranch`/`baseBranchCommit`
+    // are populated identically either way (a display ref plus its
+    // resolved commit), so `CE_BASE_BRANCH` and every other consumer work
+    // unchanged for both cases; this field exists only so `ce status` (and
+    // any future reader) can tell "the user explicitly picked this" apart
+    // from "ce-harness detected this", without overloading `baseBranch`
+    // itself with meaning its name doesn't carry. Absent (falsy) for
+    // every workspace created before this flag existed, and always absent
+    // for an explicit --base/--head review workspace (see the refine
+    // below) -- `--from` and `--base`/`--head` are mutually exclusive at
+    // the CLI level already, so this is a defensive invariant, never a
+    // real code path.
+    baseRefExplicit: z.boolean().optional(),
   })
   .refine((w) => (w.diffBase === undefined) === (w.diffHead === undefined), {
     message: "diffBase and diffHead must both be present or both be absent",
   })
   .refine((w) => w.diffMergeBase === undefined || (w.diffBase !== undefined && w.diffHead !== undefined), {
     message: "diffMergeBase requires diffBase and diffHead to also be present",
+  })
+  .refine((w) => w.baseRefExplicit === undefined || w.diffBase === undefined, {
+    message: "baseRefExplicit and diffBase must not both be present -- --from and --base/--head are mutually exclusive",
   })
   .refine((w) => w.baseBranchCommit === undefined || w.diffBase === undefined, {
     message: "baseBranchCommit and diffBase must not both be present -- diffBase/diffHead already capture the exact commits for an explicit review range",

@@ -58,22 +58,43 @@ export interface StartOptions {
   base?: string;
   /** Exact head ref/commit for an explicit review range. Requires `base`. */
   head?: string;
+  /**
+   * Explicit starting ref for an Implementation workspace -- any ref
+   * `resolveCommit` can resolve locally (a local branch, a remote-tracking
+   * ref like `origin/<branch>`, a tag, or a raw commit). The internal
+   * worktree branch is created from it instead of `detectBaseBranch`'s
+   * auto-detected default. Mutually exclusive with `base`/`head`: this
+   * never changes the workspace type (see `workspaceType`), which stays
+   * "Implementation" -- `--base`/`--head` remain the only way to create an
+   * "Existing PR review" workspace.
+   */
+  from?: string;
   /** Coding-agent runner id (e.g. "opencode", "claude"). Defaults to "opencode". */
   runner?: string;
 }
 
-export async function startCommand({ repo, issue, base, head, runner }: StartOptions): Promise<void> {
+export async function startCommand({ repo, issue, base, head, from, runner }: StartOptions): Promise<void> {
   // Pure input-shape validation, checked before touching the filesystem
   // at all: an explicit review range requires both --base and --head,
-  // never just one. Resolving the runner is validated here too, for the
-  // same reason -- an unsupported --runner must never leave a worktree,
-  // workspace, or OpenSpec store behind.
+  // never just one, and --from is a different, mutually exclusive way of
+  // picking a starting point (an Implementation workspace, never a
+  // review), so combining it with either is rejected outright rather than
+  // silently letting one win. Resolving the runner is validated here too,
+  // for the same reason -- an unsupported --runner must never leave a
+  // worktree, workspace, or OpenSpec store behind.
   if ((base && !head) || (!base && head)) {
     throw new CeError(
       "--base and --head must both be provided together (or neither).",
       base
         ? "Add --head <ref> to specify the exact review range."
         : "Add --base <ref> to specify the exact review range.",
+    );
+  }
+  if (from && (base || head)) {
+    throw new CeError(
+      "--from cannot be combined with --base/--head.",
+      "--from starts a normal Implementation workspace from an explicit ref; --base/--head start an " +
+        "Existing PR review workspace from an explicit commit range. Use exactly one of these.",
     );
   }
   const selectedRunner = resolveRunner(runner);
@@ -95,10 +116,12 @@ export async function startCommand({ repo, issue, base, head, runner }: StartOpt
   // repository's detected base branch (never assumed to be "main" --
   // see detectBaseBranch), exactly as before. In the explicit-range
   // flow it's the resolved head commit -- the worktree must actually
-  // contain the reviewed head, not just fork from the base.
+  // contain the reviewed head, not just fork from the base. In the
+  // explicit --from flow it's the resolved --from ref itself.
   let worktreeSeed: string;
   let baseBranchName: string;
   let baseBranchCommit: string | undefined;
+  let baseRefExplicit: boolean | undefined;
   let diffBase: string | undefined;
   let diffHead: string | undefined;
   let diffMergeBase: string | undefined;
@@ -117,6 +140,24 @@ export async function startCommand({ repo, issue, base, head, runner }: StartOpt
     diffMergeBase = await resolveMergeBase(repoRoot, diffBase, diffHead);
     worktreeSeed = diffHead;
     baseBranchName = diffHead;
+  } else if (from) {
+    // An explicit starting point for a normal Implementation workspace
+    // (e.g. a completed dependency branch that hasn't merged to the
+    // repository's default branch yet) -- deliberately reuses the exact
+    // same resolution primitive the review flow already relies on
+    // (resolveCommit: never fetches, fails clearly if unresolvable, and
+    // already supports local branches, remote-tracking refs, tags, and
+    // raw commits). Resolving to an immutable SHA up front, rather than
+    // handing the raw ref to `addWorktree`, mirrors the review flow's
+    // own rationale: an exact, pinned point before any persistent
+    // resource is created. Read-only -- resolveCommit is a plain
+    // `git rev-parse`, and `addWorktree` below only ever creates a new
+    // branch pointing at this commit, so `from` itself is never moved.
+    const resolvedFrom = await resolveCommit(repoRoot, from);
+    worktreeSeed = resolvedFrom;
+    baseBranchName = from;
+    baseBranchCommit = resolvedFrom;
+    baseRefExplicit = true;
   } else {
     // Repository-agnostic by design: never assumes "main". Prefers a
     // live query of the remote's actual default branch, falls back to
@@ -319,6 +360,7 @@ export async function startCommand({ repo, issue, base, head, runner }: StartOpt
         root: openSpecRoot,
       },
       ...(baseBranchCommit ? { baseBranchCommit } : {}),
+      ...(baseRefExplicit ? { baseRefExplicit } : {}),
       ...(diffBase && diffHead ? { diffBase, diffHead, diffMergeBase } : {}),
       codeGraph: codeGraphResult,
       bootstrap: bootstrapResult,

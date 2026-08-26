@@ -85,6 +85,74 @@ describe("workspace serialization and validation", () => {
     expect(loaded.runner).toBeUndefined();
   });
 
+  it("round-trips an explicit baseRefExplicit field (--from)", async () => {
+    const { writeWorkspace, readWorkspace } = await import("../../src/core/workspace.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "Issue #1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "feature/scv-ai-jano-auth",
+      baseBranchCommit: "c".repeat(40),
+      baseRefExplicit: true,
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: join(tempHome, "worktrees", "demo", "issue-1"),
+      workspacePath: join(tempHome, "workspaces", "demo", "issue-1"),
+      createdAt: new Date().toISOString(),
+    };
+
+    await writeWorkspace(workspace);
+    const loaded = await readWorkspace("demo", "issue-1");
+    expect(loaded.baseRefExplicit).toBe(true);
+    expect(loaded.baseBranch).toBe("feature/scv-ai-jano-auth");
+  });
+
+  it("reads a legacy/default-flow workspace file with no baseRefExplicit field as valid, left undefined", async () => {
+    const { writeWorkspace, readWorkspace } = await import("../../src/core/workspace.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "Issue #1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      baseBranchCommit: "d".repeat(40),
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: join(tempHome, "worktrees", "demo", "issue-1"),
+      workspacePath: join(tempHome, "workspaces", "demo", "issue-1"),
+      createdAt: new Date().toISOString(),
+    };
+
+    await writeWorkspace(workspace);
+    const loaded = await readWorkspace("demo", "issue-1");
+    expect(loaded.baseRefExplicit).toBeUndefined();
+  });
+
+  it("rejects a workspace with both baseRefExplicit and diffBase set (--from and --base/--head are mutually exclusive)", async () => {
+    const { writeWorkspace, readWorkspace } = await import("../../src/core/workspace.js");
+    const { CeError } = await import("../../src/core/errors.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "Issue #1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "b".repeat(40),
+      baseRefExplicit: true,
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: join(tempHome, "worktrees", "demo", "issue-1"),
+      workspacePath: join(tempHome, "workspaces", "demo", "issue-1"),
+      createdAt: new Date().toISOString(),
+      diffBase: "a".repeat(40),
+      diffHead: "b".repeat(40),
+    };
+
+    // writeWorkspace itself doesn't validate -- readWorkspace's own
+    // schema validation is what's actually exercised here.
+    await writeWorkspace(workspace);
+
+    await expect(readWorkspace("demo", "issue-1")).rejects.toThrow(CeError);
+    await expect(readWorkspace("demo", "issue-1")).rejects.toThrow(/mutually exclusive/i);
+  });
+
   it("throws a CeError when the workspace file is missing", async () => {
     const { readWorkspace } = await import("../../src/core/workspace.js");
     const { CeError } = await import("../../src/core/errors.js");

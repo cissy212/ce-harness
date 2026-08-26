@@ -24,6 +24,7 @@ called out explicitly).
   - [`ce` command reference](#ce-command-reference)
   - [Choosing a coding-agent runner](#choosing-a-coding-agent-runner)
   - [Reviewing a GitHub pull request](#reviewing-a-github-pull-request)
+  - [Starting an Implementation workspace from a specific ref](#starting-an-implementation-workspace-from-a-specific-ref)
   - [Reviewing an existing pull request or commit range](#reviewing-an-existing-pull-request-or-commit-range)
   - [Resuming a session](#resuming-a-session)
   - [The workflow inside OpenCode](#the-workflow-inside-opencode)
@@ -390,8 +391,11 @@ coding-agent runner inside the worktree.
 - `<issue>` — a short identifier for what you're working on (an issue
   number or a slug like `fix-login-bug`). It's sanitized into a
   filesystem- and branch-safe form internally.
+- `--from <ref>` — optional; see
+  [Starting an Implementation workspace from a specific ref](#starting-an-implementation-workspace-from-a-specific-ref).
 - `--base <ref>` / `--head <ref>` — optional; see
   [Reviewing an existing pull request or commit range](#reviewing-an-existing-pull-request-or-commit-range).
+  Mutually exclusive with `--from`.
 - `--runner <runner>` — optional; `opencode` (default) or `claude`. See
   [Choosing a coding-agent runner](#choosing-a-coding-agent-runner).
 
@@ -446,9 +450,10 @@ reports:
 - Project, issue, workspace type (`Implementation` or `Existing PR
   review` — derived from whether `--base`/`--head` were used, never a
   separate piece of state), repository path, base branch, internal branch
-- The base branch's exact resolved commit (only shown for the default,
-  auto-detected flow — an explicit `--base`/`--head` range already shows
-  its exact commits via the next line instead)
+- The base branch's exact resolved commit, and whether it was
+  auto-detected or given explicitly via `--from` (shown for a normal
+  Implementation workspace either way — an explicit `--base`/`--head`
+  range already shows its exact commits via the next line instead)
 - Review base/head/merge-base commits (only shown for an explicit
   `--base`/`--head` range)
 - Worktree and workspace paths, creation time
@@ -585,6 +590,40 @@ check.
 `ce review` is the convenient, GitHub-specific path. For any other exact
 commit range — not from GitHub, or already fetched by some other means
 — use the generic, manual path below instead.
+
+### Starting an Implementation workspace from a specific ref
+
+By default, `ce start` seeds the worktree from the repository's detected
+base branch (see "Base branch detection" above). Sometimes that's wrong
+for the work at hand — e.g. a feature that depends on another,
+already-completed feature branch that hasn't merged to `develop`/`main`
+yet. Pass `--from <ref>` to start from that ref instead, while keeping
+everything else about a normal Implementation workspace unchanged:
+
+```bash
+ce start /path/to/your/repository scv-ai-dev-deployment --from feature/scv-ai-jano-auth
+```
+
+- `<ref>` can be a local branch, an `origin/<branch>` remote-tracking
+  ref, a tag, or a raw commit — anything `ce-harness` can resolve
+  **locally**; it never fetches automatically, and fails with a clear
+  error if the ref doesn't already exist locally.
+- The workspace is still `workspaceType: Implementation` — `/verify` and
+  `/adversarial-review` run their normal OpenSpec-conformance workflow,
+  not the Existing-PR-review one. `--from` only changes *where the
+  worktree starts*, never *what kind of workspace this is*.
+- `--from` is mutually exclusive with `--base`/`--head`: combining them
+  is rejected before anything is created. Use `--from` to pick a
+  starting point for new work; use `--base`/`--head` to review an
+  already-existing, fixed commit range (see below).
+- The exact ref you passed and its resolved commit are recorded in
+  `workspace.yml` and shown by `ce status` (marked `(explicit, via
+  --from)` to distinguish it from the auto-detected case), and `/verify`/
+  `/adversarial-review` use it as the base for their diff scope (via
+  `CE_BASE_BRANCH`) instead of falling back to the repository's default
+  branch.
+- The source ref itself is never modified, moved, or fetched — only read
+  to resolve its current commit, exactly like `--base`/`--head`.
 
 ### Reviewing an existing pull request or commit range
 

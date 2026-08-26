@@ -568,6 +568,7 @@ describe("ce start (integration)", () => {
         CE_LENSES_DIR: join(workspace.workspacePath, "lenses"),
         CE_DIFF_BASE: null,
         CE_DIFF_HEAD: null,
+        CE_BASE_BRANCH: "main",
         // CodeGraph is forced unavailable for this suite (see beforeEach);
         // its availability/env-injection behavior is covered in
         // test/integration/codeGraph.test.ts.
@@ -1027,6 +1028,180 @@ describe("ce start (integration)", () => {
       expect(branchAfter).toBe("main");
       expect(statusAfter.stdout).toBe(statusBefore.stdout);
       expect(statusAfter.stdout).toBe("");
+    });
+  });
+
+  describe("Explicit starting ref for an Implementation workspace (--from)", () => {
+    it("with no --from, default behavior is unchanged: detected base branch, baseRefExplicit absent", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.baseBranch).toBe("main");
+      expect(workspace.baseRefExplicit).toBeUndefined();
+    });
+
+    it("--from <local branch>: seeds the worktree from that branch, stays an Implementation workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { workspaceType } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { writeFile } = await import("node:fs/promises");
+
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature/scv-ai-jano-auth"]);
+      await writeFile(join(repoDir, "jano.txt"), "completed jano integration\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "jano integration"]);
+      const featureSha = (
+        await execa("git", ["-C", repoDir, "rev-parse", "feature/scv-ai-jano-auth"])
+      ).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", from: "feature/scv-ai-jano-auth" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspaceType(workspace)).toBe("Implementation");
+      expect(workspace.baseBranch).toBe("feature/scv-ai-jano-auth");
+      expect(workspace.baseBranchCommit).toBe(featureSha);
+      expect(workspace.baseRefExplicit).toBe(true);
+      expect(workspace.diffBase).toBeUndefined();
+      expect(workspace.diffHead).toBeUndefined();
+
+      const worktreeHead = (
+        await execa("git", ["-C", workspace.worktreePath, "rev-parse", "HEAD"])
+      ).stdout.trim();
+      expect(worktreeHead).toBe(featureSha);
+      expect(await readFileText(join(workspace.worktreePath, "jano.txt"))).toBe(
+        "completed jano integration\n",
+      );
+    });
+
+    it("--from origin/<branch>: resolves via the remote-tracking ref when no local branch of that name exists", async () => {
+      const remoteDir = await createBareRemote("main");
+      const seedDir = await cloneRepo(remoteDir);
+      const { writeFile } = await import("node:fs/promises");
+      await execa("git", ["-C", seedDir, "checkout", "-b", "feature/scv-ai-jano-auth"]);
+      await writeFile(join(seedDir, "jano.txt"), "jano work\n", "utf8");
+      await execa("git", ["-C", seedDir, "add", "."]);
+      await execa("git", ["-C", seedDir, "commit", "-m", "jano integration"]);
+      await execa("git", ["-C", seedDir, "push", "origin", "feature/scv-ai-jano-auth"]);
+      await execa("git", ["-C", seedDir, "checkout", "main"]);
+
+      // A fresh clone only creates a local branch for "main" (checked out
+      // at clone time) -- "feature/scv-ai-jano-auth" exists only as
+      // origin/feature/scv-ai-jano-auth.
+      const workRepo = await cloneRepo(remoteDir);
+      const localBranch = await execa(
+        "git",
+        ["-C", workRepo, "rev-parse", "--verify", "feature/scv-ai-jano-auth"],
+        { reject: false },
+      );
+      expect(localBranch.exitCode).not.toBe(0);
+
+      try {
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({
+          repo: workRepo,
+          issue: "issue-1",
+          from: "origin/feature/scv-ai-jano-auth",
+        });
+
+        const workspace = await readWorkspace(basenameOf(workRepo), "issue-1");
+        const expectedSha = (
+          await execa("git", ["-C", workRepo, "rev-parse", "origin/feature/scv-ai-jano-auth"])
+        ).stdout.trim();
+        expect(workspace.baseBranch).toBe("origin/feature/scv-ai-jano-auth");
+        expect(workspace.baseBranchCommit).toBe(expectedSha);
+        expect(workspace.baseRefExplicit).toBe(true);
+      } finally {
+        await rm(remoteDir, { recursive: true, force: true });
+        await rm(seedDir, { recursive: true, force: true });
+        await rm(workRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("an invalid/unresolvable --from ref fails clearly, before creating any persistent resource", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+
+      await expect(
+        startCommand({ repo: repoDir, issue: "issue-1", from: "does-not-exist-anywhere" }),
+      ).rejects.toThrow(/could not resolve/i);
+
+      expect(await readActivePointer()).toBeNull();
+      expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+      expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+      const branches = await execa("git", ["-C", repoDir, "branch", "--list", "ce-harness/issue-1"]);
+      expect(branches.stdout.trim()).toBe("");
+    });
+
+    it("--from combined with --base/--head is rejected before creating any persistent resource", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+
+      await expect(
+        startCommand({ repo: repoDir, issue: "issue-1", from: "main", base: "main", head: "main" }),
+      ).rejects.toThrow(/--from cannot be combined with --base\/--head/i);
+
+      expect(await readActivePointer()).toBeNull();
+      expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
+      expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
+    });
+
+    it("the launch environment's CE_BASE_BRANCH reflects the --from ref, with no CE_DIFF_BASE/CE_DIFF_HEAD", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { writeFile } = await import("node:fs/promises");
+
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature/scv-ai-jano-auth"]);
+      await writeFile(join(repoDir, "jano.txt"), "jano\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "jano"]);
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", from: "feature/scv-ai-jano-auth" });
+
+      const launch = JSON.parse(await readFileText(fakeOpenCode.outputFile));
+      expect(launch.env.CE_BASE_BRANCH).toBe("feature/scv-ai-jano-auth");
+      expect(launch.env.CE_DIFF_BASE ?? null).toBeNull();
+      expect(launch.env.CE_DIFF_HEAD ?? null).toBeNull();
+    });
+
+    it("never modifies, moves, or checks out the --from source branch itself", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { writeFile } = await import("node:fs/promises");
+
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature/scv-ai-jano-auth"]);
+      await writeFile(join(repoDir, "jano.txt"), "jano\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "jano"]);
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      const shaBefore = (
+        await execa("git", ["-C", repoDir, "rev-parse", "feature/scv-ai-jano-auth"])
+      ).stdout.trim();
+      const branchBefore = (
+        await execa("git", ["-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD"])
+      ).stdout.trim();
+
+      await startCommand({ repo: repoDir, issue: "issue-1", from: "feature/scv-ai-jano-auth" });
+
+      const shaAfter = (
+        await execa("git", ["-C", repoDir, "rev-parse", "feature/scv-ai-jano-auth"])
+      ).stdout.trim();
+      const branchAfter = (
+        await execa("git", ["-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD"])
+      ).stdout.trim();
+
+      expect(shaAfter).toBe(shaBefore);
+      expect(branchAfter).toBe(branchBefore); // the original repo's own checkout never moved either
     });
   });
 
@@ -3546,6 +3721,11 @@ describe("ce start (integration)", () => {
 async function realpathOf(path: string): Promise<string> {
   const { realpath } = await import("node:fs/promises");
   return realpath(path);
+}
+
+async function readFileText(path: string): Promise<string> {
+  const { readFile } = await import("node:fs/promises");
+  return readFile(path, "utf8");
 }
 
 function basenameOf(path: string): string {

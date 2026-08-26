@@ -56,7 +56,7 @@ export async function statusCommand(): Promise<void> {
   console.log(`Issue:            ${workspace.issue}`);
   console.log(`Workspace type:   ${workspaceType(workspace)}`);
   console.log(`Repository path:  ${workspace.repositoryPath}`);
-  console.log(`Base branch:      ${workspace.baseBranch}`);
+  console.log(`Base branch:      ${workspace.baseBranch}${workspace.baseRefExplicit ? " (explicit, via --from)" : ""}`);
   // Only present for the default (auto-detected) flow -- an explicit
   // --base/--head workspace already reports its exact commits via the
   // Review base/head/merge-base lines below, so this is never printed

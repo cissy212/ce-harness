@@ -41,20 +41,24 @@ export function buildLaunchEnv(workspace: Workspace): Record<string, string> {
     launchEnv.CE_DIFF_HEAD = workspace.diffHead;
   }
 
-  // The exact base branch `ce start` detected for this repository (see
-  // `detectBaseBranch`) -- the single canonical source `/verify` and
-  // `/adversarial-review` should compute their fallback `git merge-base`
-  // against, instead of independently re-guessing "main" or "master" (a
-  // repository whose real trunk is e.g. "develop", but which happens to
-  // also have a stale/unrelated local "main" branch, would otherwise
-  // silently diff against the wrong history). Gated on `baseBranchCommit`
-  // rather than just checking `diffBase`/`diffHead` directly: it mirrors
-  // the schema's own invariant (`baseBranchCommit` and `diffBase` are
-  // never both set) and is robust even if that invariant is why the
-  // check exists in the first place -- `workspace.baseBranch` is
-  // overloaded with the review's head commit (not a branch name at all)
-  // for an explicit --base/--head workspace, so it must never leak out
-  // as CE_BASE_BRANCH there.
+  // The logical base branch/ref for this Implementation workspace -- the
+  // single canonical source `/verify` and `/adversarial-review` should
+  // compute their fallback `git merge-base` against, instead of
+  // independently re-guessing "main" or "master" (a repository whose real
+  // trunk is e.g. "develop", but which happens to also have a
+  // stale/unrelated local "main" branch, would otherwise silently diff
+  // against the wrong history). Populated identically whether it came
+  // from `detectBaseBranch`'s auto-detection or an explicit
+  // `ce start --from <ref>` (see `workspace.baseRefExplicit` for that
+  // provenance, which this deliberately does not need to check -- both
+  // cases are "the logical base", equally canonical). Gated on
+  // `baseBranchCommit` rather than just checking `diffBase`/`diffHead`
+  // directly: it mirrors the schema's own invariant (`baseBranchCommit`
+  // and `diffBase` are never both set) and is robust even if that
+  // invariant is why the check exists in the first place --
+  // `workspace.baseBranch` is overloaded with the review's head commit
+  // (not a branch name at all) for an explicit --base/--head workspace,
+  // so it must never leak out as CE_BASE_BRANCH there.
   if (workspace.baseBranchCommit) {
     launchEnv.CE_BASE_BRANCH = workspace.baseBranch;
   }

@@ -45,16 +45,29 @@ export async function runCli(): Promise<void> {
         "touching the target repository, and provision an external OpenSpec",
         "store for it (registered globally by id, stored under the workspace",
         "directory, never inside the target repository or worktree). By",
-        "default, the worktree starts from the local main/master tip. Pass",
-        "--base and --head together to instead review an exact commit range",
-        "(e.g. an existing pull request) -- both refs must already exist",
-        "locally; ce-harness never fetches automatically.",
+        "default, the worktree starts from the repository's detected base",
+        "branch tip (see `detectBaseBranch`; never assumes \"main\"). Pass",
+        "--from to instead start this same kind of Implementation workspace",
+        "from any other resolvable ref (a local branch, an origin/<branch>",
+        "remote-tracking ref, a tag, or a raw commit) -- e.g. a completed",
+        "dependency branch that hasn't merged to the default branch yet.",
+        "Pass --base and --head together to instead review an exact commit",
+        "range (e.g. an existing pull request), which creates an Existing PR",
+        "review workspace, not an Implementation one -- --from and --base/--head",
+        "are mutually exclusive. Every ref this command accepts must already",
+        "exist locally; ce-harness never fetches automatically.",
       ].join(" "),
     )
     .argument("<repo>", "path to the target Git repository")
     .argument("<issue>", "issue identifier (e.g. an issue number or short slug)")
     .option("--base <ref>", "exact base ref/commit to review from (requires --head)")
     .option("--head <ref>", "exact head ref/commit to review to (requires --base)")
+    .option(
+      "--from <ref>",
+      "start this Implementation workspace from an explicit ref instead of the detected base " +
+        "branch (a local branch, origin/<branch>, a tag, or a commit; mutually exclusive with " +
+        "--base/--head)",
+    )
     .option(
       "--runner <runner>",
       'coding-agent runner to launch: "opencode" (default) or "claude"',
@@ -63,10 +76,17 @@ export async function runCli(): Promise<void> {
       async (
         repo: string,
         issue: string,
-        options: { base?: string; head?: string; runner?: string },
+        options: { base?: string; head?: string; from?: string; runner?: string },
       ) => {
         await run(() =>
-          startCommand({ repo, issue, base: options.base, head: options.head, runner: options.runner }),
+          startCommand({
+            repo,
+            issue,
+            base: options.base,
+            head: options.head,
+            from: options.from,
+            runner: options.runner,
+          }),
         );
       },
     );
