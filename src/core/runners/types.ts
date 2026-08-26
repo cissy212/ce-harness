@@ -21,6 +21,27 @@ export type RunnerLaunchResult =
   | { launched: true; exitCode: number }
   | { launched: false; message: string };
 
+/** Which top-level entries a `refreshConfig` pass wrote, left as-is, or left alone -- see `RunnerSpec.refreshConfig`. */
+export interface RefreshResult {
+  updated: string[];
+  unchanged: string[];
+  skipped: string[];
+}
+
+/**
+ * The outcome of a `refreshConfig` call: a human-facing `result` (for
+ * `ce refresh` to report), plus the exact `commandsManaged`/
+ * `commandsManagedHashes` values the caller should persist onto
+ * `workspace.runnerWorktreeArtifacts` -- already fully merged with
+ * whatever existed before, ready to assign as-is (never a delta the
+ * caller has to combine itself).
+ */
+export interface RefreshConfigResult {
+  result: RefreshResult;
+  commandsManaged: string[];
+  commandsManagedHashes: Record<string, string>;
+}
+
 export interface RunnerSpec {
   /** Stable identifier, persisted in workspace.yml and accepted by `--runner`. */
   readonly id: string;
@@ -50,6 +71,26 @@ export interface RunnerSpec {
    * returns `[]`.
    */
   writeConfig(paths: RunnerWorkspacePaths): Promise<string[]>;
+
+  /**
+   * Refreshes this runner's on-disk workflow configuration for an
+   * already-existing workspace/worktree against the harness's *current*
+   * template library -- the counterpart to `writeConfig` for a workspace
+   * `ce start` already provisioned, possibly with an older version of
+   * ce-harness. Never called by `ce start` (which uses `writeConfig`) or
+   * by `ce resume` (whose contract is to never modify worktree files or
+   * workspace.yml) -- only by the explicit `ce refresh` command.
+   *
+   * Idempotent, and safe to call any number of times: a file whose
+   * current on-disk content cannot be proven to still be exactly what
+   * ce-harness itself last wrote (a hand-edit, or a pre-existing file
+   * `writeConfig` never owned in the first place) is always left
+   * completely untouched, reported in the result's `skipped`, never
+   * overwritten by guessing. `workspace` is read-only here -- the caller
+   * (`ce refresh`) persists the returned `commandsManaged`/
+   * `commandsManagedHashes` values itself.
+   */
+  refreshConfig(paths: RunnerWorkspacePaths, workspace: Workspace): Promise<RefreshConfigResult>;
 
   /**
    * Wires up CodeGraph's MCP server for this runner. Side-effecting;

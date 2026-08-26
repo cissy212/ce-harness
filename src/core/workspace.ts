@@ -95,6 +95,17 @@ export type BootstrapMetadata = z.infer<typeof BootstrapMetadataSchema>;
 export const RunnerWorktreeArtifactsSchema = z.object({
   commandsManaged: z.union([z.boolean(), z.array(z.string().min(1))]),
   mcpManaged: z.boolean().optional(),
+  // Optional: SHA-256 hex digest of each `commandsManaged`-relative path's
+  // content at the moment ce-harness itself last wrote it there. Populated
+  // by `ce refresh` (never by `ce start`, which has no need for it yet --
+  // see core/runners/claude.ts's refreshConfig). This is what lets refresh
+  // prove a harness-managed file is still exactly what ce-harness wrote
+  // before safely overwriting it with updated template content, without
+  // ever touching a file a human has since hand-edited. Absent entirely on
+  // every workspace that has never been refreshed; a `commandsManaged`
+  // path with no entry here yet is handled by refresh's own
+  // bootstrap-on-first-refresh logic, never treated as an error.
+  commandsManagedHashes: z.record(z.string().min(1), z.string().min(1)).optional(),
 });
 
 export type RunnerWorktreeArtifacts = z.infer<typeof RunnerWorktreeArtifactsSchema>;

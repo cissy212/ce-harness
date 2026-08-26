@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { copyFile, mkdir, readdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -136,6 +137,105 @@ export async function copyTemplatesSkippingCollisions(
   }
 
   return { written, skipped, blockedByNonDirectory: false };
+}
+
+/** SHA-256 hex digest of a file's exact byte content. */
+export async function sha256File(path: string): Promise<string> {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
+}
+
+/**
+ * The result of a refresh pass: which top-level *file* entries under
+ * `templates/<name>/` were written fresh or overwritten with updated
+ * content (`updated`), already matched the current template as-is
+ * (`unchanged`), or were left completely alone because their current
+ * on-disk content could not be proven to still be ce-harness's own
+ * (`skipped`) -- plus the new known-good hash for every `updated`/
+ * `unchanged` entry (by top-level entry name), for the caller to persist.
+ */
+export interface RefreshCopyResult {
+  updated: string[];
+  unchanged: string[];
+  skipped: string[];
+  hashes: Record<string, string>;
+}
+
+/**
+ * Like `copyTemplatesSkippingCollisions`, but for refreshing an
+ * already-provisioned destination instead of a first write -- the
+ * counterpart used by `ce refresh` (see `RunnerSpec.refreshConfig`)
+ * rather than `ce start`. Each top-level entry under `templates/<name>/`
+ * is compared by content hash, not mere existence:
+ *
+ * - Missing from `destinationDir` entirely: written fresh (a template
+ *   added to the harness's library since this destination was last
+ *   provisioned) -- reported as `updated`.
+ * - Present, and its current on-disk hash matches `knownHashes[entryName]`
+ *   (the hash the caller asserts ce-harness itself last wrote there):
+ *   proven untouched since -- safely overwritten with the current
+ *   template content, reported as `updated`. What "proven untouched"
+ *   means, including how to handle a destination with no prior hash
+ *   history at all, is entirely the caller's decision (see
+ *   runners/claude.ts's bootstrap handling) -- this function only ever
+ *   compares against whatever `knownHashes` it's given.
+ * - Present, and its current on-disk hash already matches the *current*
+ *   template's hash: nothing to write, reported as `unchanged` rather
+ *   than `updated`. This is what makes repeated refreshes idempotent.
+ * - Present, but neither of the above (no recorded hash for this entry,
+ *   or the recorded hash doesn't match what's on disk): left completely
+ *   untouched, reported as `skipped`. This is what protects a genuine
+ *   user customization -- or an unrelated pre-existing file `writeConfig`
+ *   never owned in the first place -- from ever being silently
+ *   overwritten.
+ *
+ * Deliberately files only: a nested top-level entry (e.g. a skill's own
+ * directory) is skipped over entirely rather than guessed at, since
+ * directory-content hashing is out of scope for this pass -- see the
+ * caller for the current category(ies) this is actually used for.
+ */
+export async function refreshTemplateFiles(
+  name: string,
+  destinationDir: string,
+  knownHashes: Record<string, string>,
+): Promise<RefreshCopyResult> {
+  const sourceDir = join(templatesRoot(), name);
+  const result: RefreshCopyResult = { updated: [], unchanged: [], skipped: [], hashes: {} };
+  if (!existsSync(sourceDir)) return result;
+
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+
+    const sourcePath = join(sourceDir, entry.name);
+    const destinationPath = join(destinationDir, entry.name);
+    const newHash = await sha256File(sourcePath);
+
+    if (!existsSync(destinationPath)) {
+      await mkdir(destinationDir, { recursive: true });
+      await copyFile(sourcePath, destinationPath);
+      result.updated.push(entry.name);
+      result.hashes[entry.name] = newHash;
+      continue;
+    }
+
+    const onDiskHash = await sha256File(destinationPath);
+    if (onDiskHash === newHash) {
+      result.unchanged.push(entry.name);
+      result.hashes[entry.name] = newHash;
+      continue;
+    }
+
+    if (knownHashes[entry.name] === onDiskHash) {
+      await copyFile(sourcePath, destinationPath);
+      result.updated.push(entry.name);
+      result.hashes[entry.name] = newHash;
+      continue;
+    }
+
+    result.skipped.push(entry.name);
+  }
+
+  return result;
 }
 
 /** Recursive worker behind copyTemplates(); `prefix` tracks the relative path so far. */

@@ -5,7 +5,7 @@ import { createOpenCodeConfig, expectedOpenCodeConfigDir } from "../opencodeConf
 import { formatLaunchCommand, launchOpenCode, openCodeBinary } from "../opencode.js";
 import { resolveTrustedCodeGraph } from "../codeGraph.js";
 import type { Workspace } from "../workspace.js";
-import type { RunnerSpec, RunnerWorkspacePaths } from "./types.js";
+import type { RefreshConfigResult, RunnerSpec, RunnerWorkspacePaths } from "./types.js";
 
 /**
  * OpenCode as a `RunnerSpec`: a thin composition over the existing,
@@ -28,6 +28,31 @@ async function writeConfig(paths: RunnerWorkspacePaths): Promise<string[]> {
   // report -- there is no pre-existing path it could ever conflict with
   // either.
   return [];
+}
+
+/**
+ * Refreshes OpenCode's config against the harness's current template
+ * library -- see `RunnerSpec.refreshConfig`. Unlike Claude, there is no
+ * ownership ambiguity to protect against here: OpenCode's config lives
+ * entirely under the workspace directory, which ce-harness exclusively
+ * owns (the same reason `writeConfig` above already uses the plain,
+ * unconditional-overwrite `createOpenCodeConfig` rather than a
+ * collision-safe copy). Refreshing is simply running that same,
+ * already-idempotent provisioning again -- no worktree files are
+ * involved, so `commandsManaged`/`commandsManagedHashes` never apply to
+ * this runner, exactly like `writeConfig`'s `[]` and
+ * `managedWorktreeRelativePaths`'s `[]` below.
+ */
+async function refreshConfig(
+  paths: RunnerWorkspacePaths,
+  _workspace: Workspace,
+): Promise<RefreshConfigResult> {
+  await createOpenCodeConfig(paths.workspacePath);
+  return {
+    result: { updated: [], unchanged: [], skipped: [] },
+    commandsManaged: [],
+    commandsManagedHashes: {},
+  };
 }
 
 /**
@@ -83,6 +108,7 @@ export const OPENCODE_RUNNER: RunnerSpec = {
   label: "OpenCode",
   binary: openCodeBinary,
   writeConfig,
+  refreshConfig,
   writeCodeGraphConfig,
   buildEnv,
   managedWorktreeRelativePaths,

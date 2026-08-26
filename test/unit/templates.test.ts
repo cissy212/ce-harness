@@ -214,6 +214,141 @@ describe("templates (generic copy mechanism)", () => {
     });
   });
 
+  describe("sha256File / refreshTemplateFiles (the primitives behind `ce refresh`)", () => {
+    it("sha256File is deterministic and content-sensitive", async () => {
+      const { sha256File } = await import("../../src/core/templates.js");
+      const filePath = join(destinationDir, "a.txt");
+      await mkdir(destinationDir, { recursive: true });
+      await writeFile(filePath, "hello\n", "utf8");
+
+      const first = await sha256File(filePath);
+      const second = await sha256File(filePath);
+      expect(first).toBe(second);
+      expect(first).toMatch(/^[0-9a-f]{64}$/);
+
+      await writeFile(filePath, "hello, world\n", "utf8");
+      expect(await sha256File(filePath)).not.toBe(first);
+    });
+
+    it("writes a template entry fresh (reported `updated`) when the destination doesn't exist at all", async () => {
+      const { refreshTemplateFiles, sha256File } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await writeFile(join(commandsDir, "verify.md"), "template content\n", "utf8");
+
+      const result = await refreshTemplateFiles("commands", destinationDir, {});
+
+      expect(result.updated).toEqual(["verify.md"]);
+      expect(result.unchanged).toEqual([]);
+      expect(result.skipped).toEqual([]);
+      expect(await readFile(join(destinationDir, "verify.md"), "utf8")).toBe("template content\n");
+      expect(result.hashes["verify.md"]).toBe(await sha256File(join(commandsDir, "verify.md")));
+    });
+
+    it("reports `unchanged` (and writes nothing) when the destination's content already matches the current template", async () => {
+      const { refreshTemplateFiles } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await writeFile(join(commandsDir, "verify.md"), "same content\n", "utf8");
+      await mkdir(destinationDir, { recursive: true });
+      await writeFile(join(destinationDir, "verify.md"), "same content\n", "utf8");
+
+      const result = await refreshTemplateFiles("commands", destinationDir, {});
+
+      expect(result.unchanged).toEqual(["verify.md"]);
+      expect(result.updated).toEqual([]);
+      expect(result.skipped).toEqual([]);
+    });
+
+    it("overwrites (`updated`) when the destination's on-disk hash matches the caller-supplied known-good hash, even though it differs from the current template", async () => {
+      const { refreshTemplateFiles, sha256File } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await mkdir(destinationDir, { recursive: true });
+      await writeFile(join(destinationDir, "verify.md"), "old (known-good) content\n", "utf8");
+      const knownHash = await sha256File(join(destinationDir, "verify.md"));
+
+      await writeFile(join(commandsDir, "verify.md"), "new template content\n", "utf8");
+
+      const result = await refreshTemplateFiles("commands", destinationDir, { "verify.md": knownHash });
+
+      expect(result.updated).toEqual(["verify.md"]);
+      expect(await readFile(join(destinationDir, "verify.md"), "utf8")).toBe("new template content\n");
+    });
+
+    it("skips (leaves completely untouched) when the destination's on-disk content doesn't match any known-good hash", async () => {
+      const { refreshTemplateFiles } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await writeFile(join(commandsDir, "verify.md"), "new template content\n", "utf8");
+      await mkdir(destinationDir, { recursive: true });
+      await writeFile(join(destinationDir, "verify.md"), "someone else's content entirely\n", "utf8");
+
+      const result = await refreshTemplateFiles("commands", destinationDir, {
+        "verify.md": "0".repeat(64), // an unrelated, non-matching hash
+      });
+
+      expect(result.skipped).toEqual(["verify.md"]);
+      expect(result.updated).toEqual([]);
+      expect(await readFile(join(destinationDir, "verify.md"), "utf8")).toBe(
+        "someone else's content entirely\n",
+      );
+    });
+
+    it("skips when there is no known-good hash for the entry at all, rather than guessing", async () => {
+      const { refreshTemplateFiles } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await writeFile(join(commandsDir, "verify.md"), "new template content\n", "utf8");
+      await mkdir(destinationDir, { recursive: true });
+      await writeFile(join(destinationDir, "verify.md"), "pre-existing, unrelated content\n", "utf8");
+
+      const result = await refreshTemplateFiles("commands", destinationDir, {});
+
+      expect(result.skipped).toEqual(["verify.md"]);
+      expect(await readFile(join(destinationDir, "verify.md"), "utf8")).toBe(
+        "pre-existing, unrelated content\n",
+      );
+    });
+
+    it("never inspects a nested directory entry (e.g. a skill folder) -- files only", async () => {
+      const { refreshTemplateFiles } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(join(commandsDir, "a-directory"), { recursive: true });
+      await writeFile(join(commandsDir, "a-directory", "inner.md"), "inner\n", "utf8");
+      await writeFile(join(commandsDir, "verify.md"), "template content\n", "utf8");
+
+      const result = await refreshTemplateFiles("commands", destinationDir, {});
+
+      expect(result.updated).toEqual(["verify.md"]);
+      expect(existsSync(join(destinationDir, "a-directory"))).toBe(false);
+    });
+
+    it("is idempotent: running it again with the hashes it just returned reports everything unchanged", async () => {
+      const { refreshTemplateFiles } = await import("../../src/core/templates.js");
+      const commandsDir = join(fakeTemplatesRoot, "commands");
+      await mkdir(commandsDir, { recursive: true });
+      await writeFile(join(commandsDir, "verify.md"), "template content\n", "utf8");
+
+      const first = await refreshTemplateFiles("commands", destinationDir, {});
+      expect(first.updated).toEqual(["verify.md"]);
+
+      const second = await refreshTemplateFiles("commands", destinationDir, first.hashes);
+      expect(second.updated).toEqual([]);
+      expect(second.skipped).toEqual([]);
+      expect(second.unchanged).toEqual(["verify.md"]);
+      expect(second.hashes).toEqual(first.hashes);
+    });
+
+    it("is a no-op (empty result) when the template category doesn't exist at all", async () => {
+      const { refreshTemplateFiles } = await import("../../src/core/templates.js");
+
+      const result = await refreshTemplateFiles("commands", destinationDir, {});
+
+      expect(result).toEqual({ updated: [], unchanged: [], skipped: [], hashes: {} });
+    });
+  });
+
   describe("existsAsNonDirectory", () => {
     it("returns false for a path that does not exist at all", async () => {
       const { existsAsNonDirectory } = await import("../../src/core/templates.js");

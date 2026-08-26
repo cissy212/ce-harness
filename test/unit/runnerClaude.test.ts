@@ -449,6 +449,259 @@ describe("Claude Code runner (core/runners/claude.ts)", () => {
     });
   });
 
+  describe("refreshConfig", () => {
+    let repoDir: string;
+    let tempDir: string;
+    let fakeTemplatesRoot: string;
+    const originalTemplatesRoot = process.env.CE_TEMPLATES_ROOT;
+
+    beforeEach(async () => {
+      repoDir = await createTempRepo();
+      tempDir = await mkdtemp(join(tmpdir(), "ce-harness-refresh-templates-"));
+      fakeTemplatesRoot = join(tempDir, "templates");
+      await mkdir(join(fakeTemplatesRoot, "commands"), { recursive: true });
+      process.env.CE_TEMPLATES_ROOT = fakeTemplatesRoot;
+    });
+
+    afterEach(async () => {
+      if (originalTemplatesRoot === undefined) delete process.env.CE_TEMPLATES_ROOT;
+      else process.env.CE_TEMPLATES_ROOT = originalTemplatesRoot;
+      await rm(repoDir, { recursive: true, force: true });
+      await rm(tempDir, { recursive: true, force: true });
+    });
+
+    async function writeTemplate(name: string, content: string): Promise<void> {
+      await writeFile(join(fakeTemplatesRoot, "commands", name), content, "utf8");
+    }
+
+    const unusedPaths = { workspacePath: "/tmp/unused-workspace" };
+
+    it("refreshing an unchanged harness-managed file is a no-op: reported unchanged, content untouched, hash recorded", async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      await writeTemplate("verify.md", "v1 content\n");
+      const written = await CLAUDE_RUNNER.writeConfig({ ...unusedPaths, worktreePath: repoDir });
+
+      // Legacy shape: commandsManaged already lists it, no hash recorded yet
+      // (exactly every real workspace that predates this feature).
+      const workspace = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: { commandsManaged: written },
+      });
+
+      const refreshed = await CLAUDE_RUNNER.refreshConfig({ ...unusedPaths, worktreePath: repoDir }, workspace);
+
+      expect(refreshed.result.unchanged).toContain(join("commands", "verify.md"));
+      expect(refreshed.result.updated).not.toContain(join("commands", "verify.md"));
+      expect(refreshed.result.skipped).not.toContain(join("commands", "verify.md"));
+      expect(refreshed.commandsManagedHashes[join("commands", "verify.md")]).toBeTruthy();
+      expect(await readFile(join(repoDir, ".claude", "commands", "verify.md"), "utf8")).toBe("v1 content\n");
+    });
+
+    it("updates an outdated harness-managed template: on-disk content matches its recorded hash, so the newer template content wins", async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      const { sha256File } = await import("../../src/core/templates.js");
+      await writeTemplate("verify.md", "v1 content\n");
+      const written = await CLAUDE_RUNNER.writeConfig({ ...unusedPaths, worktreePath: repoDir });
+      const v1Hash = await sha256File(join(repoDir, ".claude", "commands", "verify.md"));
+
+      // A workspace one refresh cycle in: v1's hash is already on record.
+      const workspaceAtV1 = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: {
+          commandsManaged: written,
+          commandsManagedHashes: { [join("commands", "verify.md")]: v1Hash },
+        },
+      });
+
+      // ce-harness's own template moves on to v2.
+      await writeTemplate("verify.md", "v2 content -- updated\n");
+
+      const refreshed = await CLAUDE_RUNNER.refreshConfig(
+        { ...unusedPaths, worktreePath: repoDir },
+        workspaceAtV1,
+      );
+
+      expect(refreshed.result.updated).toContain(join("commands", "verify.md"));
+      expect(await readFile(join(repoDir, ".claude", "commands", "verify.md"), "utf8")).toBe(
+        "v2 content -- updated\n",
+      );
+      expect(refreshed.commandsManagedHashes[join("commands", "verify.md")]).toBe(
+        await sha256File(join(repoDir, ".claude", "commands", "verify.md")),
+      );
+    });
+
+    it("preserves a user-customized harness-managed file: on-disk content no longer matches the recorded hash, so refresh leaves it completely alone", async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      const { sha256File } = await import("../../src/core/templates.js");
+      await writeTemplate("verify.md", "v1 content\n");
+      const written = await CLAUDE_RUNNER.writeConfig({ ...unusedPaths, worktreePath: repoDir });
+      const v1Hash = await sha256File(join(repoDir, ".claude", "commands", "verify.md"));
+
+      // The user hand-edits the file after ce-harness wrote it...
+      await writeFile(
+        join(repoDir, ".claude", "commands", "verify.md"),
+        "my own customized verify command\n",
+        "utf8",
+      );
+      // ...and, separately, ce-harness's own template also moved on.
+      await writeTemplate("verify.md", "v2 content -- updated\n");
+
+      const workspace = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: {
+          commandsManaged: written,
+          commandsManagedHashes: { [join("commands", "verify.md")]: v1Hash },
+        },
+      });
+
+      const refreshed = await CLAUDE_RUNNER.refreshConfig({ ...unusedPaths, worktreePath: repoDir }, workspace);
+
+      expect(refreshed.result.skipped).toContain(join("commands", "verify.md"));
+      expect(refreshed.result.updated).not.toContain(join("commands", "verify.md"));
+      expect(await readFile(join(repoDir, ".claude", "commands", "verify.md"), "utf8")).toBe(
+        "my own customized verify command\n",
+      );
+    });
+
+    it("never bootstraps a path the workspace never recorded as harness-owned at all -- a genuine pre-existing collision is always skipped", async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      await writeTemplate("verify.md", "template content\n");
+      await mkdir(join(repoDir, ".claude", "commands"), { recursive: true });
+      await writeFile(
+        join(repoDir, ".claude", "commands", "verify.md"),
+        "not ce-harness's -- collided at ce start\n",
+        "utf8",
+      );
+
+      // writeConfig would itself have skipped this as a collision --
+      // commandsManaged never names it.
+      const workspace = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: { commandsManaged: [] },
+      });
+
+      const refreshed = await CLAUDE_RUNNER.refreshConfig({ ...unusedPaths, worktreePath: repoDir }, workspace);
+
+      expect(refreshed.result.skipped).toContain(join("commands", "verify.md"));
+      expect(await readFile(join(repoDir, ".claude", "commands", "verify.md"), "utf8")).toBe(
+        "not ce-harness's -- collided at ce start\n",
+      );
+    });
+
+    it('never bootstraps anything under the legacy all-or-nothing "commandsManaged: true" shape -- no individual paths to trust, so an outdated file is left alone rather than blindly updated', async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      await writeTemplate("verify.md", "v1 content\n");
+      const written = await CLAUDE_RUNNER.writeConfig({ ...unusedPaths, worktreePath: repoDir });
+      expect(written).toContain(join("commands", "verify.md"));
+
+      // The template moves on -- were this the per-item array shape, this
+      // would be the ordinary bootstrap-then-update case (see the
+      // "unchanged" test above proves the reverse: no change, no bootstrap
+      // needed at all). The boolean shape has no per-item list to
+      // bootstrap from in the first place.
+      await writeTemplate("verify.md", "v2 content -- updated\n");
+
+      const workspace = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: { commandsManaged: true }, // legacy boolean, no per-item list
+      });
+
+      const refreshed = await CLAUDE_RUNNER.refreshConfig({ ...unusedPaths, worktreePath: repoDir }, workspace);
+
+      expect(refreshed.result.skipped).toContain(join("commands", "verify.md"));
+      expect(refreshed.result.updated).toEqual([]);
+      expect(await readFile(join(repoDir, ".claude", "commands", "verify.md"), "utf8")).toBe(
+        "v1 content\n",
+      );
+    });
+
+    it("writes a brand-new template entry that didn't exist when this workspace was first provisioned", async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      await writeTemplate("verify.md", "v1 content\n");
+      const written = await CLAUDE_RUNNER.writeConfig({ ...unusedPaths, worktreePath: repoDir });
+
+      // A newer ce-harness ships a brand-new command template.
+      await writeTemplate("brand-new-command.md", "brand new\n");
+
+      const workspace = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: { commandsManaged: written },
+      });
+
+      const refreshed = await CLAUDE_RUNNER.refreshConfig({ ...unusedPaths, worktreePath: repoDir }, workspace);
+
+      expect(refreshed.result.updated).toContain(join("commands", "brand-new-command.md"));
+      expect(refreshed.commandsManaged).toContain(join("commands", "brand-new-command.md"));
+      expect(await readFile(join(repoDir, ".claude", "commands", "brand-new-command.md"), "utf8")).toBe(
+        "brand new\n",
+      );
+    });
+
+    it("is idempotent: refreshing a second time (with the first refresh's own persisted output) reports everything unchanged and writes nothing", async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      await writeTemplate("verify.md", "v1 content\n");
+      const written = await CLAUDE_RUNNER.writeConfig({ ...unusedPaths, worktreePath: repoDir });
+
+      const workspace = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: { commandsManaged: written },
+      });
+      const first = await CLAUDE_RUNNER.refreshConfig({ ...unusedPaths, worktreePath: repoDir }, workspace);
+
+      const workspaceAfterFirst = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: {
+          commandsManaged: first.commandsManaged,
+          commandsManagedHashes: first.commandsManagedHashes,
+        },
+      });
+      const second = await CLAUDE_RUNNER.refreshConfig(
+        { ...unusedPaths, worktreePath: repoDir },
+        workspaceAfterFirst,
+      );
+
+      expect(second.result.updated).toEqual([]);
+      expect(second.result.skipped).toEqual([]);
+      expect(second.result.unchanged).toContain(join("commands", "verify.md"));
+      expect(second.commandsManagedHashes).toEqual(first.commandsManagedHashes);
+      expect(second.commandsManaged.sort()).toEqual(first.commandsManaged.sort());
+    });
+
+    it("never touches skills -- deliberately out of scope for this pass", async () => {
+      const { CLAUDE_RUNNER } = await import("../../src/core/runners/claude.js");
+      await mkdir(join(fakeTemplatesRoot, "skills", "openspec-sync-specs"), { recursive: true });
+      await writeFile(
+        join(fakeTemplatesRoot, "skills", "openspec-sync-specs", "SKILL.md"),
+        "v1 skill\n",
+        "utf8",
+      );
+      await writeTemplate("verify.md", "v1 content\n");
+      const written = await CLAUDE_RUNNER.writeConfig({ ...unusedPaths, worktreePath: repoDir });
+      expect(written).toContain(join("skills", "openspec-sync-specs"));
+
+      // The skill template changes...
+      await writeFile(
+        join(fakeTemplatesRoot, "skills", "openspec-sync-specs", "SKILL.md"),
+        "v2 skill -- updated\n",
+        "utf8",
+      );
+
+      const workspace = baseWorkspace({
+        worktreePath: repoDir,
+        runnerWorktreeArtifacts: { commandsManaged: written },
+      });
+      const refreshed = await CLAUDE_RUNNER.refreshConfig({ ...unusedPaths, worktreePath: repoDir }, workspace);
+
+      // ...but refreshConfig never reports on it, and the on-disk skill is untouched.
+      expect(refreshed.result.updated.some((p) => p.startsWith(join("skills", "")))).toBe(false);
+      expect(refreshed.result.unchanged.some((p) => p.startsWith(join("skills", "")))).toBe(false);
+      expect(refreshed.result.skipped.some((p) => p.startsWith(join("skills", "")))).toBe(false);
+      expect(
+        await readFile(join(repoDir, ".claude", "skills", "openspec-sync-specs", "SKILL.md"), "utf8"),
+      ).toBe("v1 skill\n");
+    });
+  });
+
   describe("writeCodeGraphConfig", () => {
     let repoDir: string;
 

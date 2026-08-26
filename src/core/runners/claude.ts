@@ -1,11 +1,21 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { execa } from "execa";
 import { addLocalExcludePattern } from "../git.js";
-import { copyTemplatesSkippingCollisions, existsAsNonDirectory } from "../templates.js";
+import {
+  copyTemplatesSkippingCollisions,
+  existsAsNonDirectory,
+  refreshTemplateFiles,
+  sha256File,
+} from "../templates.js";
 import type { Workspace } from "../workspace.js";
-import type { RunnerLaunchResult, RunnerSpec, RunnerWorkspacePaths } from "./types.js";
+import type {
+  RefreshConfigResult,
+  RunnerLaunchResult,
+  RunnerSpec,
+  RunnerWorkspacePaths,
+} from "./types.js";
 
 /**
  * Claude Code as a `RunnerSpec`, using the installed `claude` CLI
@@ -189,6 +199,77 @@ async function writeConfig(paths: RunnerWorkspacePaths): Promise<string[]> {
   return written;
 }
 
+/** `.claude`-relative prefix every command entry's path in `commandsManaged` carries. */
+const COMMANDS_PREFIX = `commands${sep}`;
+
+/**
+ * Refreshes `<worktree>/.claude/commands/` against the harness's current
+ * template library -- see `RunnerSpec.refreshConfig`. Scoped to commands
+ * only for now: skills use the same underlying `refreshTemplateFiles`
+ * primitive but are a whole directory per entry, and directory-content
+ * hashing is a deliberate non-goal of this pass (nothing in `skills/`
+ * changes as a result of a refresh).
+ *
+ * Bootstraps hash history for a workspace that has never been refreshed
+ * before (every workspace `commandsManaged` already lists as harness-
+ * owned, but with no recorded hash yet -- true for every workspace
+ * created before this feature existed): the current on-disk content of
+ * each such path is trusted once, as the baseline, since `commandsManaged`
+ * is itself already ce-harness's own record that it wrote that exact
+ * path. From the very next refresh onward that path is fully
+ * hash-verified like every other entry. A path never recorded in
+ * `commandsManaged` at all -- including every entry when the legacy
+ * all-or-nothing `commandsManaged: true` boolean is all a workspace has,
+ * since there are no individual paths to trust-bootstrap from in that
+ * shape -- is never bootstrapped, and so is always left alone until a
+ * proper per-path hash exists.
+ */
+async function refreshConfig(
+  paths: RunnerWorkspacePaths,
+  workspace: Workspace,
+): Promise<RefreshConfigResult> {
+  const commandsDir = join(claudeConfigDir(paths.worktreePath), "commands");
+  const artifacts = workspace.runnerWorktreeArtifacts;
+  const recordedHashes = artifacts?.commandsManagedHashes ?? {};
+  const managedPaths = Array.isArray(artifacts?.commandsManaged) ? artifacts.commandsManaged : [];
+
+  const knownHashes: Record<string, string> = {};
+  for (const [relativePath, hash] of Object.entries(recordedHashes)) {
+    if (relativePath.startsWith(COMMANDS_PREFIX)) {
+      knownHashes[relativePath.slice(COMMANDS_PREFIX.length)] = hash;
+    }
+  }
+  for (const relativePath of managedPaths) {
+    if (!relativePath.startsWith(COMMANDS_PREFIX)) continue;
+    const entryName = relativePath.slice(COMMANDS_PREFIX.length);
+    if (entryName in knownHashes) continue; // already has a real recorded hash -- no bootstrap needed
+    const onDiskPath = join(commandsDir, entryName);
+    if (existsSync(onDiskPath)) {
+      knownHashes[entryName] = await sha256File(onDiskPath); // trust current content, once
+    }
+  }
+
+  const copyResult = await refreshTemplateFiles("commands", commandsDir, knownHashes);
+
+  const newManagedSet = new Set(managedPaths);
+  const newHashes: Record<string, string> = { ...recordedHashes };
+  for (const entryName of [...copyResult.updated, ...copyResult.unchanged]) {
+    const relativePath = join("commands", entryName);
+    newManagedSet.add(relativePath);
+    newHashes[relativePath] = copyResult.hashes[entryName]!;
+  }
+
+  return {
+    result: {
+      updated: copyResult.updated.map((name) => join("commands", name)),
+      unchanged: copyResult.unchanged.map((name) => join("commands", name)),
+      skipped: copyResult.skipped.map((name) => join("commands", name)),
+    },
+    commandsManaged: [...newManagedSet],
+    commandsManagedHashes: newHashes,
+  };
+}
+
 /**
  * Writes `<worktree>/.mcp.json`, Claude Code's project-scoped MCP config
  * file, registering CodeGraph's MCP server. Skipped entirely (with a
@@ -274,6 +355,7 @@ export const CLAUDE_RUNNER: RunnerSpec = {
   label: "Claude Code",
   binary: claudeBinary,
   writeConfig,
+  refreshConfig,
   writeCodeGraphConfig,
   buildEnv,
   managedWorktreeRelativePaths,

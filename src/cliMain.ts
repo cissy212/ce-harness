@@ -4,6 +4,7 @@ import { reviewCommand } from "./commands/review.js";
 import { statusCommand } from "./commands/status.js";
 import { cleanupCommand } from "./commands/cleanup.js";
 import { resumeCommand } from "./commands/resume.js";
+import { refreshCommand } from "./commands/refresh.js";
 import { openCommand } from "./commands/open.js";
 import { formatError } from "./core/errors.js";
 
@@ -104,6 +105,21 @@ export async function runCli(): Promise<void> {
     )
     .action(async () => {
       await run(() => resumeCommand());
+    });
+
+  program
+    .command("refresh")
+    .description(
+      "Refresh the active workspace's harness-managed runner configuration " +
+        "(e.g. Claude Code's .claude/commands/*.md) against the harness's current " +
+        "template library -- the supported way to bring an already-existing " +
+        "workspace's generated files up to date, without deleting or recreating " +
+        "the workspace, worktree, or branch. A file whose on-disk content cannot " +
+        "be proven to still be ce-harness's own (e.g. hand-edited) is always left " +
+        "untouched. Idempotent -- safe to run any number of times.",
+    )
+    .action(async () => {
+      await run(() => refreshCommand());
     });
 
   program
