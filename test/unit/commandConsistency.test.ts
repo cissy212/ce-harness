@@ -139,6 +139,42 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
       expect(adversarialBlock).toBe(verifyBlock);
     });
 
+    it("prefers CE_BASE_BRANCH (ce start's own detected base branch) over guessing main/master -- both files, not just kept in sync with each other", async () => {
+      const verify = await readVerify();
+      const adversarial = await readAdversarialReview();
+
+      const start = 'Determine the diff scope, entirely inside `$CE_WORKTREE`:';
+      const end = 'git -C "$CE_WORKTREE" merge-base HEAD master  2>/dev/null\n```';
+
+      const verifyBlock = extractSection(verify, "verify.md diff-scope procedure", start, end);
+      const adversarialBlock = extractSection(
+        adversarial,
+        "adversarial-review.md diff-scope procedure",
+        start,
+        end,
+      );
+
+      for (const [label, block] of [
+        ["verify.md", verifyBlock],
+        ["adversarial-review.md", adversarialBlock],
+      ] as const) {
+        expect(block, `${label} should try $CE_BASE_BRANCH before main/master`).toContain(
+          'merge-base HEAD "$CE_BASE_BRANCH"',
+        );
+        expect(block, `${label} should also try the origin/ remote-tracking form`).toContain(
+          'merge-base HEAD "origin/$CE_BASE_BRANCH"',
+        );
+        // The main/master guess must still be present, but only as the last resort.
+        const baseBranchIdx = block.indexOf('merge-base HEAD "$CE_BASE_BRANCH"');
+        const mainIdx = block.indexOf("merge-base HEAD main");
+        expect(baseBranchIdx, `${label} is missing the $CE_BASE_BRANCH attempt`).toBeGreaterThan(-1);
+        expect(mainIdx, `${label} is missing the main fallback`).toBeGreaterThan(-1);
+        expect(baseBranchIdx, `${label} must try $CE_BASE_BRANCH before guessing main`).toBeLessThan(
+          mainIdx,
+        );
+      }
+    });
+
     // Deliberately NOT asserted identical: the paragraph immediately
     // following the merge-base commands ("If a merge base is found...
     // fall back to inspecting/reviewing HEAD...") already differs in

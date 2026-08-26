@@ -243,6 +243,37 @@ describe("detectBaseBranch (repository-agnostic base-branch detection)", () => {
     expect(await queryRemoteDefaultBranch(repoDir, "upstream")).toBeNull();
     expect(await readCachedRemoteDefaultBranch(repoDir, "upstream")).toBeNull();
   });
+
+  it('falls back to "master" specifically (not just "main") when there is no remote and only "master" exists locally', async () => {
+    repoDir = await createTempRepo();
+    await execa("git", ["-C", repoDir, "branch", "-m", "main", "master"]);
+
+    expect(await queryRemoteDefaultBranch(repoDir)).toBeNull();
+    expect(await readCachedRemoteDefaultBranch(repoDir)).toBeNull();
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "master", ref: "master" });
+  });
+
+  it('resolves to the remote\'s actual default "develop" even when an unrelated, stale local "main" branch also exists -- the exact regression this guards: a repository whose real trunk is "develop" must never be silently diffed against a coincidental "main"', async () => {
+    remoteDir = await createBareRemote("develop");
+    repoDir = await cloneRepo(remoteDir);
+
+    // An unrelated "main" branch with no shared history at all -- not a
+    // fork point of "develop", just a stale/leftover branch name that
+    // happens to match the old hardcoded fallback ce-harness (and, before
+    // this fix, /verify and /adversarial-review) used to guess.
+    await execa("git", ["-C", repoDir, "checkout", "--orphan", "main"]);
+    await execa("git", ["-C", repoDir, "rm", "-rf", "."]);
+    await writeFile(`${repoDir}/unrelated.txt`, "stale main, unrelated to develop\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "stale unrelated main"]);
+    await execa("git", ["-C", repoDir, "checkout", "develop"]);
+
+    const branches = (await execa("git", ["-C", repoDir, "branch", "--list"])).stdout;
+    expect(branches).toMatch(/\bmain\b/);
+    expect(branches).toMatch(/\bdevelop\b/);
+
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "develop", ref: "develop" });
+  });
 });
 
 describe("addLocalExcludePattern (Git's own local, never-committed exclude mechanism)", () => {

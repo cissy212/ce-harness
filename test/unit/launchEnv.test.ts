@@ -47,6 +47,7 @@ describe("buildLaunchEnv", () => {
     expect(env.CE_OPENSPEC_STORE).toBeUndefined();
     expect(env.CE_DIFF_BASE).toBeUndefined();
     expect(env.CE_DIFF_HEAD).toBeUndefined();
+    expect(env.CE_BASE_BRANCH).toBeUndefined();
     expect(env.CE_CODE_NAV_AVAILABLE).toBeUndefined();
     expect(env.CE_CODE_NAV_PROVIDER).toBeUndefined();
     expect(env.OPENCODE_CONFIG).toBeUndefined();
@@ -98,6 +99,45 @@ describe("buildLaunchEnv", () => {
 
     expect(env.CE_DIFF_BASE).toBe("a".repeat(40));
     expect(env.CE_DIFF_HEAD).toBe("b".repeat(40));
+  });
+
+  it.each(["main", "master", "develop"])(
+    'includes CE_BASE_BRANCH = "%s" (the default-flow-detected base branch) whenever baseBranchCommit is present',
+    async (branchName) => {
+      const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
+      const workspace = baseWorkspace({
+        baseBranch: branchName,
+        baseBranchCommit: "c".repeat(40),
+      });
+
+      const env = buildLaunchEnv(workspace);
+
+      expect(env.CE_BASE_BRANCH).toBe(branchName);
+    },
+  );
+
+  it("omits CE_BASE_BRANCH for an explicit --base/--head review workspace, even though `baseBranch` itself holds a value in that case (start.ts overloads it with the review's head commit, not a real branch name)", async () => {
+    const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
+    const headSha = "b".repeat(40);
+    const workspace = baseWorkspace({
+      baseBranch: headSha, // exactly what start.ts sets baseBranchName to in the explicit-range flow
+      diffBase: "a".repeat(40),
+      diffHead: headSha,
+      // baseBranchCommit deliberately absent -- start.ts never sets it alongside diffBase/diffHead.
+    });
+
+    const env = buildLaunchEnv(workspace);
+
+    expect(env.CE_BASE_BRANCH).toBeUndefined();
+    expect(env.CE_DIFF_BASE).toBe("a".repeat(40));
+    expect(env.CE_DIFF_HEAD).toBe(headSha);
+  });
+
+  it("CE_BASE_BRANCH is absent whenever baseBranchCommit is absent, regardless of what `baseBranch` itself holds", async () => {
+    const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
+    const workspace = baseWorkspace({ baseBranch: "develop" });
+
+    expect(buildLaunchEnv(workspace).CE_BASE_BRANCH).toBeUndefined();
   });
 
   it("includes CE_CODE_NAV_* and OPENCODE_CONFIG only when CodeGraph metadata is trusted AND the index still exists on disk", async () => {

@@ -138,19 +138,28 @@ branch moved forward is still a valid comparison). Use two-dot for the
 commit log, which lists exactly the commits unique to head. Derive the
 actual changed code from the three-dot diff, not from the log.
 
-Otherwise, find a base for a proper diff by trying the common
-base-branch names in order (mirrors how `ce start` itself picks a base
-branch when `--base`/`--head` are not given) and use whichever exists:
+Otherwise, find a base for a proper diff. Prefer `$CE_BASE_BRANCH` -- the
+exact base branch `ce start` itself detected for this repository (never a
+guess -- see `detectBaseBranch`), injected for every workspace the default
+flow creates -- over guessing a name: try it as a local branch, then as
+`origin/$CE_BASE_BRANCH` (a remote-tracking ref, present whenever only that,
+not a local branch, exists). Only when `CE_BASE_BRANCH` is unset (a
+workspace created before this variable existed) or resolves to nothing at
+all, fall back to the common `main`/`master` convention names, in that
+order, and use whichever exists:
 
 ```bash
+git -C "$CE_WORKTREE" merge-base HEAD "$CE_BASE_BRANCH"          2>/dev/null
+git -C "$CE_WORKTREE" merge-base HEAD "origin/$CE_BASE_BRANCH"   2>/dev/null
 git -C "$CE_WORKTREE" merge-base HEAD main    2>/dev/null
 git -C "$CE_WORKTREE" merge-base HEAD master  2>/dev/null
 ```
 
 If a merge base is found, diff against it (`git -C "$CE_WORKTREE" diff <merge-base>...HEAD`).
-If neither `main` nor `master` exists as a reachable branch, note this as a
-scope limitation under "Gaps and Blockers" and fall back to inspecting `HEAD`
-and the uncommitted diff only.
+If neither `$CE_BASE_BRANCH` (nor its `origin/` form), `main`, nor `master`
+resolves to a reachable branch, note this as a scope limitation under
+"Gaps and Blockers" and fall back to inspecting `HEAD` and the uncommitted
+diff only.
 
 Map each changed file to the spec sections and tasks it is supposed to
 satisfy.
