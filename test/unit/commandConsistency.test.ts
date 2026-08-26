@@ -126,7 +126,8 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
       const adversarial = await readAdversarialReview();
 
       const start = 'Determine the diff scope, entirely inside `$CE_WORKTREE`:';
-      const end = 'git -C "$CE_WORKTREE" merge-base HEAD master  2>/dev/null\n```';
+      const end =
+        'BASE_MB="${LOCAL_MB:-$ORIGIN_MB}"   # only one resolved, or both agree -- no comparison needed\nfi\n```';
 
       const verifyBlock = extractSection(verify, "verify.md diff-scope procedure", start, end);
       const adversarialBlock = extractSection(
@@ -144,7 +145,8 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
       const adversarial = await readAdversarialReview();
 
       const start = 'Determine the diff scope, entirely inside `$CE_WORKTREE`:';
-      const end = 'git -C "$CE_WORKTREE" merge-base HEAD master  2>/dev/null\n```';
+      const end =
+        'BASE_MB="${LOCAL_MB:-$ORIGIN_MB}"   # only one resolved, or both agree -- no comparison needed\nfi\n```';
 
       const verifyBlock = extractSection(verify, "verify.md diff-scope procedure", start, end);
       const adversarialBlock = extractSection(
@@ -171,6 +173,42 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
         expect(mainIdx, `${label} is missing the main fallback`).toBeGreaterThan(-1);
         expect(baseBranchIdx, `${label} must try $CE_BASE_BRANCH before guessing main`).toBeLessThan(
           mainIdx,
+        );
+      }
+    });
+
+    it("never assumes the first of $CE_BASE_BRANCH/origin/$CE_BASE_BRANCH to resolve is correct when both exist and disagree -- both files", async () => {
+      const verify = await readVerify();
+      const adversarial = await readAdversarialReview();
+
+      const start = 'Determine the diff scope, entirely inside `$CE_WORKTREE`:';
+      const end =
+        'BASE_MB="${LOCAL_MB:-$ORIGIN_MB}"   # only one resolved, or both agree -- no comparison needed\nfi\n```';
+
+      const verifyBlock = extractSection(verify, "verify.md diff-scope procedure", start, end);
+      const adversarialBlock = extractSection(
+        adversarial,
+        "adversarial-review.md diff-scope procedure",
+        start,
+        end,
+      );
+
+      for (const [label, block] of [
+        ["verify.md", verifyBlock],
+        ["adversarial-review.md", adversarialBlock],
+      ] as const) {
+        // Determines which of the two candidates is actually more current
+        // (a descendant of the other) via ancestry, in both directions --
+        // never hardcoding a preference for either side by name.
+        expect(block, `${label} should compare the two candidates by ancestry`).toContain(
+          "merge-base --is-ancestor",
+        );
+        expect(block).toContain('--is-ancestor "$CE_BASE_BRANCH" "origin/$CE_BASE_BRANCH"');
+        expect(block).toContain('--is-ancestor "origin/$CE_BASE_BRANCH" "$CE_BASE_BRANCH"');
+        // A genuinely diverged pair (neither an ancestor of the other) has
+        // a documented, deterministic fallback -- not a silent guess.
+        expect(block, `${label} should document the true-divergence fallback`).toMatch(
+          /diverged in both directions/,
         );
       }
     });

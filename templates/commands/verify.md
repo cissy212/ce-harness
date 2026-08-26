@@ -141,18 +141,45 @@ actual changed code from the three-dot diff, not from the log.
 Otherwise, find a base for a proper diff. Prefer `$CE_BASE_BRANCH` -- the
 exact base branch `ce start` itself detected for this repository (never a
 guess -- see `detectBaseBranch`), injected for every workspace the default
-flow creates -- over guessing a name: try it as a local branch, then as
+flow creates -- over guessing a name: try it both as a local branch and as
 `origin/$CE_BASE_BRANCH` (a remote-tracking ref, present whenever only that,
-not a local branch, exists). Only when `CE_BASE_BRANCH` is unset (a
-workspace created before this variable existed) or resolves to nothing at
-all, fall back to the common `main`/`master` convention names, in that
-order, and use whichever exists:
+not a local branch, exists -- or simply more current than a stale local
+one). Only when `CE_BASE_BRANCH` is unset (a workspace created before this
+variable existed) or neither form resolves at all, fall back to the common
+`main`/`master` convention names, in that order, and use whichever exists:
 
 ```bash
 git -C "$CE_WORKTREE" merge-base HEAD "$CE_BASE_BRANCH"          2>/dev/null
 git -C "$CE_WORKTREE" merge-base HEAD "origin/$CE_BASE_BRANCH"   2>/dev/null
 git -C "$CE_WORKTREE" merge-base HEAD main    2>/dev/null
 git -C "$CE_WORKTREE" merge-base HEAD master  2>/dev/null
+```
+
+If both `$CE_BASE_BRANCH` and `origin/$CE_BASE_BRANCH` produced a merge
+base and the two differ, do not just take whichever command happened to
+run first: a stale local branch (or, symmetrically, an unfetched
+remote-tracking ref) silently widens the diff to include history that has
+already landed on the other side -- e.g. a PR merged upstream after the
+local branch was last updated would otherwise look like new, unreviewed
+work. Never assume either side automatically wins (a local branch can
+legitimately be ahead of `origin/` too, e.g. unpushed integration work);
+determine which of the two branches is actually the more current one (a
+descendant of the other) and use that one's merge base instead:
+
+```bash
+LOCAL_MB=$(git -C "$CE_WORKTREE" merge-base HEAD "$CE_BASE_BRANCH"        2>/dev/null)
+ORIGIN_MB=$(git -C "$CE_WORKTREE" merge-base HEAD "origin/$CE_BASE_BRANCH" 2>/dev/null)
+if [ -n "$LOCAL_MB" ] && [ -n "$ORIGIN_MB" ] && [ "$LOCAL_MB" != "$ORIGIN_MB" ]; then
+  if git -C "$CE_WORKTREE" merge-base --is-ancestor "$CE_BASE_BRANCH" "origin/$CE_BASE_BRANCH" 2>/dev/null; then
+    BASE_MB="$ORIGIN_MB"   # origin/$CE_BASE_BRANCH is ahead -- the more current base
+  elif git -C "$CE_WORKTREE" merge-base --is-ancestor "origin/$CE_BASE_BRANCH" "$CE_BASE_BRANCH" 2>/dev/null; then
+    BASE_MB="$LOCAL_MB"    # $CE_BASE_BRANCH is ahead -- the more current base
+  else
+    BASE_MB="$LOCAL_MB"    # diverged in both directions -- no principled winner by ancestry alone; keep the existing default
+  fi
+else
+  BASE_MB="${LOCAL_MB:-$ORIGIN_MB}"   # only one resolved, or both agree -- no comparison needed
+fi
 ```
 
 If a merge base is found, diff against it (`git -C "$CE_WORKTREE" diff <merge-base>...HEAD`).
