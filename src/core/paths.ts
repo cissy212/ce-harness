@@ -26,6 +26,18 @@ export function stateRoot(): string {
   return join(harnessHome(), "state");
 }
 
+/**
+ * Root directory for durable, project-scoped OpenSpec stores -- deliberately
+ * a sibling of workspacesRoot()/worktreesRoot(), never nested under either.
+ * `ce cleanup` only ever removes paths under workspacesRoot()/worktreesRoot(),
+ * so anything living here survives cleanup structurally, not because of a
+ * conditional check. See core/openspecId.ts's expectedDurableOpenSpecRoot for
+ * the full per-project path this root is combined with.
+ */
+export function openspecRoot(): string {
+  return join(harnessHome(), "openspec");
+}
+
 export function worktreePath(project: string, sanitizedIssue: string): string {
   return join(worktreesRoot(), project, sanitizedIssue);
 }
@@ -109,7 +121,13 @@ export async function removeEmptyProjectDir(dir: string): Promise<void> {
   await assertInsideHarnessHome(dir);
 
   const resolvedDir = resolve(dir);
-  const protectedTopLevelDirs = new Set([harnessHome(), worktreesRoot(), workspacesRoot(), stateRoot()]);
+  const protectedTopLevelDirs = new Set([
+    harnessHome(),
+    worktreesRoot(),
+    workspacesRoot(),
+    stateRoot(),
+    openspecRoot(),
+  ]);
   if (protectedTopLevelDirs.has(resolvedDir)) {
     return;
   }

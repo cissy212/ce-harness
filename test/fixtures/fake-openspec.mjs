@@ -15,6 +15,10 @@
 //   FAKE_OPENSPEC_FAIL_UNREGISTER=1  - `store unregister` always fails
 //     (for an id that IS registered; a genuinely unknown id still
 //     reports store_not_found so idempotent-cleanup tests keep working)
+//   FAKE_OPENSPEC_SILENT_CRASH=1     - any subcommand exits non-zero with
+//     no stdout and no stderr at all (simulates a killed/crashed process)
+//   FAKE_OPENSPEC_GARBAGE_STDOUT=1   - any subcommand exits non-zero with
+//     non-JSON stdout and no stderr
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -63,6 +67,25 @@ if (args[0] !== "store") {
 }
 
 const sub = args[1];
+
+// Two more toggles, applied uniformly regardless of which subcommand runs
+// (setup/doctor/unregister all go through the same result-parsing code in
+// core/openspec.ts): simulate a child process that dies with *no*
+// structured status and *no* stderr at all -- exactly the real, reported
+// case that previously produced an unhelpful, information-free error
+// message (see core/openspec.ts's `describeOpenSpecStatus`/`callOutcome`).
+if (process.env.FAKE_OPENSPEC_SILENT_CRASH === "1") {
+  // No stdout, no stderr -- e.g. a process killed by a signal before it
+  // could report anything.
+  process.exit(17);
+}
+if (process.env.FAKE_OPENSPEC_GARBAGE_STDOUT === "1") {
+  // Non-empty stdout that is not the expected JSON status shape, and
+  // still no stderr -- e.g. a stray warning line, or output from a
+  // future CLI version whose shape ce-harness doesn't understand yet.
+  process.stdout.write("unexpected: not a JSON status payload\n");
+  process.exit(9);
+}
 
 if (sub === "setup") {
   const id = args[2];

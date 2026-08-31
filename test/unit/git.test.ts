@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,11 +13,14 @@ import {
   deleteBranch,
   detectBaseBranch,
   isRegisteredWorktree,
+  isShallowRepository,
   queryRemoteDefaultBranch,
   readCachedRemoteDefaultBranch,
+  readOriginOrSolitaryRemoteUrl,
   removeWorktree,
   resolveCommit,
   resolveMergeBase,
+  resolveRootCommit,
 } from "../../src/core/git.js";
 
 describe("resolveCommit / resolveMergeBase", () => {
@@ -471,5 +475,126 @@ describe("removeWorktree / isRegisteredWorktree (idempotent -- a missing worktre
     // still be handled as a clean removal, not surface a raw Git error.
     expect(await isRegisteredWorktree(repoDir, worktreePath)).toBe(true);
     await expect(removeWorktree(repoDir, worktreePath, false)).resolves.toBeUndefined();
+  });
+});
+
+describe("readOriginOrSolitaryRemoteUrl", () => {
+  let repoDir: string;
+
+  afterEach(async () => {
+    if (repoDir) await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("returns null when there is no remote at all", async () => {
+    repoDir = await createTempRepo();
+    expect(await readOriginOrSolitaryRemoteUrl(repoDir)).toBeNull();
+  });
+
+  it("returns the origin remote's URL when one is configured", async () => {
+    const remoteDir = await createBareRemote("main");
+    try {
+      repoDir = await cloneRepo(remoteDir);
+      expect(await readOriginOrSolitaryRemoteUrl(repoDir)).toBe(remoteDir);
+    } finally {
+      await rm(remoteDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the sole remote when there is no 'origin' but exactly one remote exists", async () => {
+    repoDir = await createTempRepo();
+    await execa("git", ["-C", repoDir, "remote", "add", "upstream", "/some/path/repo.git"]);
+    expect(await readOriginOrSolitaryRemoteUrl(repoDir)).toBe("/some/path/repo.git");
+  });
+
+  it("returns null (never guesses) when there are multiple remotes and none is named 'origin'", async () => {
+    repoDir = await createTempRepo();
+    await execa("git", ["-C", repoDir, "remote", "add", "a", "/some/path/a.git"]);
+    await execa("git", ["-C", repoDir, "remote", "add", "b", "/some/path/b.git"]);
+    expect(await readOriginOrSolitaryRemoteUrl(repoDir)).toBeNull();
+  });
+
+  it("prefers 'origin' even when other remotes are also configured", async () => {
+    repoDir = await createTempRepo();
+    await execa("git", ["-C", repoDir, "remote", "add", "origin", "/some/path/origin.git"]);
+    await execa("git", ["-C", repoDir, "remote", "add", "fork", "/some/path/fork.git"]);
+    expect(await readOriginOrSolitaryRemoteUrl(repoDir)).toBe("/some/path/origin.git");
+  });
+});
+
+describe("isShallowRepository / resolveRootCommit", () => {
+  let repoDir: string;
+  let remoteDir: string;
+
+  afterEach(async () => {
+    if (repoDir) await rm(repoDir, { recursive: true, force: true });
+    if (remoteDir) await rm(remoteDir, { recursive: true, force: true });
+  });
+
+  it("a normal repository is not shallow", async () => {
+    repoDir = await createTempRepo();
+    expect(await isShallowRepository(repoDir)).toBe(false);
+  });
+
+  it("resolves the single root commit of a normal repository's history", async () => {
+    repoDir = await createTempRepo();
+    const root = await resolveRootCommit(repoDir);
+    expect(root).toMatch(/^[0-9a-f]{40}$/);
+
+    const expected = await execa("git", ["-C", repoDir, "rev-list", "--max-parents=0", "HEAD"]);
+    expect(root).toBe(expected.stdout.trim());
+  });
+
+  it("the root commit is identical across two independent clones of the same repository", async () => {
+    remoteDir = await createBareRemote("main");
+    const cloneA = await cloneRepo(remoteDir, "ce-harness-clone-a-");
+    const cloneB = await cloneRepo(remoteDir, "ce-harness-clone-b-");
+    try {
+      const rootA = await resolveRootCommit(cloneA);
+      const rootB = await resolveRootCommit(cloneB);
+      expect(rootA).not.toBeNull();
+      expect(rootA).toBe(rootB);
+    } finally {
+      await rm(cloneA, { recursive: true, force: true });
+      await rm(cloneB, { recursive: true, force: true });
+    }
+  });
+
+  it("the root commit survives the repository being cloned to a differently-named path", async () => {
+    remoteDir = await createBareRemote("main");
+    repoDir = await cloneRepo(remoteDir);
+    const rootFromClone = await resolveRootCommit(repoDir);
+    const rootFromOriginalSeed = await resolveRootCommit(remoteDir);
+    expect(rootFromClone).toBe(rootFromOriginalSeed);
+  });
+
+  it("a shallow clone is detected as shallow, and its root commit is not trusted (returns null)", async () => {
+    remoteDir = await createBareRemote("main");
+    // Add a second commit so a --depth=1 clone genuinely can't see the
+    // repository's true root commit.
+    const seedClone = await cloneRepo(remoteDir, "ce-harness-seed-second-commit-");
+    try {
+      await writeFile(join(seedClone, "second.txt"), "more\n", "utf8");
+      await execa("git", ["-C", seedClone, "add", "."]);
+      await execa("git", ["-C", seedClone, "commit", "-m", "second commit"]);
+      await execa("git", ["-C", seedClone, "push", "origin", "main"]);
+    } finally {
+      await rm(seedClone, { recursive: true, force: true });
+    }
+
+    repoDir = await mkdtemp(join(tmpdir(), "ce-harness-shallow-clone-"));
+    // `--depth` is silently ignored for a plain local-path clone ("local
+    // clones" use a hardlink/copy optimization that bypasses the
+    // shallow-fetch machinery entirely) -- file:// forces a real,
+    // protocol-level clone that honors it.
+    await execa("git", ["clone", "--depth", "1", `file://${remoteDir}`, repoDir]);
+
+    expect(await isShallowRepository(repoDir)).toBe(true);
+    expect(await resolveRootCommit(repoDir)).toBeNull();
+  });
+
+  it("returns null for a brand-new repository with no commits yet", async () => {
+    repoDir = await mkdtemp(join(tmpdir(), "ce-harness-empty-repo-"));
+    await execa("git", ["init", "--initial-branch=main", repoDir]);
+    expect(await resolveRootCommit(repoDir)).toBeNull();
   });
 });

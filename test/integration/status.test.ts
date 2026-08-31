@@ -79,7 +79,8 @@ describe("ce status (integration)", () => {
     expect(output).toMatch(/Branch exists:\s+yes/);
     expect(output).toMatch(/Worktree changes:\s+clean/);
     expect(output).toMatch(/OpenSpec store:\s+ce-/);
-    expect(output).toMatch(/OpenSpec root:\s+.+\/openspec$/m);
+    expect(output).toMatch(/OpenSpec root:\s+.+\/openspec\/.+$/m);
+    expect(output).toMatch(/OpenSpec durable:\s+yes/);
     expect(output).toMatch(/OpenSpec healthy:\s+yes/);
     expect(output).toMatch(/OpenCode config:\s+.+\/opencode$/m);
     expect(output).toMatch(/OpenCode config exists:\s+yes/);

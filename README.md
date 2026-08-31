@@ -2,12 +2,17 @@
 
 Personal, local-only developer harness for working on Git repositories.
 `ce start` creates an isolated Git worktree plus a workspace directory
-under `~/.ce-harness`, provisions an external [OpenSpec](https://github.com/Fission-AI/OpenSpec)
-store for it, and launches a coding-agent runner — [OpenCode](https://opencode.ai)
+under `~/.ce-harness`, provisions this project's durable
+[OpenSpec](https://github.com/Fission-AI/OpenSpec) store for it, and
+launches a coding-agent runner — [OpenCode](https://opencode.ai)
 by default, or [Claude Code](https://claude.com/claude-code) via
 `--runner claude` — inside that worktree. The target repository itself is
 never modified with any harness/OpenSpec files — everything ce-harness
-creates lives outside of it.
+creates lives outside of it. The OpenSpec store is *durable*: it lives at
+`~/.ce-harness/openspec/<project>/<repo-hash>`, outside every ephemeral
+workspace/worktree `ce cleanup` ever deletes, so it survives cleanup and
+every later workspace for the same project reuses it — synced main specs
+and archived changes included — instead of starting from empty.
 
 This document is a complete, step-by-step installation guide for someone
 who has never used ce-harness before, followed by a full user guide
@@ -295,17 +300,47 @@ example `fix-login-bug` or `issue-42`).
   shows the same result (including any warning) again later.
 - **Workspace directory.** Alongside the worktree, `ce start` creates a
   workspace directory under `~/.ce-harness/workspaces/<project>/<issue>`.
-  This holds everything ce-harness itself owns for that issue: the
-  external OpenSpec store, the runner's configuration (commands, skills,
-  reasoning lenses), and `workspace.yml` metadata. Nothing under here is
-  ever written inside your repository or worktree either.
-- **External OpenSpec store.** ce-harness uses
+  This holds everything ce-harness owns for that issue *specifically*: the
+  runner's configuration (commands, skills, reasoning lenses) and
+  `workspace.yml` metadata. `ce cleanup` deletes this directory entirely —
+  which is why the OpenSpec store (below) deliberately does **not** live
+  here. Nothing under this directory is ever written inside your
+  repository or worktree either.
+- **Durable, project-scoped OpenSpec store.** ce-harness uses
   [OpenSpec](https://github.com/Fission-AI/OpenSpec) for spec-driven
   development (proposal → design → tasks → implementation → verification
-  → archive), but the spec files themselves live entirely inside the
-  workspace directory, registered globally with OpenSpec under a
-  deterministic id (`ce-<project>-<issue>-<hash>`) — never as an
-  `openspec/` folder inside your repository.
+  → archive). The store lives at `~/.ce-harness/openspec/<project-id>` —
+  a sibling of the worktrees/workspaces directories, never nested under
+  either — registered globally with OpenSpec under a deterministic id
+  (`ce-<project-id>`, no issue in it). `<project-id>` is this project's
+  **Project Identity** — see [Project Identity](#project-identity) below
+  for what it is and why it's not just a hash of the repository's path.
+  This means:
+  - It **survives `ce cleanup`**: cleanup only ever deletes paths under
+    `worktrees/`/`workspaces/`, so the store is structurally out of reach,
+    not just skipped by a conditional check.
+  - It is **shared across every workspace for the same project**: a
+    second `ce start` for the same repository (any issue, and — thanks to
+    Project Identity — even from a different clone or path of the same
+    repository) reuses the exact same store — including specs synced by
+    `/archive` and any past `/verify`/`/adversarial-review` reports —
+    instead of starting from an empty store.
+  - It is **never** an `openspec/` folder inside your repository.
+  - A workspace created before durable storage existed keeps its old,
+    workspace-scoped store (the pre-existing behavior: `ce cleanup`
+    unregisters it, and its files are deleted along with the workspace
+    directory) until you explicitly move it — see
+    [`ce migrate-openspec`](#ce-migrate-openspec) below.
+  - Because the store now persists across issues, it can end up holding
+    an **in-progress, unarchived change** left behind by a workspace that
+    was cleaned up before running `/archive` (nothing is lost — that's
+    the point — but it's still sitting there). If a later workspace for
+    the same project proposes a change with the same name, this is an
+    OpenSpec-level name collision, not something ce-harness mediates.
+    OpenSpec's own `/archive` step is confirmed to refuse (rather than
+    silently overwrite) a colliding archive-date folder; run `/explore`
+    first in a reused workspace if you want to see what's already there
+    before proposing a new change.
 - **One active workspace at a time.** ce-harness tracks a single active
   workspace. `ce start` refuses to run if one is already active; run
   `ce cleanup` first to finish or discard it before starting another.
@@ -321,6 +356,54 @@ example `fix-login-bug` or `issue-42`).
   adapter, never a change to the workflow itself. See
   [Choosing a coding-agent runner](#choosing-a-coding-agent-runner).
 
+### Project Identity
+
+Every project's durable OpenSpec store is keyed by a **Project
+Identity**: a stable, ce-harness-minted id (`<project-id>` above), not a
+hash of the repository's current path. `ce start` resolves it
+automatically, and you'll only ever see it directly in `ce status`'s
+output or a store's `.identity.yml` file.
+
+The reason this exists: a project's local checkout path changes all the
+time — a fresh clone lands in a differently-named folder, a repository
+gets renamed or moved, a fork is cloned somewhere else entirely. Keying
+the durable store to the path (or a hash of it, as ce-harness did before
+Project Identity) means every one of those ordinary events would silently
+start a brand-new, empty store instead of recognizing the project's
+existing one.
+
+Project Identity fixes this by treating the id itself as independent of
+the repository — Git signals (the normalized `origin` remote URL, and the
+repository's root commit) are only ever **evidence** used to recognize an
+id already minted, never something the id is derived from or changes in
+response to. On each `ce start`, ce-harness reads those two signals and
+compares them against every known project's recorded evidence:
+
+- **Both signals agree with one recorded snapshot** → the existing
+  project id is reused automatically.
+- **Only one signal agrees** (e.g. the origin URL matches but the root
+  commit doesn't, or vice versa) → ce-harness refuses rather than
+  guessing, since this could be a coincidence or a genuine repository
+  transfer/history rewrite, and attaching the wrong project's history is
+  worse than not finding it. The error names the candidate project id;
+  confirm it explicitly with `--project-id <id>` if it really is the same
+  project, or start a separate identity with `--new-project`.
+- **Signals point at more than one known project** → ce-harness refuses
+  the same way, listing every conflicting id.
+- **Nothing matches** (including a brand-new repository with no prior
+  history at all) → a fresh project id is minted.
+
+A repository with no remote configured at all is still recognized
+correctly across a rename or a different local path, purely by its root
+commit — the origin signal simply contributes no evidence either way in
+that case, rather than blocking recognition. A shallow clone can't
+provide root-commit evidence at all (see `resolveRootCommit`), so it
+relies on the origin URL alone.
+
+This only decides *which durable store belongs to this repository* — it
+has nothing to do with picking a scope inside a monorepo, which remains
+a separate, unsolved problem.
+
 ### Quick start
 
 ```bash
@@ -328,9 +411,10 @@ ce start /path/to/your/repository fix-login-bug
 ```
 
 This validates the repository, creates the worktree and workspace,
-provisions the OpenSpec store, and launches OpenCode inside the worktree
-with everything wired up. Before OpenCode launches, it prints a concise
-summary of what to do next:
+provisions this project's durable OpenSpec store (reusing it unchanged if
+an earlier workspace for this repository already created it), and
+launches OpenCode inside the worktree with everything wired up. Before
+OpenCode launches, it prints a concise summary of what to do next:
 
 ```
 Workspace ready.
@@ -371,9 +455,12 @@ When you're done (or want to abandon the attempt):
 ce cleanup
 ```
 
-This removes the worktree, its branch, and the workspace directory, and
-unregisters the OpenSpec store. Use `ce status` any time in between to
-see what's currently active. If OpenCode ever exits before you're done
+This removes the worktree, its branch, and the workspace directory. The
+project's durable OpenSpec store is left registered and untouched — it
+lives outside the workspace directory entirely, so cleanup structurally
+cannot reach it, and the next `ce start` for this repository reuses it.
+Use `ce status` any time in between to see what's currently active. If
+OpenCode ever exits before you're done
 (closed the terminal, crashed, etc.), `ce resume` gets you straight back
 into the same workspace — see [Resuming a session](#resuming-a-session).
 
@@ -382,7 +469,8 @@ into the same workspace — see [Resuming a session](#resuming-a-session).
 #### `ce start <repo> <issue>`
 
 Creates the worktree and workspace for `<issue>` against the Git
-repository at `<repo>`, provisions its OpenSpec store, and launches a
+repository at `<repo>`, provisions this project's durable OpenSpec store
+(created on first use, reused unchanged after that), and launches a
 coding-agent runner inside the worktree.
 
 - `<repo>` — path to your existing local clone. It must be clean (no
@@ -398,6 +486,10 @@ coding-agent runner inside the worktree.
   Mutually exclusive with `--from`.
 - `--runner <runner>` — optional; `opencode` (default) or `claude`. See
   [Choosing a coding-agent runner](#choosing-a-coding-agent-runner).
+- `--project-id <id>` / `--new-project` — optional, and mutually
+  exclusive; only needed when ce-harness refuses to auto-resolve this
+  repository's Project Identity on its own. See
+  [Project Identity](#project-identity) below.
 
 If the runner fails to launch after everything else succeeds, `ce start`
 does **not** roll the workspace back — the workspace is still valid and
@@ -463,26 +555,73 @@ reports:
 - The reasoning-lenses directory and whether it exists
 - Whether the repository needs bootstrapping (dependencies installed,
   etc.), and if so, the exact commands to fix it
-- The OpenSpec store id, root path, and health check result
+- The OpenSpec store id, root path, whether it's durable (survives `ce
+  cleanup`) or a legacy, workspace-scoped store, and its health check
+  result
 
 #### `ce cleanup [--force]`
 
 Removes the active workspace's worktree, its Git branch, and the
-workspace directory, and unregisters its OpenSpec store first. Refuses
-(without `--force`) if:
+workspace directory. What happens to the OpenSpec store depends on its
+kind:
+
+- **Durable, project-scoped store** (the default since this workspace's
+  `ce start`): left registered and untouched. It lives outside the
+  workspace directory entirely, so this is structural, not a skipped
+  step.
+- **Legacy, workspace-scoped store** (a workspace created before durable
+  storage existed, or never migrated — see `ce migrate-openspec` below):
+  unregistered first, exactly as before this feature existed, and its
+  files are deleted along with the workspace directory.
+
+Refuses (without `--force`) if:
 
 - the worktree has tracked or untracked changes (to avoid silently
   discarding work), or
 - your current shell directory is inside the worktree being removed (to
   avoid leaving your shell in a directory that no longer exists) — `cd`
   out of it first, or
-- the OpenSpec store can't be unregistered because the `openspec`
-  executable isn't available.
+- the workspace has a legacy store and it can't be unregistered because
+  the `openspec` executable isn't available (a durable store never
+  triggers this check at all, since cleanup never touches it).
 
 `--force` proceeds through the first and third of these anyway (discards
-worktree changes; removes harness-owned files even if unregistering the
-store failed). It never bypasses the "your shell is inside the worktree"
-check — always `cd` elsewhere first.
+worktree changes; removes harness-owned files even if unregistering a
+legacy store failed). It never bypasses the "your shell is inside the
+worktree" check — always `cd` elsewhere first.
+
+#### `ce migrate-openspec`
+
+Explicitly, safely moves the active workspace's OpenSpec store onto the
+current, Project-Identity-keyed durable store, so it survives `ce
+cleanup` and is recognized again across future clones/renames of this
+repository. Never runs automatically — an existing workspace never
+changes storage behavior just because the CLI was upgraded underneath
+it; you decide when to migrate. Two source shapes are recognized and
+both migrate the same way from here on: a legacy, workspace-scoped store
+(pre-durable-storage), and a durable store still on the older,
+path-hash-keyed shape (`~/.ce-harness/openspec/<project>/<repo-hash>` —
+predates Project Identity).
+
+- If the workspace already uses the current scheme, this is a no-op.
+- The old store's files are never deleted, moved, or modified — only
+  read and copied. After a successful migration, remove the old store
+  yourself once you've confirmed the migrated data looks correct (the
+  command prints the exact path).
+- If this project's durable store already exists and its content
+  conflicts with the store being migrated (differing files, or files the
+  durable store is missing), it refuses with an itemized description of
+  the conflict rather than overwriting or merging — resolve it manually,
+  then re-run.
+- Idempotent: running it again after a successful migration, or on a
+  workspace that already has an identical durable store, is a safe no-op.
+- `--project-id <id>` / `--new-project` — optional, and mutually
+  exclusive; same meaning as `ce start`'s — see
+  [Project Identity](#project-identity).
+
+```bash
+ce migrate-openspec
+```
 
 ### Choosing a coding-agent runner
 
@@ -843,7 +982,7 @@ need to relaunch manually for debugging (see
 | `CE_ISSUE` | The issue identifier you passed to `ce start`. |
 | `CE_WORKSPACE` | Absolute path to this issue's workspace directory. |
 | `CE_WORKTREE` | Absolute path to this issue's Git worktree — where all code changes happen. |
-| `CE_OPENSPEC_STORE` | The registered OpenSpec store id for this workspace. Every `openspec` command the workflow runs includes `--store` with this value. |
+| `CE_OPENSPEC_STORE` | The registered OpenSpec store id for this workspace -- this project's durable store for any workspace created after durable storage existed, or a legacy workspace-scoped id otherwise. Every `openspec` command the workflow runs includes `--store` with this value. |
 | `CE_LENSES_DIR` | Absolute path to the canonical, runner-agnostic reasoning-lens directory for this workspace. |
 | `OPENCODE_CONFIG_DIR` | Absolute path to this workspace's OpenCode config (`commands/`, `skills/`, `agents/`). |
 | `CE_DIFF_BASE` / `CE_DIFF_HEAD` | Only present when `ce start` was given `--base`/`--head`; the resolved commit SHAs of the exact range being reviewed. |
@@ -863,19 +1002,25 @@ Code.
 ```
 ~/.ce-harness/
   worktrees/<project>/<issue>/       # the Git worktree -- your code changes live here
-  workspaces/<project>/<issue>/
+  workspaces/<project>/<issue>/      # ephemeral -- deleted whole by `ce cleanup`
     workspace.yml                    # metadata: paths, branch, OpenSpec store id, review range (if any)
-    openspec/                        # the external OpenSpec store (proposal, design, specs, tasks, reports, archive)
-                                     #   reviews/ -- Existing PR review workspaces only: /adversarial-review's
-                                     #   dedicated report location, since there is no change to nest reports under
     lenses/                          # canonical reasoning-lens files
     opencode/
       commands/                     # the /workspace, /explore, /propose, /apply, /verify, /adversarial-review, /archive templates
       skills/                       # openspec-sync-specs, composition-patterns
       agents/                       # OpenCode-specific mirror of the lens files
+  openspec/<project-id>/             # durable -- survives `ce cleanup`, shared by every workspace for this project
+                                     #   .identity.yml -- this project's Project Identity record (see below)
+                                     #   the OpenSpec store itself (proposal, design, specs, tasks, reports, archive)
+                                     #   reviews/ -- Existing PR review workspaces only: /adversarial-review's
+                                     #   dedicated report location, since there is no change to nest reports under
   state/
     active.yml                      # which single workspace is currently active
 ```
+
+A workspace created before durable storage existed still has its OpenSpec
+store nested at `workspaces/<project>/<issue>/openspec/` instead -- see
+`ce migrate-openspec` above to move it.
 
 If CodeGraph (semantic code navigation) is available and used, its index
 lives at `<worktree>/.codegraph/` — never inside the workspace directory

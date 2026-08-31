@@ -6,6 +6,7 @@ import { cleanupCommand } from "./commands/cleanup.js";
 import { resumeCommand } from "./commands/resume.js";
 import { refreshCommand } from "./commands/refresh.js";
 import { openCommand } from "./commands/open.js";
+import { migrateOpenSpecCommand } from "./commands/migrateOpenSpec.js";
 import { formatError } from "./core/errors.js";
 
 /**
@@ -25,11 +26,16 @@ export async function runCli(): Promise<void> {
         "Personal, local-only developer harness for working on Git repositories.",
         "",
         "Each `ce start` creates an isolated Git worktree plus a workspace directory",
-        "under ~/.ce-harness, and provisions an external OpenSpec store at",
-        "<workspace>/openspec, registered globally with OpenSpec by a deterministic",
-        '"ce-<project>-<issue>-<hash>" id. The target repository and the temporary',
-        "code worktree are never modified with OpenSpec files: the store always",
-        "lives outside of them, under the harness workspace directory.",
+        "under ~/.ce-harness, and provisions a durable, project-scoped OpenSpec store",
+        "at ~/.ce-harness/openspec/<project>/<repo-hash>, registered globally with",
+        'OpenSpec by a deterministic "ce-<project>-<hash>" id. Durable means the store',
+        "lives outside every workspace/worktree ce-harness ever deletes: it survives",
+        "`ce cleanup`, and every later workspace for the same project reuses the same",
+        "store (its synced main specs and archived changes included) instead of",
+        "starting from empty. The target repository and the temporary code worktree",
+        "are never modified with OpenSpec files. A workspace created before durable",
+        "storage existed keeps its old, workspace-scoped store unless explicitly",
+        "moved with `ce migrate-openspec`.",
         "",
         "Prerequisite: the `openspec` executable must be installed and on PATH",
         "(e.g. `npm install -g @fission-ai/openspec`).",
@@ -42,9 +48,11 @@ export async function runCli(): Promise<void> {
     .description(
       [
         "Create an isolated Git worktree and workspace for an issue, without",
-        "touching the target repository, and provision an external OpenSpec",
-        "store for it (registered globally by id, stored under the workspace",
-        "directory, never inside the target repository or worktree). By",
+        "touching the target repository, and provision this project's durable",
+        "OpenSpec store for it (registered globally by id, stored outside every",
+        "workspace/worktree so it survives `ce cleanup`, and reused unchanged if",
+        "an earlier workspace for this project already created it -- never inside",
+        "the target repository or worktree). By",
         "default, the worktree starts from the repository's detected base",
         "branch tip (see `detectBaseBranch`; never assumes \"main\"). Pass",
         "--from to instead start this same kind of Implementation workspace",
@@ -72,11 +80,29 @@ export async function runCli(): Promise<void> {
       "--runner <runner>",
       'coding-agent runner to launch: "opencode" (default) or "claude"',
     )
+    .option(
+      "--project-id <id>",
+      "attach this workspace's durable OpenSpec store to an already-known project id " +
+        "(see `ce status`), resolving an ambiguous (CANDIDATE) or conflicting Project Identity " +
+        "match instead of refusing; the id must already exist -- this never invents one",
+    )
+    .option(
+      "--new-project",
+      "mint a brand-new Project Identity for this repository even if ce-harness recognizes " +
+        "(or partially recognizes) it as an existing project; mutually exclusive with --project-id",
+    )
     .action(
       async (
         repo: string,
         issue: string,
-        options: { base?: string; head?: string; from?: string; runner?: string },
+        options: {
+          base?: string;
+          head?: string;
+          from?: string;
+          runner?: string;
+          projectId?: string;
+          newProject?: boolean;
+        },
       ) => {
         await run(() =>
           startCommand({
@@ -86,6 +112,8 @@ export async function runCli(): Promise<void> {
             head: options.head,
             from: options.from,
             runner: options.runner,
+            projectId: options.projectId,
+            newProject: options.newProject,
           }),
         );
       },
@@ -154,6 +182,41 @@ export async function runCli(): Promise<void> {
     });
 
   program
+    .command("migrate-openspec")
+    .description(
+      [
+        "Explicitly, safely move the active workspace's OpenSpec store onto the",
+        "current, durable, Project-Identity-keyed store (see `ce start`'s",
+        "description) so it survives `ce cleanup` and is recognized again across",
+        "future clones/renames of this repository. Covers both a legacy,",
+        "per-workspace store and a durable store still on the older,",
+        "path-hash-keyed shape. Never runs automatically -- an existing workspace",
+        "never changes storage behavior just because the CLI was upgraded. The old",
+        "store's files are never deleted; remove them yourself once you've",
+        "confirmed the migrated data looks correct. Refuses (rather than",
+        "overwriting or merging) if the durable destination already has",
+        "conflicting content, or if Project Identity resolution is ambiguous (see",
+        "--project-id/--new-project). Idempotent: a workspace already on the",
+        "current scheme is reported as a no-op.",
+      ].join(" "),
+    )
+    .option(
+      "--project-id <id>",
+      "attach to an already-known project id instead of letting ce-harness detect or mint one " +
+        "automatically; the id must already exist -- this never invents one",
+    )
+    .option(
+      "--new-project",
+      "mint a brand-new Project Identity even if ce-harness recognizes (or partially recognizes) " +
+        "this repository as an existing project; mutually exclusive with --project-id",
+    )
+    .action(async (options: { projectId?: string; newProject?: boolean }) => {
+      await run(() =>
+        migrateOpenSpecCommand({ projectId: options.projectId, newProject: options.newProject }),
+      );
+    });
+
+  program
     .command("status")
     .description(
       "Show details about the currently active ce-harness workspace, if any, " +
@@ -167,8 +230,12 @@ export async function runCli(): Promise<void> {
     .command("cleanup")
     .description(
       "Remove the active workspace's worktree, branch, and workspace directory. " +
-        "Unregisters the workspace's OpenSpec store first (never deletes its files " +
-        "directly; ce-harness always removes the workspace directory itself).",
+        "If the workspace's OpenSpec store is a legacy, workspace-scoped one, this " +
+        "unregisters it first (never deletes its files directly -- removing the " +
+        "workspace directory does that) and it is lost, exactly like before. This " +
+        "project's durable OpenSpec store (the default since `ce migrate-openspec` " +
+        "was introduced) is left registered and untouched: it lives outside the " +
+        "workspace directory entirely, so cleanup cannot reach it.",
     )
     .option(
       "--force",

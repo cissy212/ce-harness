@@ -37,5 +37,7 @@ export async function teardownFakeOpenSpec(env: FakeOpenSpecEnv): Promise<void> 
   delete process.env.FAKE_OPENSPEC_FAIL_SETUP;
   delete process.env.FAKE_OPENSPEC_FAIL_DOCTOR;
   delete process.env.FAKE_OPENSPEC_FAIL_UNREGISTER;
+  delete process.env.FAKE_OPENSPEC_SILENT_CRASH;
+  delete process.env.FAKE_OPENSPEC_GARBAGE_STDOUT;
   await rm(env.dir, { recursive: true, force: true });
 }

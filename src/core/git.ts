@@ -274,6 +274,75 @@ export async function readGitConfig(repoPath: string, key: string): Promise<stri
 }
 
 /**
+ * Returns the URL of the repository's "origin" remote, falling back to
+ * the sole remote when there is no "origin" but exactly one remote is
+ * configured (e.g. a plain `git clone` under a renamed remote). Returns
+ * null when there is no remote at all, or when there are multiple
+ * remotes and none of them is named "origin" -- in that ambiguous case
+ * this deliberately does not guess, since callers use this as project
+ * identity *evidence* and a wrong guess is worse than no evidence.
+ */
+export async function readOriginOrSolitaryRemoteUrl(repoPath: string): Promise<string | null> {
+  const originUrl = await readGitConfig(repoPath, "remote.origin.url");
+  if (originUrl) return originUrl;
+
+  const listResult = await git(repoPath, ["remote"]);
+  if (listResult.exitCode !== 0) return null;
+  const remotes = listResult.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (remotes.length !== 1) return null;
+
+  return readGitConfig(repoPath, `remote.${remotes[0]}.url`);
+}
+
+/**
+ * True if `repoPath` is a shallow clone (`--depth`-limited history).
+ * Project identity evidence that depends on the *complete* commit graph
+ * (see resolveRootCommit) is not trustworthy in a shallow clone: the
+ * "oldest" commit Git can see is just wherever the shallow boundary
+ * happens to sit, not the repository's actual root commit.
+ */
+export async function isShallowRepository(repoPath: string): Promise<boolean> {
+  const result = await git(repoPath, ["rev-parse", "--is-shallow-repository"]);
+  if (result.exitCode !== 0) return false;
+  return result.stdout.trim() === "true";
+}
+
+/**
+ * Resolves the repository's single root commit (the commit with no
+ * parents, reachable from HEAD) -- used as project identity evidence
+ * because, unlike the origin URL, it survives a repository transfer to
+ * a different remote/host/URL and is unaffected by renames.
+ *
+ * Returns null (never throws, never guesses) when the root commit
+ * cannot be trusted as unique identity evidence:
+ *   - the repository is shallow (isShallowRepository) -- Git cannot see
+ *     far enough back to know the true root commit;
+ *   - HEAD is unresolvable (e.g. a brand-new repository with no commits
+ *     yet);
+ *   - history has more than one root commit (an octopus/unrelated-
+ *     histories merge) -- there is no single "the" root commit to
+ *     compare against, so this is treated the same as no evidence
+ *     rather than picking one arbitrarily.
+ */
+export async function resolveRootCommit(repoPath: string): Promise<string | null> {
+  if (await isShallowRepository(repoPath)) return null;
+
+  const result = await git(repoPath, ["rev-list", "--max-parents=0", "HEAD"]);
+  if (result.exitCode !== 0) return null;
+
+  const roots = result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (roots.length !== 1) return null;
+
+  return roots[0];
+}
+
+/**
  * Adds `pattern` to `repoPath`'s local, never-committed exclude file
  * (`<git-common-dir>/info/exclude`) -- Git's own purpose-built mechanism
  * for exactly this: a personal ignore rule that never touches any

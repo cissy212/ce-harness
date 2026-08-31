@@ -416,8 +416,54 @@ describe("ce cleanup (integration)", () => {
     });
   });
 
+  /**
+   * Constructs a workspace whose OpenSpec store is the OLD, legacy,
+   * per-workspace kind (registered with a real -- fake-backed -- store
+   * under `workspacePath/openspec`, no `durable` flag), exactly what `ce
+   * start` created before durable, project-scoped storage existed.
+   * Bypasses `startCommand` entirely (which now always provisions a
+   * durable store) so the pre-durable-storage cleanup behavior these
+   * tests exercise stays covered.
+   */
+  async function startLegacyOpenSpecWorkspace(project: string, sanitizedIssue: string) {
+    const { worktreePath: buildWorktreePath, workspacePath: buildWorkspacePath } = await import(
+      "../../src/core/paths.js"
+    );
+    const { addWorktree, detectBaseBranch } = await import("../../src/core/git.js");
+    const { generateStoreId, expectedOpenSpecRoot } = await import("../../src/core/openspecId.js");
+    const { setupStore } = await import("../../src/core/openspec.js");
+    const { writeWorkspace, writeActivePointer } = await import("../../src/core/workspace.js");
+
+    const worktreePath = buildWorktreePath(project, sanitizedIssue);
+    const workspacePath = buildWorkspacePath(project, sanitizedIssue);
+    const baseBranch = await detectBaseBranch(repoDir);
+    await addWorktree(repoDir, worktreePath, `ce-harness/${sanitizedIssue}`, baseBranch!.ref);
+    await mkdir(workspacePath, { recursive: true });
+
+    const storeId = generateStoreId(project, sanitizedIssue, repoDir);
+    const root = expectedOpenSpecRoot(workspacePath);
+    const setupResult = await setupStore(workspacePath, storeId, root);
+    if (!setupResult.success) throw new Error("legacy fixture setupStore failed");
+
+    const workspace = {
+      project,
+      repositoryPath: repoDir,
+      issue: sanitizedIssue,
+      sanitizedIssue,
+      baseBranch: "main",
+      internalBranch: `ce-harness/${sanitizedIssue}`,
+      worktreePath,
+      workspacePath,
+      createdAt: new Date().toISOString(),
+      openSpec: { storeId, root },
+    };
+    await writeWorkspace(workspace as Parameters<typeof writeWorkspace>[0]);
+    await writeActivePointer({ project, sanitizedIssue });
+    return { storeId, root, worktreePath, workspacePath };
+  }
+
   describe("OpenSpec integration", () => {
-    it("unregisters the OpenSpec store before deleting the workspace", async () => {
+    it("leaves a durable OpenSpec store registered and untouched, deleting only the workspace directory", async () => {
       const { startCommand } = await import("../../src/commands/start.js");
       const { cleanupCommand } = await import("../../src/commands/cleanup.js");
       const { readWorkspace } = await import("../../src/core/workspace.js");
@@ -425,7 +471,30 @@ describe("ce cleanup (integration)", () => {
 
       await startCommand({ repo: repoDir, issue: "issue-1" });
       const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      expect(workspace.openSpec?.durable).toBe(true);
       const storeId = workspace.openSpec!.storeId;
+
+      let registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+      expect(registry[storeId]).toBeDefined();
+
+      await cleanupCommand({});
+
+      // The durable store is left registered -- structurally impossible
+      // for cleanup to remove it, since it lives outside workspacesRoot().
+      registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+      expect(registry[storeId]).toBeDefined();
+      expect(existsSync(workspace.openSpec!.root)).toBe(true);
+
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+      expect(existsSync(workspacePath)).toBe(false);
+    });
+
+    it("a legacy, per-workspace OpenSpec store is still unregistered before deleting the workspace (backward compatibility)", async () => {
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const project = basenameOf(repoDir);
+      const { storeId, workspacePath } = await startLegacyOpenSpecWorkspace(project, "issue-1");
 
       let registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
       expect(registry[storeId]).toBeDefined();
@@ -434,41 +503,34 @@ describe("ce cleanup (integration)", () => {
 
       registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
       expect(registry[storeId]).toBeUndefined();
-
-      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
       expect(existsSync(workspacePath)).toBe(false);
     });
 
-    it("is idempotent when the store was already manually unregistered", async () => {
-      const { startCommand } = await import("../../src/commands/start.js");
+    it("is idempotent when a legacy store was already manually unregistered", async () => {
       const { cleanupCommand } = await import("../../src/commands/cleanup.js");
-      const { readWorkspace } = await import("../../src/core/workspace.js");
       const { unregisterStore } = await import("../../src/core/openspec.js");
       vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-      await startCommand({ repo: repoDir, issue: "issue-1" });
-      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
-      await unregisterStore(workspace.workspacePath, workspace.openSpec!.storeId);
+      const project = basenameOf(repoDir);
+      const { storeId, workspacePath } = await startLegacyOpenSpecWorkspace(project, "issue-1");
+      await unregisterStore(workspacePath, storeId);
 
       await expect(cleanupCommand({})).resolves.toBeUndefined();
 
-      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
       expect(existsSync(workspacePath)).toBe(false);
     });
 
-    it("refuses cleanup (leaving the workspace and active pointer intact) when unregister fails without --force", async () => {
-      const { startCommand } = await import("../../src/commands/start.js");
+    it("refuses cleanup of a legacy workspace (leaving it and the active pointer intact) when unregister fails without --force", async () => {
       const { cleanupCommand } = await import("../../src/commands/cleanup.js");
       vi.spyOn(console, "log").mockImplementation(() => undefined);
       vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+      const { workspacePath, worktreePath } = await startLegacyOpenSpecWorkspace(project, "issue-1");
       process.env.FAKE_OPENSPEC_FAIL_UNREGISTER = "1";
 
       await expect(cleanupCommand({})).rejects.toThrow(/failed to unregister openspec store/i);
 
-      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
-      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
       expect(existsSync(workspacePath)).toBe(true);
       expect(existsSync(worktreePath)).toBe(true);
 
@@ -476,19 +538,17 @@ describe("ce cleanup (integration)", () => {
       expect(await readActivePointer()).not.toBeNull();
     });
 
-    it("with --force, reports the failed unregister and still safely removes harness-owned files", async () => {
-      const { startCommand } = await import("../../src/commands/start.js");
+    it("with --force, reports a legacy store's failed unregister and still safely removes harness-owned files", async () => {
       const { cleanupCommand } = await import("../../src/commands/cleanup.js");
       vi.spyOn(console, "log").mockImplementation(() => undefined);
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+      const { workspacePath, worktreePath } = await startLegacyOpenSpecWorkspace(project, "issue-1");
       process.env.FAKE_OPENSPEC_FAIL_UNREGISTER = "1";
 
       await expect(cleanupCommand({ force: true })).resolves.toBeUndefined();
 
-      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
-      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
       expect(existsSync(workspacePath)).toBe(false);
       expect(existsSync(worktreePath)).toBe(false);
 
@@ -574,19 +634,32 @@ describe("ce cleanup (integration)", () => {
       expect(await readActivePointer()).toBeNull();
     });
 
-    it("refuses cleanup without --force when the openspec executable is unavailable but trusted metadata exists", async () => {
-      const { startCommand } = await import("../../src/commands/start.js");
+    it("refuses cleanup of a legacy workspace without --force when the openspec executable is unavailable but trusted metadata exists", async () => {
       const { cleanupCommand } = await import("../../src/commands/cleanup.js");
       vi.spyOn(console, "log").mockImplementation(() => undefined);
       vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+      const { workspacePath } = await startLegacyOpenSpecWorkspace(project, "issue-1");
       process.env.CE_OPENSPEC_BIN = nonExistentOpenSpecBin(fakeOpenSpec.dir);
 
       await expect(cleanupCommand({})).rejects.toThrow(/openspec.*not available/i);
 
-      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
       expect(existsSync(workspacePath)).toBe(true);
+    });
+
+    it("a durable store's cleanup never even checks openspec availability -- it succeeds even if the executable is unavailable", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      process.env.CE_OPENSPEC_BIN = nonExistentOpenSpecBin(fakeOpenSpec.dir);
+
+      await expect(cleanupCommand({})).resolves.toBeUndefined();
+
+      const workspacePath = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1");
+      expect(existsSync(workspacePath)).toBe(false);
     });
   });
 

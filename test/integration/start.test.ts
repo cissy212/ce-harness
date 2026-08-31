@@ -74,7 +74,7 @@ describe("ce start (integration)", () => {
     expect(pointer).toEqual({ project: basenameOf(repoDir), sanitizedIssue: "fix-bug-42" });
   });
 
-  it("creates and registers an external OpenSpec store, and persists its metadata", async () => {
+  it("creates and registers a durable, project-scoped OpenSpec store, and persists its metadata", async () => {
     const { startCommand } = await import("../../src/commands/start.js");
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -85,7 +85,10 @@ describe("ce start (integration)", () => {
 
     expect(workspace.openSpec).toBeDefined();
     expect(workspace.openSpec?.storeId).toMatch(/^ce-/);
-    expect(workspace.openSpec?.root).toBe(join(workspace.workspacePath, "openspec"));
+    expect(workspace.openSpec?.durable).toBe(true);
+    // Durable: outside the workspace tree entirely, not <workspace>/openspec.
+    expect(workspace.openSpec?.root).not.toBe(join(workspace.workspacePath, "openspec"));
+    expect(workspace.openSpec?.root.startsWith(join(harnessHomeDir, "openspec"))).toBe(true);
     expect(existsSync(workspace.openSpec!.root)).toBe(true);
 
     const registry = JSON.parse(await (await import("node:fs/promises")).readFile(
@@ -510,24 +513,32 @@ describe("ce start (integration)", () => {
       expect(Object.keys(registry)).toHaveLength(0);
     });
 
-    it("refuses to start when the generated store id is already registered, without adopting it", async () => {
-      const { generateStoreId } = await import("../../src/core/openspecId.js");
-      const { resolveRepoRoot } = await import("../../src/core/git.js");
-      const { deriveProjectName, sanitizeIssue } = await import("../../src/core/sanitize.js");
-      const { setupStore } = await import("../../src/core/openspec.js");
-      const { realpath } = await import("node:fs/promises");
+    it("refuses to start when the project's durable store id is already registered at an unexpected path, without adopting it", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { setupStore, unregisterStore } = await import("../../src/core/openspec.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-      const repoRoot = await resolveRepoRoot(await realpath(repoDir));
-      const project = deriveProjectName(repoRoot);
-      const sanitizedIssue = sanitizeIssue("issue-1");
-      const storeId = generateStoreId(project, sanitizedIssue, repoRoot);
+      // Establish this project's real Project Identity (and its real
+      // durable store id) first, so the id used below is exactly the one
+      // ce-harness will resolve back to on the next `ce start` for this
+      // same repository -- Project Identity mints an opaque random id, so
+      // it can no longer be predicted ahead of time the way the legacy,
+      // path-hash-keyed id could.
+      await startCommand({ repo: repoDir, issue: "issue-0" });
+      const established = await readWorkspace(basenameOf(repoDir), "issue-0");
+      const storeId = established.openSpec!.storeId;
+      await cleanupCommand({});
 
-      // Pre-register a store under the exact id ce-harness would generate,
-      // simulating a stale/leftover registration from a previous run.
+      // Re-register that same store id at a path that does NOT match the
+      // project's expected durable root -- a genuine conflict ce-harness
+      // cannot safely resolve on its own (e.g. some other registration
+      // entirely).
+      await unregisterStore(fakeOpenSpec.dir, storeId);
       const preExistingRoot = join(fakeOpenSpec.dir, "pre-existing-store");
       await setupStore(fakeOpenSpec.dir, storeId, preExistingRoot);
 
-      const { startCommand } = await import("../../src/commands/start.js");
       await expect(startCommand({ repo: repoDir, issue: "issue-1" })).rejects.toThrow(
         /already registered/i,
       );
@@ -541,6 +552,286 @@ describe("ce start (integration)", () => {
       const { readFile } = await import("node:fs/promises");
       const registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
       expect(registry[storeId].root).toBe(preExistingRoot);
+    });
+
+    it("a second workspace for the same project reuses the first workspace's durable OpenSpec store, without re-`setup`ing it", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const first = await readWorkspace(basenameOf(repoDir), "issue-1");
+      await cleanupCommand({});
+
+      // The durable store must have survived cleanup of the first workspace.
+      const { readFile } = await import("node:fs/promises");
+      let registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+      expect(registry[first.openSpec!.storeId]).toBeDefined();
+
+      await startCommand({ repo: repoDir, issue: "issue-2" });
+      const second = await readWorkspace(basenameOf(repoDir), "issue-2");
+
+      expect(second.openSpec?.storeId).toBe(first.openSpec?.storeId);
+      expect(second.openSpec?.root).toBe(first.openSpec?.root);
+      expect(second.openSpec?.durable).toBe(true);
+
+      // Re-`setup`ing an already-registered id would fail (store_id_conflict
+      // in the fake, matching the real CLI's non-idempotent behavior) -- the
+      // fact that `ce start` succeeded at all proves it reused rather than
+      // re-created it.
+      registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+      expect(Object.keys(registry)).toHaveLength(1);
+    });
+
+    it("different projects (different repositories) never share a durable OpenSpec store", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const otherRepoDir = await createTempRepo();
+      try {
+        await startCommand({ repo: repoDir, issue: "issue-1" });
+        const first = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+        const { clearActivePointer } = await import("../../src/core/workspace.js");
+        await clearActivePointer();
+
+        await startCommand({ repo: otherRepoDir, issue: "issue-1" });
+        const second = await readWorkspace(basenameOf(otherRepoDir), "issue-1");
+
+        expect(second.openSpec?.storeId).not.toBe(first.openSpec?.storeId);
+        expect(second.openSpec?.root).not.toBe(first.openSpec?.root);
+      } finally {
+        await rm(otherRepoDir, { recursive: true, force: true });
+      }
+    });
+
+    it("--from Implementation workspaces get the same durable, project-scoped store as the default flow", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await execa("git", ["-C", repoDir, "checkout", "-b", "dependency-branch"]);
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      await startCommand({ repo: repoDir, issue: "issue-1", from: "dependency-branch" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+
+      const { generateProjectStoreId, expectedDurableOpenSpecRoot, isValidProjectId } = await import(
+        "../../src/core/openspecId.js"
+      );
+      expect(workspace.openSpec?.projectId).toBeDefined();
+      expect(isValidProjectId(workspace.openSpec!.projectId!)).toBe(true);
+      expect(workspace.openSpec?.storeId).toBe(generateProjectStoreId(workspace.openSpec!.projectId!));
+      expect(workspace.openSpec?.root).toBe(expectedDurableOpenSpecRoot(workspace.openSpec!.projectId!));
+      expect(workspace.openSpec?.durable).toBe(true);
+    });
+
+    it("an Existing PR review workspace (--base/--head) gets the same durable, project-scoped store", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await (await import("node:fs/promises")).writeFile(
+        join(repoDir, "feature.txt"),
+        "new feature\n",
+        "utf8",
+      );
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "feature commit"]);
+      const headSha = (await execa("git", ["-C", repoDir, "rev-parse", "feature"])).stdout.trim();
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+
+      await startCommand({ repo: repoDir, issue: "review-1", base: baseSha, head: headSha });
+      const workspace = await readWorkspace(basenameOf(repoDir), "review-1");
+
+      const { generateProjectStoreId, expectedDurableOpenSpecRoot, isValidProjectId } = await import(
+        "../../src/core/openspecId.js"
+      );
+      expect(workspace.openSpec?.projectId).toBeDefined();
+      expect(isValidProjectId(workspace.openSpec!.projectId!)).toBe(true);
+      expect(workspace.openSpec?.storeId).toBe(generateProjectStoreId(workspace.openSpec!.projectId!));
+      expect(workspace.openSpec?.root).toBe(expectedDurableOpenSpecRoot(workspace.openSpec!.projectId!));
+      expect(workspace.openSpec?.durable).toBe(true);
+    });
+
+    it("a later failure in the SAME session that created the durable store still rolls it back (storeCreatedThisSession)", async () => {
+      process.env.FAKE_OPENSPEC_FAIL_DOCTOR = "1";
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      await expect(startCommand({ repo: repoDir, issue: "issue-1" })).rejects.toThrow(
+        /failed its health check/i,
+      );
+
+      const { readFile } = await import("node:fs/promises");
+      const registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+      expect(Object.keys(registry)).toHaveLength(0);
+    });
+
+    it("a reuse health-check failure never unregisters the pre-existing durable store (rollback correctness)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      // First workspace creates the durable store for real.
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const first = await readWorkspace(basenameOf(repoDir), "issue-1");
+      await cleanupCommand({});
+
+      // Second workspace: the pre-flight check still finds the store
+      // registered at the expected root (reuse decided), but the reuse
+      // branch's own post-creation health check then reports unhealthy --
+      // exercising the exact case that matters: this session did NOT
+      // create the store, so its rollback must never unregister it, even
+      // though *a* health check failed.
+      process.env.FAKE_OPENSPEC_FAIL_DOCTOR = "1";
+      await expect(startCommand({ repo: repoDir, issue: "issue-2" })).rejects.toThrow(
+        /failed its health check/i,
+      );
+
+      const { readFile } = await import("node:fs/promises");
+      const registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+      expect(registry[first.openSpec!.storeId]).toBeDefined();
+    });
+  });
+
+  describe("Project Identity", () => {
+    it("recognizes the same repository after being cloned to a differently-named path, and reuses its durable store", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const remoteDir = await createBareRemote("main");
+      const cloneA = await cloneRepo(remoteDir, "ce-harness-identity-clone-a-");
+      const cloneB = await cloneRepo(remoteDir, "ce-harness-identity-clone-b-");
+      try {
+        await startCommand({ repo: cloneA, issue: "issue-1" });
+        const first = await readWorkspace(basenameOf(cloneA), "issue-1");
+        await cleanupCommand({});
+
+        await startCommand({ repo: cloneB, issue: "issue-1" });
+        const second = await readWorkspace(basenameOf(cloneB), "issue-1");
+
+        expect(second.openSpec?.projectId).toBe(first.openSpec?.projectId);
+        expect(second.openSpec?.storeId).toBe(first.openSpec?.storeId);
+        expect(second.openSpec?.root).toBe(first.openSpec?.root);
+
+        // Reused, not re-created -- only one entry in the registry.
+        const { readFile } = await import("node:fs/promises");
+        const registry = JSON.parse(await readFile(fakeOpenSpec.registryFile, "utf8"));
+        expect(Object.keys(registry)).toHaveLength(1);
+      } finally {
+        await rm(remoteDir, { recursive: true, force: true });
+        await rm(cloneA, { recursive: true, force: true });
+        await rm(cloneB, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses with a CANDIDATE hint when only the origin URL matches (root commit differs), naming the matched project id", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      // A URL-shaped origin, not a raw local filesystem path: a local
+      // path remote is deliberately excluded from identity evidence
+      // altogether (see normalizeRemoteUrl) since it's never meaningful
+      // cross-checkout evidence, so this test needs an origin shape that
+      // actually IS comparable evidence.
+      const sharedOriginUrl = "https://example.invalid/acme/widgets.git";
+      const clone = await createTempRepo("ce-harness-identity-origin-");
+      const unrelatedRepo = await createTempRepo("ce-harness-identity-unrelated-");
+      try {
+        await execa("git", ["-C", clone, "remote", "add", "origin", sharedOriginUrl]);
+        await startCommand({ repo: clone, issue: "issue-1" });
+        const established = await readWorkspace(basenameOf(clone), "issue-1");
+        const projectId = established.openSpec!.projectId!;
+        await cleanupCommand({});
+
+        // Same origin URL, but a completely unrelated commit history --
+        // root commit will not agree (createTempRepo gives every call a
+        // unique root commit -- see its own doc comment).
+        await execa("git", ["-C", unrelatedRepo, "remote", "add", "origin", sharedOriginUrl]);
+
+        await expect(startCommand({ repo: unrelatedRepo, issue: "issue-1" })).rejects.toThrow(
+          new RegExp(projectId),
+        );
+        await expect(startCommand({ repo: unrelatedRepo, issue: "issue-1" })).rejects.toThrow(
+          /partially matches/i,
+        );
+      } finally {
+        await rm(clone, { recursive: true, force: true });
+        await rm(unrelatedRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("--new-project mints a separate identity even when the repository would otherwise be recognized", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const remoteDir = await createBareRemote("main");
+      const cloneA = await cloneRepo(remoteDir, "ce-harness-identity-newproj-a-");
+      const cloneB = await cloneRepo(remoteDir, "ce-harness-identity-newproj-b-");
+      try {
+        await startCommand({ repo: cloneA, issue: "issue-1" });
+        const first = await readWorkspace(basenameOf(cloneA), "issue-1");
+        await cleanupCommand({});
+
+        await startCommand({ repo: cloneB, issue: "issue-1", newProject: true });
+        const second = await readWorkspace(basenameOf(cloneB), "issue-1");
+
+        expect(second.openSpec?.projectId).not.toBe(first.openSpec?.projectId);
+        expect(second.openSpec?.storeId).not.toBe(first.openSpec?.storeId);
+      } finally {
+        await rm(remoteDir, { recursive: true, force: true });
+        await rm(cloneA, { recursive: true, force: true });
+        await rm(cloneB, { recursive: true, force: true });
+      }
+    });
+
+    it("--project-id attaches explicitly to a known project id, even for a repository with no matching signals at all", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const remoteDir = await createBareRemote("main");
+      const clone = await cloneRepo(remoteDir, "ce-harness-identity-explicit-");
+      const unrelatedRepo = await createTempRepo("ce-harness-identity-explicit-unrelated-");
+      try {
+        await startCommand({ repo: clone, issue: "issue-1" });
+        const established = await readWorkspace(basenameOf(clone), "issue-1");
+        const projectId = established.openSpec!.projectId!;
+        await cleanupCommand({});
+
+        await startCommand({ repo: unrelatedRepo, issue: "issue-1", projectId });
+        const attached = await readWorkspace(basenameOf(unrelatedRepo), "issue-1");
+
+        expect(attached.openSpec?.projectId).toBe(projectId);
+        expect(attached.openSpec?.storeId).toBe(established.openSpec?.storeId);
+        expect(attached.openSpec?.root).toBe(established.openSpec?.root);
+      } finally {
+        await rm(remoteDir, { recursive: true, force: true });
+        await rm(clone, { recursive: true, force: true });
+        await rm(unrelatedRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("--project-id and --new-project are mutually exclusive", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      await expect(
+        startCommand({ repo: repoDir, issue: "issue-1", projectId: "abcdef012345", newProject: true }),
+      ).rejects.toThrow(/mutually exclusive/i);
     });
   });
 

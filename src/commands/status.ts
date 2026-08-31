@@ -7,6 +7,7 @@ import {
   workspaceType,
 } from "../core/workspace.js";
 import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
+import { readIdentityRecord } from "../core/projectIdentity.js";
 import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
 import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
 import { filterHarnessManagedChanges } from "../core/worktreeArtifacts.js";
@@ -150,6 +151,40 @@ export async function statusCommand(): Promise<void> {
 
   console.log(`OpenSpec store:   ${trusted.storeId}`);
   console.log(`OpenSpec root:    ${trusted.root}`);
+  console.log(
+    `OpenSpec durable: ${
+      trusted.durable
+        ? "yes (survives `ce cleanup`)"
+        : "no (removed by `ce cleanup` -- run `ce migrate-openspec` to preserve it in durable, project-scoped storage)"
+    }`,
+  );
+
+  // Project Identity: only meaningful for a durable store (see
+  // core/projectIdentity.ts). A durable store with no projectId is on
+  // the pre-Project-Identity, path-hash-keyed shape -- `ce
+  // migrate-openspec` assigns one without losing any existing data.
+  if (trusted.durable) {
+    if (trusted.projectId) {
+      console.log(`Project id:       ${trusted.projectId}`);
+      try {
+        const identity = await readIdentityRecord(trusted.root);
+        if (identity) {
+          const latest = identity.evidence[identity.evidence.length - 1];
+          console.log(
+            `Identity evidence: ${identity.evidence.length} recorded snapshot(s), most recently ${latest.recordedAt}`,
+          );
+        } else {
+          console.log(`Identity evidence: (missing -- .identity.yml not found at "${trusted.root}")`);
+        }
+      } catch (error) {
+        console.log(`Identity evidence: unavailable (${(error as Error).message})`);
+      }
+    } else {
+      console.log(
+        `Project id:       (legacy durable store -- run \`ce migrate-openspec\` to assign one)`,
+      );
+    }
+  }
 
   const available = await isOpenSpecAvailable(workspace.workspacePath);
   if (!available) {

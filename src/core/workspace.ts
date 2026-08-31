@@ -5,11 +5,41 @@ import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { CeError } from "./errors.js";
 import { activePointerFile, workspaceFile, workspacePath } from "./paths.js";
-import { expectedOpenSpecRoot, generateStoreId, isValidStoreId } from "./openspecId.js";
+import {
+  expectedDurableOpenSpecRoot,
+  expectedLegacyDurableOpenSpecRoot,
+  expectedOpenSpecRoot,
+  generateLegacyProjectStoreId,
+  generateProjectStoreId,
+  generateStoreId,
+  isValidProjectId,
+  isValidStoreId,
+} from "./openspecId.js";
 
 export const OpenSpecMetadataSchema = z.object({
   storeId: z.string().min(1),
   root: z.string().min(1),
+  // Optional: true only for a project-scoped, durable store -- one that
+  // lives outside every ephemeral workspace/worktree (see
+  // expectedDurableOpenSpecRoot) and survives `ce cleanup`. Absent/false
+  // for a legacy, per-workspace store created before durable storage
+  // existed, which remains exactly as ephemeral as it always was: `ce
+  // cleanup` still unregisters and deletes those, unchanged, so an
+  // already-active legacy workspace never silently changes behavior
+  // just because the CLI was upgraded underneath it. See
+  // resolveTrustedOpenSpec for how each shape is recomputed and
+  // cross-checked, and `ce migrate-openspec` for the explicit, opt-in
+  // way to move a legacy workspace onto a durable store.
+  durable: z.boolean().optional(),
+  // Present only for a durable store keyed by the current, Project-
+  // Identity scheme (core/projectIdentity.ts) -- absent for a durable
+  // store created before Project Identity existed (the legacy,
+  // path-hash-keyed shape; see generateLegacyProjectStoreId). Never
+  // present when `durable` is falsy: an issue-scoped, ephemeral store
+  // has no project identity of its own. See resolveTrustedOpenSpec for
+  // exactly how this field changes which id/root are recomputed and
+  // cross-checked.
+  projectId: z.string().min(1).optional(),
 });
 
 export type OpenSpecMetadata = z.infer<typeof OpenSpecMetadataSchema>;
@@ -307,6 +337,34 @@ export function resolveTrustedOpenSpec(workspace: Workspace): OpenSpecMetadata |
   if (!persisted) return null;
 
   if (!isValidStoreId(persisted.storeId)) return null;
+
+  if (persisted.durable) {
+    if (persisted.projectId !== undefined) {
+      // Current (Project-Identity) scheme: id/root are keyed by project
+      // id alone -- see openspecId.ts's generateProjectStoreId /
+      // expectedDurableOpenSpecRoot for why that's deliberately never
+      // workspace.project or workspace.repositoryPath.
+      if (!isValidProjectId(persisted.projectId)) return null;
+      const expectedStoreId = generateProjectStoreId(persisted.projectId);
+      const expectedRoot = expectedDurableOpenSpecRoot(persisted.projectId);
+      if (persisted.storeId !== expectedStoreId) return null;
+      if (persisted.root !== expectedRoot) return null;
+      return persisted;
+    }
+
+    // Legacy (pre-Project-Identity) durable shape: no projectId was
+    // ever persisted for this workspace, so recompute and cross-check
+    // the old, path-hash-keyed id/root instead. This keeps an
+    // already-active legacy durable workspace trusted exactly as before
+    // -- it does not silently stop working just because ce-harness was
+    // upgraded underneath it. `ce migrate-openspec` is the explicit,
+    // opt-in way to move it onto the current scheme.
+    const expectedStoreId = generateLegacyProjectStoreId(workspace.project, workspace.repositoryPath);
+    const expectedRoot = expectedLegacyDurableOpenSpecRoot(workspace.project, workspace.repositoryPath);
+    if (persisted.storeId !== expectedStoreId) return null;
+    if (persisted.root !== expectedRoot) return null;
+    return persisted;
+  }
 
   const expectedStoreId = generateStoreId(
     workspace.project,

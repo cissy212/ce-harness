@@ -328,6 +328,179 @@ describe("workspace serialization and validation", () => {
     expect(resolveTrustedOpenSpec(workspace)).toBeNull();
   });
 
+  it("resolveTrustedOpenSpec trusts LEGACY durable metadata (no projectId) that matches the path-hash id and root", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateLegacyProjectStoreId, expectedLegacyDurableOpenSpecRoot } = await import(
+      "../../src/core/openspecId.js"
+    );
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws/demo/issue-1",
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: generateLegacyProjectStoreId("demo", "/tmp/demo"),
+        root: expectedLegacyDurableOpenSpecRoot("demo", "/tmp/demo"),
+        durable: true,
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toEqual(workspace.openSpec);
+  });
+
+  it("resolveTrustedOpenSpec trusts CURRENT durable metadata (projectId present) keyed by project id alone", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateProjectId, generateProjectStoreId, expectedDurableOpenSpecRoot } = await import(
+      "../../src/core/openspecId.js"
+    );
+    const projectId = generateProjectId();
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws/demo/issue-1",
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: generateProjectStoreId(projectId),
+        root: expectedDurableOpenSpecRoot(projectId),
+        durable: true,
+        projectId,
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toEqual(workspace.openSpec);
+  });
+
+  it("resolveTrustedOpenSpec rejects CURRENT durable metadata whose projectId is not validly shaped", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateProjectStoreId, expectedDurableOpenSpecRoot } = await import(
+      "../../src/core/openspecId.js"
+    );
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws/demo/issue-1",
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: generateProjectStoreId("not-a-real-project-id"),
+        root: expectedDurableOpenSpecRoot("not-a-real-project-id"),
+        durable: true,
+        projectId: "not-a-real-project-id",
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toBeNull();
+  });
+
+  it("resolveTrustedOpenSpec rejects durable metadata whose storeId is really the legacy, issue-scoped shape", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateStoreId, expectedLegacyDurableOpenSpecRoot } = await import(
+      "../../src/core/openspecId.js"
+    );
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws/demo/issue-1",
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        // Marked durable, but the id/root are really the legacy, issue-
+        // scoped shape -- must never be trusted just because
+        // `durable: true` is present.
+        storeId: generateStoreId("demo", "issue-1", "/tmp/demo"),
+        root: expectedLegacyDurableOpenSpecRoot("demo", "/tmp/demo"),
+        durable: true,
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toBeNull();
+  });
+
+  it("resolveTrustedOpenSpec rejects LEGACY durable metadata whose root does not match the project's expected legacy durable root", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateLegacyProjectStoreId } = await import("../../src/core/openspecId.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws/demo/issue-1",
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: generateLegacyProjectStoreId("demo", "/tmp/demo"),
+        root: "/etc/somewhere-else",
+        durable: true,
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toBeNull();
+  });
+
+  it("resolveTrustedOpenSpec rejects CURRENT durable metadata whose root does not match the project id's expected durable root", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateProjectId, generateProjectStoreId } = await import("../../src/core/openspecId.js");
+    const projectId = generateProjectId();
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws/demo/issue-1",
+      createdAt: new Date().toISOString(),
+      openSpec: {
+        storeId: generateProjectStoreId(projectId),
+        root: "/etc/somewhere-else",
+        durable: true,
+        projectId,
+      },
+    };
+    expect(resolveTrustedOpenSpec(workspace)).toBeNull();
+  });
+
+  it("resolveTrustedOpenSpec treats absent `durable` exactly like `durable: false` (legacy recomputation)", async () => {
+    const { resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+    const { generateStoreId, expectedOpenSpecRoot } = await import("../../src/core/openspecId.js");
+    const workspacePath = "/tmp/ws/demo/issue-1";
+    const base = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "issue-1",
+      sanitizedIssue: "issue-1",
+      baseBranch: "main",
+      internalBranch: "ce-harness/issue-1",
+      worktreePath: "/tmp/wt",
+      workspacePath,
+      createdAt: new Date().toISOString(),
+    };
+    const legacyOpenSpec = {
+      storeId: generateStoreId("demo", "issue-1", "/tmp/demo"),
+      root: expectedOpenSpecRoot(workspacePath),
+    };
+    const withoutFlag = { ...base, openSpec: legacyOpenSpec };
+    const withFalseFlag = { ...base, openSpec: { ...legacyOpenSpec, durable: false } };
+    expect(resolveTrustedOpenSpec(withoutFlag)).toEqual(legacyOpenSpec);
+    expect(resolveTrustedOpenSpec(withFalseFlag)).toEqual(withFalseFlag.openSpec);
+  });
+
   it("round-trips the active workspace pointer", async () => {
     const { writeActivePointer, readActivePointer, clearActivePointer } = await import(
       "../../src/core/workspace.js"

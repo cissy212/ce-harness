@@ -14,9 +14,11 @@ import {
   detectBaseBranch,
   isDirty,
   pruneWorktrees,
+  readOriginOrSolitaryRemoteUrl,
   removeWorktree,
   resolveCommit,
   resolveMergeBase,
+  resolveRootCommit,
   resolveTargetRepo,
 } from "../core/git.js";
 import {
@@ -29,7 +31,8 @@ import {
   writeWorkspace,
   type Workspace,
 } from "../core/workspace.js";
-import { expectedOpenSpecRoot, generateStoreId } from "../core/openspecId.js";
+import { expectedDurableOpenSpecRoot, generateProjectStoreId } from "../core/openspecId.js";
+import { resolveProjectIdentity, writeIdentityRecord } from "../core/projectIdentity.js";
 import {
   describeOpenSpecStatus,
   isOpenSpecAvailable,
@@ -71,9 +74,32 @@ export interface StartOptions {
   from?: string;
   /** Coding-agent runner id (e.g. "opencode", "claude"). Defaults to "opencode". */
   runner?: string;
+  /**
+   * Explicit Project Identity override: attach this repository's durable
+   * OpenSpec store to an already-known project id instead of letting
+   * ce-harness detect or mint one automatically. Mutually exclusive with
+   * `newProject`. See core/projectIdentity.ts.
+   */
+  projectId?: string;
+  /**
+   * Explicit Project Identity override: mint a brand-new project id for
+   * this repository even if ce-harness recognizes it (fully or
+   * partially) as an existing project. Mutually exclusive with
+   * `projectId`.
+   */
+  newProject?: boolean;
 }
 
-export async function startCommand({ repo, issue, base, head, from, runner }: StartOptions): Promise<void> {
+export async function startCommand({
+  repo,
+  issue,
+  base,
+  head,
+  from,
+  runner,
+  projectId: projectIdOption,
+  newProject,
+}: StartOptions): Promise<void> {
   // Pure input-shape validation, checked before touching the filesystem
   // at all: an explicit review range requires both --base and --head,
   // never just one, and --from is a different, mutually exclusive way of
@@ -95,6 +121,12 @@ export async function startCommand({ repo, issue, base, head, from, runner }: St
       "--from cannot be combined with --base/--head.",
       "--from starts a normal Implementation workspace from an explicit ref; --base/--head start an " +
         "Existing PR review workspace from an explicit commit range. Use exactly one of these.",
+    );
+  }
+  if (projectIdOption && newProject) {
+    throw new CeError(
+      "--project-id and --new-project are mutually exclusive.",
+      "--project-id attaches to an already-known project; --new-project mints a fresh one. Use exactly one.",
     );
   }
   const selectedRunner = resolveRunner(runner);
@@ -184,8 +216,29 @@ export async function startCommand({ repo, issue, base, head, from, runner }: St
   const internalBranch = renderBranchName(branchPattern, sanitizedIssue);
   const worktreePath = buildWorktreePath(project, sanitizedIssue);
   const workspacePath = buildWorkspacePath(project, sanitizedIssue);
-  const openSpecStoreId = generateStoreId(project, sanitizedIssue, repoRoot);
-  const openSpecRoot = expectedOpenSpecRoot(workspacePath);
+  // Project Identity: resolves a stable, ce-harness-minted project id
+  // for this repository, using its Git signals (origin URL, root
+  // commit) purely as *evidence* to recognize an id already minted --
+  // never to derive or regenerate the id itself. See
+  // core/projectIdentity.ts for the full model. This is what lets every
+  // workspace for the same project resolve to the exact same durable
+  // OpenSpec store id/root regardless of the project's current name or
+  // the repository's current checkout path (see
+  // expectedDurableOpenSpecRoot in core/openspecId.ts for why that
+  // durable path is structurally outside the workspace/worktree trees
+  // `ce cleanup` ever touches).
+  const originUrl = await readOriginOrSolitaryRemoteUrl(repoRoot);
+  const rootCommit = await resolveRootCommit(repoRoot);
+  const identityResolution = await resolveProjectIdentity({
+    project,
+    originUrl,
+    rootCommit,
+    explicitProjectId: projectIdOption,
+    mintNew: newProject,
+  });
+  const projectId = identityResolution.projectId;
+  const openSpecStoreId = generateProjectStoreId(projectId);
+  const openSpecRoot = expectedDurableOpenSpecRoot(projectId);
 
   // Fail before creating any persistent resource (worktree, branch,
   // workspace) whenever possible.
@@ -237,16 +290,51 @@ export async function startCommand({ repo, issue, base, head, from, runner }: St
       `Delete the branch (git -C "${repoRoot}" branch -D ${internalBranch}) or run \`ce cleanup\`, then try again.`,
     );
   }
+  // The project's durable store may already be registered -- from an
+  // earlier workspace for this same project, or from a previous `ce
+  // start` that got this far before failing later. Reuse it (never
+  // re-`setup`, which is not idempotent) only when it's registered at
+  // exactly this project's expected durable path; anything else is a
+  // genuine conflict ce-harness cannot safely resolve on its own.
+  let reuseExistingOpenSpecStore = false;
   if (await isStoreRegistered(repoRoot, openSpecStoreId)) {
+    const preflightDoctor = await storeDoctor(repoRoot, openSpecStoreId);
+    if (preflightDoctor.found && preflightDoctor.root === openSpecRoot) {
+      reuseExistingOpenSpecStore = true;
+    } else {
+      throw new CeError(
+        `OpenSpec store "${openSpecStoreId}" is already registered, but not at this project's durable path ("${openSpecRoot}")` +
+          (preflightDoctor.root ? ` -- found at "${preflightDoctor.root}" instead.` : "."),
+        `Run \`openspec store unregister ${openSpecStoreId}\` first if this is stale, then try again.`,
+      );
+    }
+  } else if (existsSync(openSpecRoot)) {
+    // Project Identity resolved this repository to a project id whose
+    // durable store directory already has content on disk, but isn't
+    // registered with OpenSpec on this machine -- e.g. ~/.ce-harness was
+    // restored or synced from another machine. Never call setupStore
+    // against unknown pre-existing content (see setupStore's own
+    // contract -- it is not a reconciling operation); refuse with a
+    // manual-recovery hint instead of guessing.
     throw new CeError(
-      `OpenSpec store "${openSpecStoreId}" is already registered.`,
-      `Run \`openspec store unregister ${openSpecStoreId}\` first if this store is stale, then try again.`,
+      `Project Identity resolved this repository to project "${projectId}", whose durable OpenSpec ` +
+        `store directory already exists at "${openSpecRoot}", but it is not registered with OpenSpec ` +
+        "on this machine.",
+      `This can happen after restoring or syncing ~/.ce-harness from another machine. Register it ` +
+        `manually (\`openspec store setup ${openSpecStoreId} --path ${openSpecRoot}\`), verify it ` +
+        `(\`openspec store doctor ${openSpecStoreId}\`), then retry \`ce start\`.`,
     );
   }
 
   let worktreeCreated = false;
   let workspaceDirCreated = false;
-  let storeRegistered = false;
+  // True only when THIS session created and registered the store fresh
+  // (setupStore succeeded here) -- never true when reusing an
+  // already-registered durable store from an earlier workspace, so a
+  // later failure in *this* session's own setup (e.g. runner config,
+  // CodeGraph) never causes rollback to unregister a durable store this
+  // session didn't create and doesn't own. See rollback() below.
+  let storeCreatedThisSession = false;
   let activePointerWritten = false;
   let codeGraphResult: CodeGraphResult = {
     available: false,
@@ -330,19 +418,41 @@ export async function startCommand({ repo, issue, base, head, from, runner }: St
       };
     }
 
-    const setupResult = await setupStore(workspacePath, openSpecStoreId, openSpecRoot);
-    if (!setupResult.success) {
-      throw new CeError(
-        `Failed to create and register OpenSpec store "${openSpecStoreId}": ${describeOpenSpecStatus(setupResult.status, setupResult.stderr)}`,
-      );
-    }
-    storeRegistered = true;
+    if (reuseExistingOpenSpecStore) {
+      const doctorResult = await storeDoctor(workspacePath, openSpecStoreId);
+      if (!doctorResult.found || !doctorResult.healthy) {
+        throw new CeError(
+          `This project's durable OpenSpec store "${openSpecStoreId}" failed its health check: ${describeOpenSpecStatus(doctorResult)}`,
+          `Inspect "${openSpecRoot}" directly, or run \`openspec store unregister ${openSpecStoreId}\` and retry \`ce start\` to recreate it.`,
+        );
+      }
+    } else {
+      await mkdir(dirname(openSpecRoot), { recursive: true });
+      const setupResult = await setupStore(workspacePath, openSpecStoreId, openSpecRoot);
+      if (!setupResult.success) {
+        throw new CeError(
+          `Failed to create and register OpenSpec store "${openSpecStoreId}": ${describeOpenSpecStatus(setupResult)}`,
+        );
+      }
+      storeCreatedThisSession = true;
 
-    const doctorResult = await storeDoctor(workspacePath, openSpecStoreId);
-    if (!doctorResult.found || !doctorResult.healthy) {
-      throw new CeError(
-        `OpenSpec store "${openSpecStoreId}" failed its health check: ${describeOpenSpecStatus(doctorResult.status, doctorResult.stderr)}`,
-      );
+      const doctorResult = await storeDoctor(workspacePath, openSpecStoreId);
+      if (!doctorResult.found || !doctorResult.healthy) {
+        throw new CeError(
+          `OpenSpec store "${openSpecStoreId}" failed its health check: ${describeOpenSpecStatus(doctorResult)}`,
+        );
+      }
+    }
+
+    // Persist (or extend) this project's identity record only now that
+    // its durable store is confirmed present and healthy -- never
+    // before, so a failure earlier in this block never leaves evidence
+    // on file for a store that doesn't actually exist. `recordToPersist`
+    // is null for a plain "match" (see resolveProjectIdentity):
+    // evidence for exactly these signals is already on file, so there is
+    // nothing new to write.
+    if (identityResolution.recordToPersist) {
+      await writeIdentityRecord(openSpecRoot, identityResolution.recordToPersist);
     }
 
     workspace = {
@@ -358,6 +468,8 @@ export async function startCommand({ repo, issue, base, head, from, runner }: St
       openSpec: {
         storeId: openSpecStoreId,
         root: openSpecRoot,
+        durable: true,
+        projectId,
       },
       ...(baseBranchCommit ? { baseBranchCommit } : {}),
       ...(baseRefExplicit ? { baseRefExplicit } : {}),
@@ -382,7 +494,7 @@ export async function startCommand({ repo, issue, base, head, from, runner }: St
       openSpecStoreId,
       worktreeCreated,
       workspaceDirCreated,
-      storeRegistered,
+      storeCreatedThisSession,
       activePointerWritten,
     });
     throw error;
@@ -433,7 +545,7 @@ interface RollbackContext {
   openSpecStoreId: string;
   worktreeCreated: boolean;
   workspaceDirCreated: boolean;
-  storeRegistered: boolean;
+  storeCreatedThisSession: boolean;
   activePointerWritten: boolean;
 }
 
@@ -450,11 +562,11 @@ async function rollback(ctx: RollbackContext): Promise<void> {
   if (ctx.activePointerWritten) {
     await attempt("clear active pointer", () => clearActivePointer());
   }
-  if (ctx.storeRegistered) {
+  if (ctx.storeCreatedThisSession) {
     await attempt("unregister OpenSpec store", async () => {
       const result = await unregisterStore(ctx.workspacePath, ctx.openSpecStoreId);
       if (!result.success && !result.notFound) {
-        throw new Error(describeOpenSpecStatus(result.status, result.stderr));
+        throw new Error(describeOpenSpecStatus(result));
       }
     });
   }

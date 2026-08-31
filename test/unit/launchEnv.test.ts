@@ -88,6 +88,44 @@ describe("buildLaunchEnv", () => {
     expect(buildLaunchEnv(untrustedWorkspace).CE_OPENSPEC_STORE).toBeUndefined();
   });
 
+  it("includes CE_OPENSPEC_STORE for a legacy durable, path-hash-keyed store", async () => {
+    const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
+    const { generateLegacyProjectStoreId, expectedLegacyDurableOpenSpecRoot } = await import(
+      "../../src/core/openspecId.js"
+    );
+    const repositoryPath = "/tmp/demo-repo";
+    const durableStoreId = generateLegacyProjectStoreId("demo", repositoryPath);
+    const workspace = baseWorkspace({
+      repositoryPath,
+      openSpec: {
+        storeId: durableStoreId,
+        root: expectedLegacyDurableOpenSpecRoot("demo", repositoryPath),
+        durable: true,
+      },
+    });
+    expect(buildLaunchEnv(workspace).CE_OPENSPEC_STORE).toBe(durableStoreId);
+  });
+
+  it("includes CE_OPENSPEC_STORE for a durable, Project-Identity-keyed store", async () => {
+    const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
+    const { generateProjectStoreId, expectedDurableOpenSpecRoot, generateProjectId } = await import(
+      "../../src/core/openspecId.js"
+    );
+    const repositoryPath = "/tmp/demo-repo";
+    const projectId = generateProjectId();
+    const durableStoreId = generateProjectStoreId(projectId);
+    const workspace = baseWorkspace({
+      repositoryPath,
+      openSpec: {
+        storeId: durableStoreId,
+        root: expectedDurableOpenSpecRoot(projectId),
+        durable: true,
+        projectId,
+      },
+    });
+    expect(buildLaunchEnv(workspace).CE_OPENSPEC_STORE).toBe(durableStoreId);
+  });
+
   it("includes CE_DIFF_BASE/CE_DIFF_HEAD only when both are present", async () => {
     const { buildLaunchEnv } = await import("../../src/core/launchEnv.js");
     const workspace = baseWorkspace({

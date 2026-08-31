@@ -1,15 +1,28 @@
 import { execa } from "execa";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** Creates a temporary Git repository with one commit on `main` and returns its path. */
+/**
+ * Creates a temporary Git repository with one commit on `main` and
+ * returns its path. The initial commit embeds a random nonce so two
+ * independent calls never produce byte-identical root commits: a commit
+ * hash is a function of tree content + author/committer + message +
+ * timestamp (second resolution), so two repos created back-to-back with
+ * otherwise-identical fixture content really can collide on the exact
+ * same root commit -- and Project Identity (core/projectIdentity.ts)
+ * treats a shared root commit as real evidence of the same project, so
+ * two genuinely unrelated fixture repos coincidentally "sharing" one
+ * would be a false positive in exactly the tests meant to prove they
+ * never do.
+ */
 export async function createTempRepo(prefix = "ce-harness-repo-"): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   await execa("git", ["init", "--initial-branch=main", dir]);
   await execa("git", ["-C", dir, "config", "user.email", "test@example.com"]);
   await execa("git", ["-C", dir, "config", "user.name", "Test User"]);
-  await writeFile(join(dir, "README.md"), "hello\n", "utf8");
+  await writeFile(join(dir, "README.md"), `hello\n\n<!-- ${randomUUID()} -->\n`, "utf8");
   await execa("git", ["-C", dir, "add", "."]);
   await execa("git", ["-C", dir, "commit", "-m", "initial commit"]);
   return dir;

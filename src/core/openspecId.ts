@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { openspecRoot } from "./paths.js";
 
 /**
  * Deterministic OpenSpec store identity.
@@ -42,11 +43,14 @@ function toKebabToken(input: string, fallback: string): string {
 
 /**
  * Deterministic short hash of the canonical repository path. Included in
- * the store id so that two repositories that happen to share a basename
- * (e.g. "~/work/api" and "~/other/api") never collide, without ever
- * embedding the raw repository path itself in the id.
+ * the store id (and the durable store's directory path -- see
+ * expectedDurableOpenSpecRoot) so that two repositories that happen to
+ * share a basename (e.g. "~/work/api" and "~/other/api") never collide,
+ * without ever embedding the raw repository path itself in the id or path.
+ * Exported for reuse by the durable, project-scoped identity/path
+ * functions below.
  */
-function repositoryHash(repositoryPath: string): string {
+export function repositoryHash(repositoryPath: string): string {
   return createHash("sha256").update(repositoryPath).digest("hex").slice(0, HASH_LENGTH);
 }
 
@@ -102,4 +106,101 @@ export function generateStoreId(
 /** The only path an OpenSpec store may live at for a given workspace. */
 export function expectedOpenSpecRoot(workspacePath: string): string {
   return join(workspacePath, "openspec");
+}
+
+/** Hyphens in the "ce-<project>-<hash>" shape (see generateProjectStoreId). */
+const PROJECT_HYPHEN_COUNT = 2;
+
+/**
+ * LEGACY (pre-Project-Identity) shape: `ce-<project>-<repo-path-hash>`,
+ * keyed by the repository's literal filesystem path -- kept unchanged,
+ * byte-for-byte, so `resolveTrustedOpenSpec` can still recompute and
+ * trust an already-active durable store created before Project Identity
+ * existed, without forcing every existing durable workspace to migrate
+ * immediately. Never used to create anything new: `ce start` always
+ * resolves a project id now (see projectIdentity.ts and the
+ * project-id-keyed generateProjectStoreId below) -- only
+ * `resolveTrustedOpenSpec` and `ce migrate-openspec` still reference
+ * this, to recognize and offer to migrate this shape onto the current
+ * one. This path-hash scheme is exactly what Project Identity replaces:
+ * it breaks the moment the repository is cloned to, or the project
+ * folder is renamed to, a different path, since the hash is derived
+ * from that path.
+ */
+export function generateLegacyProjectStoreId(project: string, repositoryPath: string): string {
+  const hash = repositoryHash(repositoryPath);
+  const projectToken = toKebabToken(project, "project");
+
+  const fixedLength = PREFIX.length + PROJECT_HYPHEN_COUNT + hash.length;
+  const budget = Math.max(STORE_ID_MAX_LENGTH - fixedLength, 1);
+  const truncated =
+    projectToken.length > budget
+      ? projectToken.slice(0, budget).replace(/-+$/, "") || projectToken.slice(0, 1)
+      : projectToken;
+
+  const id = `${PREFIX}-${truncated}-${hash}`;
+  return id.slice(0, STORE_ID_MAX_LENGTH);
+}
+
+/**
+ * LEGACY (pre-Project-Identity) shape:
+ * ~/.ce-harness/openspec/<project>/<repo-path-hash>/ -- see
+ * generateLegacyProjectStoreId above for why this still exists and when
+ * it's used. Superseded by the project-id-keyed
+ * expectedDurableOpenSpecRoot below for everything new.
+ */
+export function expectedLegacyDurableOpenSpecRoot(project: string, repositoryPath: string): string {
+  return join(openspecRoot(), project, repositoryHash(repositoryPath));
+}
+
+/**
+ * Mints a brand-new, ce-harness-owned project id: opaque, random hex,
+ * and never derived from (or dependent on) any Git signal, repository
+ * path, or project name/label -- see core/projectIdentity.ts's module
+ * comment for why identity must be independent of all three. 48 bits of
+ * randomness makes collisions negligible, and even a collision could
+ * only ever surface as a spurious CANDIDATE/CONFLICT once evidence is
+ * compared (see projectIdentity.ts's classifyIdentityMatch) -- a
+ * project id is never trusted as identity on its own, only alongside
+ * matching evidence, so this never needs to be cryptographically
+ * unguessable, just practically unique.
+ */
+export function generateProjectId(): string {
+  return randomBytes(6).toString("hex");
+}
+
+const PROJECT_ID_PATTERN = /^[a-f0-9]{12}$/;
+
+/** True if `id` is shaped like a value generateProjectId could return. */
+export function isValidProjectId(id: string): boolean {
+  return typeof id === "string" && PROJECT_ID_PATTERN.test(id);
+}
+
+/**
+ * Generates the OpenSpec store id for a project's durable store, keyed
+ * *only* by its ce-harness project id -- deliberately never the project
+ * name/label. The project name is derived from the repository folder's
+ * basename (see sanitize.ts's deriveProjectName), so it changes across
+ * a rename or a differently-named clone -- exactly the kind of
+ * "path/clone change" Project Identity exists to survive (see
+ * core/projectIdentity.ts). Baking the name into the store id would mean
+ * resolveTrustedOpenSpec silently stops trusting a project's own durable
+ * metadata the moment its checkout is renamed.
+ */
+export function generateProjectStoreId(projectId: string): string {
+  return `${PREFIX}-${projectId}`.slice(0, STORE_ID_MAX_LENGTH);
+}
+
+/**
+ * The only path a project's durable OpenSpec store may live at:
+ * ~/.ce-harness/openspec/<projectId>/ -- a sibling of
+ * workspacesRoot()/worktreesRoot(), never nested under either, so `ce
+ * cleanup` (which only ever removes paths under those two roots)
+ * structurally cannot reach it. Keyed by project id alone (see
+ * generateProjectStoreId above for why), so unlike the legacy shape
+ * above this never needs a repository-path hash to avoid collisions --
+ * project ids are already unique by construction.
+ */
+export function expectedDurableOpenSpecRoot(projectId: string): string {
+  return join(openspecRoot(), projectId);
 }

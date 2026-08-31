@@ -96,7 +96,14 @@ export async function cleanupCommand({ force = false }: CleanupOptions): Promise
 
   // OpenSpec store: unregister before touching any harness-owned files,
   // so a failure here (without --force) refuses cleanup entirely rather
-  // than leaving things half torn-down.
+  // than leaving things half torn-down. A *durable*, project-scoped store
+  // (see resolveTrustedOpenSpec/openspecId.ts) is never unregistered or
+  // touched here at all -- it lives outside workspacesRoot()/
+  // worktreesRoot() entirely (see core/paths.ts's openspecRoot()), so the
+  // removeWorkspaceDir() call further down structurally cannot reach it
+  // regardless of this branch. Only a legacy, per-workspace store (created
+  // before durable storage existed) is still unregistered here, exactly
+  // as before.
   const trustedOpenSpec = resolveTrustedOpenSpec(workspace);
   if (workspace.openSpec && !trustedOpenSpec) {
     console.error(
@@ -104,7 +111,13 @@ export async function cleanupCommand({ force = false }: CleanupOptions): Promise
     );
   }
 
-  if (trustedOpenSpec) {
+  if (trustedOpenSpec?.durable) {
+    console.log(
+      `OpenSpec store "${trustedOpenSpec.storeId}" is this project's durable store (${trustedOpenSpec.root}) -- left registered and untouched.`,
+    );
+  }
+
+  if (trustedOpenSpec && !trustedOpenSpec.durable) {
     const available = await isOpenSpecAvailable(workspace.workspacePath);
     if (!available) {
       if (!force) {
@@ -123,7 +136,7 @@ export async function cleanupCommand({ force = false }: CleanupOptions): Promise
       if (registered) {
         const result = await unregisterStore(workspace.workspacePath, trustedOpenSpec.storeId);
         if (!result.success && !result.notFound) {
-          const detail = describeOpenSpecStatus(result.status, result.stderr);
+          const detail = describeOpenSpecStatus(result);
           if (!force) {
             throw new CeError(
               `Failed to unregister OpenSpec store "${trustedOpenSpec.storeId}": ${detail}`,
