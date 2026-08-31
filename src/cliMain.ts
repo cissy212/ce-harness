@@ -7,6 +7,8 @@ import { resumeCommand } from "./commands/resume.js";
 import { refreshCommand } from "./commands/refresh.js";
 import { openCommand } from "./commands/open.js";
 import { migrateOpenSpecCommand } from "./commands/migrateOpenSpec.js";
+import { retrieveCommand } from "./commands/retrieve.js";
+import type { RetrievalSource } from "./core/retrieval.js";
 import { formatError } from "./core/errors.js";
 
 /**
@@ -225,6 +227,58 @@ export async function runCli(): Promise<void> {
     .action(async () => {
       await run(() => statusCommand());
     });
+
+  program
+    .command("retrieve")
+    .description(
+      [
+        "Search the active workspace's durable OpenSpec store and repository Git",
+        "history for prior project knowledge relevant to a task, via the Retrieval",
+        "Contract (core/retrieval.ts) -- deterministic, read-only, and scoped",
+        "strictly to this project. Prints a small ranked JSON list of candidates",
+        "(never full artifact bodies) to stdout, for a workflow stage such as",
+        "`/enrich` to parse. An empty result, or no durable store yet, is reported",
+        "as a normal (non-error) outcome.",
+      ].join(" "),
+    )
+    .option("--task <text>", "free-text description of the current task/issue")
+    .option("--keywords <list>", "comma-separated keywords/identifiers already known to be relevant")
+    .option("--paths <list>", "comma-separated relevant file/directory paths, if known")
+    .option("--domain <name>", "OpenSpec domain/capability name, if known")
+    .option("--limit <n>", "maximum candidates to return (default 15)")
+    .option(
+      "--sources <list>",
+      'comma-separated sources to search: "specs", "archivedChanges", "gitHistory" (default: all three)',
+    )
+    .action(
+      async (options: {
+        task?: string;
+        keywords?: string;
+        paths?: string;
+        domain?: string;
+        limit?: string;
+        sources?: string;
+      }) => {
+        const splitList = (value?: string) =>
+          value
+            ? value
+                .split(",")
+                .map((entry) => entry.trim())
+                .filter((entry) => entry.length > 0)
+            : undefined;
+
+        await run(() =>
+          retrieveCommand({
+            task: options.task,
+            keywords: splitList(options.keywords),
+            paths: splitList(options.paths),
+            domain: options.domain,
+            limit: options.limit !== undefined ? Number(options.limit) : undefined,
+            sources: splitList(options.sources) as RetrievalSource[] | undefined,
+          }),
+        );
+      },
+    );
 
   program
     .command("cleanup")

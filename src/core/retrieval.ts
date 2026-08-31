@@ -66,6 +66,7 @@ export type ArtifactType =
   | "change-proposal"
   | "change-design"
   | "change-tasks"
+  | "change-enrich"
   | "change-report"
   | "change-delta-spec"
   | "change-other"
@@ -506,6 +507,14 @@ function classifyChangeArtifactType(relToChange: string): ArtifactType {
   if (normalized === "proposal.md") return "change-proposal";
   if (normalized === "design.md") return "change-design";
   if (normalized === "tasks.md") return "change-tasks";
+  // enrich.md is /enrich's own ce-harness-owned, non-schema artifact
+  // (see templates/commands/enrich.md) -- a sibling of proposal.md/
+  // design.md/tasks.md on disk, but never one of OpenSpec's own
+  // schema-tracked artifacts, exactly like explore.md (which this
+  // module does not separately classify: /explore's findings are
+  // superseded by /enrich's once /enrich has run, so only the latter
+  // is worth surfacing to future retrieval).
+  if (normalized === "enrich.md") return "change-enrich";
   if (normalized.startsWith("reports/")) return "change-report";
   if (normalized.startsWith("specs/")) return "change-delta-spec";
   return "change-other";

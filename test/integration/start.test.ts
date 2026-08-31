@@ -1694,6 +1694,110 @@ describe("ce start (integration)", () => {
     });
   });
 
+  describe("/enrich command template", () => {
+    it("copies templates/commands/enrich.md into <workspace>/opencode/commands/, byte-for-byte", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const copiedPath = join(workspace.workspacePath, "opencode", "commands", "enrich.md");
+      const sourcePath = join(templatesRoot(), "commands", "enrich.md");
+
+      const { readFile } = await import("node:fs/promises");
+      expect(existsSync(copiedPath)).toBe(true);
+      expect(await readFile(copiedPath, "utf8")).toBe(await readFile(sourcePath, "utf8"));
+    });
+
+    it("references CE_OPENSPEC_STORE and requires it before proceeding", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      expect(content).toContain("CE_OPENSPEC_STORE");
+      expect(content.toLowerCase()).toMatch(/if `ce_openspec_store` is empty or unset, stop/);
+    });
+
+    it("passes --store \"$CE_OPENSPEC_STORE\" on every documented openspec invocation", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      const openspecInvocations = content.split("\n").filter((line) => /^\s*openspec\s/.test(line));
+      expect(openspecInvocations.length).toBeGreaterThan(0);
+      for (const line of openspecInvocations) {
+        expect(line).toContain('--store "$CE_OPENSPEC_STORE"');
+      }
+    });
+
+    it("documents consuming the Retrieval Contract via `ce retrieve`, with bounded inspection and at most one refinement", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      expect(content).toMatch(/ce retrieve/);
+      expect(content).toMatch(/never open more than 5 candidates/i);
+      expect(content).toMatch(/at most once more/i);
+    });
+
+    it("documents the ready / needs-clarification status contract and the materiality test for questions", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      expect(content).toMatch(/\*\*Status:\*\* ready \| needs-clarification/);
+      expect(content).toMatch(/only if a different answer would\s*\n?\s*change what `\/propose` designs/);
+      expect(content).toMatch(/do not create a question just to justify this stage/i);
+    });
+
+    it("documents re-run detection (existing enrich.md + checked tasks.md) as blocking by default", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      expect(content).toMatch(/re-run/i);
+      expect(content).toMatch(/- \[x\]/);
+      expect(content).toMatch(/blocking/i);
+    });
+
+    it("explicitly forbids designing the implementation or writing design.md/tasks.md", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8").then(
+        (text) => text.toLowerCase(),
+      );
+
+      expect(content).toMatch(/never design the technical implementation/);
+      expect(content).toMatch(/never modify `proposal\.md`, `design\.md`, or `tasks\.md`/);
+      expect(content).toMatch(/never modify, create, or delete any file inside the target repository/);
+    });
+
+    it("writes its output to <changeRoot>/enrich.md, never as an OpenSpec schema artifact", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      expect(content).toMatch(/changeRoot.*\/enrich\.md/);
+      expect(content.toLowerCase()).toMatch(/not.*(an )?openspec schema artifact/);
+    });
+
+    it("never places enrich.md inside the target repository or worktree", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const worktreePath = join(harnessHomeDir, "worktrees", basenameOf(repoDir), "issue-1");
+      expect(existsSync(join(repoDir, "enrich.md"))).toBe(false);
+      expect(existsSync(join(worktreePath, "enrich.md"))).toBe(false);
+      expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
+      expect(readdirSync(worktreePath).sort()).toEqual([".git", "README.md"]);
+    });
+  });
+
   describe("/propose command template", () => {
     it("copies templates/commands/propose.md into <workspace>/opencode/commands/, byte-for-byte", async () => {
       const { startCommand } = await import("../../src/commands/start.js");
@@ -3945,7 +4049,7 @@ describe("ce start (integration)", () => {
           await readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8"),
         );
         // ...alongside every other ce-harness command...
-        for (const command of ["explore", "propose", "apply", "verify", "archive", "workspace"]) {
+        for (const command of ["explore", "enrich", "propose", "apply", "verify", "archive", "workspace"]) {
           expect(existsSync(join(workspace.worktreePath, ".claude", "commands", `${command}.md`))).toBe(
             true,
           );

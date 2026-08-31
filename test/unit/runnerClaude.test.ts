@@ -265,6 +265,7 @@ describe("Claude Code runner (core/runners/claude.ts)", () => {
       // Zero collisions -- every ce-harness command and skill installs.
       expect(written).toContain(join("commands", "adversarial-review.md"));
       expect(written).toContain(join("commands", "explore.md"));
+      expect(written).toContain(join("commands", "enrich.md"));
       expect(written).toContain(join("commands", "propose.md"));
       expect(written).toContain(join("commands", "apply.md"));
       expect(written).toContain(join("commands", "verify.md"));

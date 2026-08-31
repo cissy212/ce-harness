@@ -141,6 +141,20 @@ describe("retrieveCandidates", () => {
       expect(result.candidates).toEqual([]);
     });
 
+    it("classifies an archived enrich.md as change-enrich, historical", async () => {
+      await writeArchivedChangeFile(
+        durableRoot,
+        "2026-05-12-add-user-auth",
+        "enrich.md",
+        "Clarified intent: tokens must expire after 24h.\n",
+      );
+
+      const result = await retrieveCandidates({ durableRoot, keywords: ["token"] });
+      expect(result.candidates.length).toBe(1);
+      expect(result.candidates[0].type).toBe("change-enrich");
+      expect(result.candidates[0].status).toBe("historical");
+    });
+
     it("matches an archived change via its slug even when the slug text never appears verbatim in the artifact body", async () => {
       await writeArchivedChangeFile(
         durableRoot,
