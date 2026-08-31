@@ -56,6 +56,28 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    it doesn't exist, proceed without it -- `/propose` must work
    standalone, without a prior `/explore` run.
 
+   Also check for `<changeRoot>/enrich.md`. If present, read it now --
+   it carries `/enrich`'s confirmed requirement understanding for this
+   change. Like `explore.md`, it is **not** one of the `artifacts`
+   listed above, is never part of `applyRequires`, and this command
+   never writes or modifies it -- read-only requirement input, outside
+   OpenSpec's own artifact graph. If it doesn't exist, proceed without
+   it -- `/propose` must keep working standalone, without a prior
+   `/enrich` run.
+
+   If `enrich.md` exists, check its `**Status:**` line:
+   - `needs-clarification` -- **stop here.** Do not create or write any
+     artifact. Tell the user `/enrich` found unresolved questions on
+     this change, list its Open Questions verbatim, and recommend
+     re-running `/enrich` to resolve them before `/propose` continues.
+   - `ready` -- continue to step 4. Treat its Clarified Intent,
+     Confirmed Acceptance Criteria, Assumptions, Constraints, Edge
+     Cases/Error Cases, Conflicts Identified, and Relevant Current/Prior
+     Context as requirement input for the artifacts below. Translate
+     only the specific facts each artifact needs -- never copy
+     `enrich.md`'s sections wholesale into `proposal.md`, `design.md`,
+     or `tasks.md`.
+
 4. **Create artifacts in sequence until apply-ready**
 
    Use the **TodoWrite tool** to track progress through the artifacts.
@@ -74,7 +96,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
         - `instruction`: Schema-specific guidance for this artifact type
         - `resolvedOutputPath`: Resolved path or pattern to write the artifact -- always inside the external store
         - `dependencies`: Completed artifacts to read for context
-      - Read any completed dependency files for context, plus `explore.md` from step 3 if it exists
+      - Read any completed dependency files for context, plus `explore.md` and (if its Status is `ready`) `enrich.md` from step 3, if they exist
       - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
       - Apply `context` and `rules` as constraints - but do NOT copy them into the file
       - Show brief progress: "Created <artifact-id>"
@@ -121,6 +143,8 @@ After completing all artifacts, summarize:
 - Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
 - Always read dependency artifacts before creating a new one
 - If `<changeRoot>/explore.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it
+- If `<changeRoot>/enrich.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it. If its Status is `needs-clarification`, do not create any artifact; surface its Open Questions and stop instead
+- Never copy `enrich.md`'s sections verbatim into `proposal.md`, `design.md`, or `tasks.md` -- translate only the requirement facts each artifact needs
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
 - If a change with that name already exists, ask if user wants to continue it or create a new one
 - Verify each artifact file exists after writing before proceeding to next

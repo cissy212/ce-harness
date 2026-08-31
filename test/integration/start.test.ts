@@ -1898,6 +1898,43 @@ describe("ce start (integration)", () => {
       );
     });
 
+    it("consumes a ready enrich.md as requirement input for the artifacts", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      expect(content).toMatch(/check for `<changeRoot>\/enrich\.md`/);
+      expect(content).toMatch(/`ready` -- continue to step 4\./);
+      expect(content).toMatch(
+        /Treat its Clarified Intent,\s*\n\s*Confirmed Acceptance Criteria, Assumptions, Constraints, Edge\s*\n\s*Cases\/Error Cases, Conflicts Identified, and Relevant Current\/Prior\s*\n\s*Context as requirement input/,
+      );
+      expect(content).toMatch(
+        /never copy\s*\n?\s*`enrich\.md`'s sections wholesale into `proposal\.md`, `design\.md`,\s*\n?\s*or `tasks\.md`/i,
+      );
+    });
+
+    it("refuses to proceed and surfaces open questions when enrich.md's Status is needs-clarification", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      expect(content).toMatch(/`needs-clarification` -- \*\*stop here\.\*\*/);
+      expect(content).toMatch(/Do not create or write any\s*\n\s*artifact\./);
+      expect(content).toMatch(/list its Open Questions verbatim/);
+      expect(content).toMatch(/recommend\s*\n\s*re-running `\/enrich`/);
+    });
+
+    it("preserves standalone behavior when enrich.md does not exist", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      expect(content).toMatch(
+        /If it doesn't exist, proceed without\s*\n\s*it -- `\/propose` must keep working standalone, without a prior\s*\n\s*`\/enrich` run\./,
+      );
+      expect(content).not.toMatch(/enrich\.md.{0,80}\brequired\b/is);
+    });
+
     it("carries no leading HTML comment or trailing provenance essay (provenance lives in THIRD_PARTY_NOTICES.md)", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
