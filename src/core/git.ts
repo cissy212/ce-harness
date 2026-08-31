@@ -384,6 +384,104 @@ export async function addLocalExcludePattern(repoPath: string, pattern: string):
   await writeFile(excludeFile, `${existing}${separator}${pattern}\n`, "utf8");
 }
 
+export interface CommitSummary {
+  sha: string;
+  /** Commit date, ISO 8601 (`--date=iso-strict`) -- not the author date. */
+  date: string;
+  subject: string;
+}
+
+/**
+ * Parses `git log --pretty=format:%H%x1f%ad%x1f%s` output (one commit per
+ * line, fields separated by the ASCII Unit Separator so a subject
+ * containing e.g. a literal "|" or tab can never be mis-split). Shared by
+ * every history-reading function below so the format string and parsing
+ * never drift apart.
+ */
+function parseCommitLogLines(stdout: string): CommitSummary[] {
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [sha, date, ...subjectParts] = line.split("\x1f");
+      return { sha: sha ?? "", date: date ?? "", subject: subjectParts.join("\x1f") };
+    })
+    .filter((commit) => commit.sha.length > 0 && commit.date.length > 0);
+}
+
+/**
+ * Read-only, deterministic commit history for a single path, most-recent
+ * first -- the strongest available signal for "what history touched
+ * this file", used by core/retrieval.ts. Follows renames (`--follow`) so
+ * a file's history survives having been moved/renamed, and still finds
+ * history for a path that existed at some point in the past and was
+ * later deleted (this walks backward from HEAD's history, not the
+ * working tree, so the path need not exist right now). Never fetches.
+ * Returns an empty array -- never throws -- when `path` has no history
+ * in this repository, or the query fails for any reason.
+ */
+export async function pathHistory(
+  repoPath: string,
+  path: string,
+  limit = 20,
+): Promise<CommitSummary[]> {
+  const result = await git(repoPath, [
+    "log",
+    "--follow",
+    `--max-count=${limit}`,
+    "--date=iso-strict",
+    "--pretty=format:%H%x1f%ad%x1f%s",
+    "--",
+    path,
+  ]);
+  if (result.exitCode !== 0) return [];
+  return parseCommitLogLines(result.stdout);
+}
+
+/**
+ * Read-only, deterministic search of commit subject/body text for any of
+ * `keywords` (case-insensitive; multiple `--grep` values are OR'd
+ * together by Git's own default, so a commit matching any one keyword is
+ * included). Never fetches, never throws (returns an empty array on any
+ * failure). Callers pass plain words/identifiers -- an entry containing
+ * Git extended-regex metacharacters is used as-is, since ce-harness's
+ * own callers (core/retrieval.ts) never pass anything else.
+ */
+export async function searchCommitMessages(
+  repoPath: string,
+  keywords: string[],
+  limit = 20,
+): Promise<CommitSummary[]> {
+  const nonEmpty = keywords.map((keyword) => keyword.trim()).filter((keyword) => keyword.length > 0);
+  if (nonEmpty.length === 0) return [];
+
+  const args = ["log", `--max-count=${limit}`, "--date=iso-strict", "--pretty=format:%H%x1f%ad%x1f%s", "-i"];
+  for (const keyword of nonEmpty) {
+    args.push("--grep", keyword);
+  }
+  const result = await git(repoPath, args);
+  if (result.exitCode !== 0) return [];
+  return parseCommitLogLines(result.stdout);
+}
+
+/**
+ * Read-only list of paths changed by a single commit, relative to the
+ * repository root -- used by core/retrieval.ts only to judge whether a
+ * commit found via `searchCommitMessages` (which has no path of its own)
+ * falls inside a caller-supplied monorepo scope. Never fetches, never
+ * throws (returns an empty array on any failure, which simply means that
+ * commit contributes no scope information rather than blocking anything).
+ */
+export async function commitChangedPaths(repoPath: string, sha: string): Promise<string[]> {
+  const result = await git(repoPath, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]);
+  if (result.exitCode !== 0) return [];
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
 export async function branchExists(repoPath: string, branch: string): Promise<boolean> {
   const result = await git(repoPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
   return result.exitCode === 0;

@@ -8,6 +8,7 @@ import { createBareRemote, cloneRepo, createTempRepo } from "../helpers/tempRepo
 import { CeError } from "../../src/core/errors.js";
 import {
   addLocalExcludePattern,
+  commitChangedPaths,
   addWorktree,
   branchExists,
   deleteBranch,
@@ -18,6 +19,8 @@ import {
   readCachedRemoteDefaultBranch,
   readOriginOrSolitaryRemoteUrl,
   removeWorktree,
+  pathHistory,
+  searchCommitMessages,
   resolveCommit,
   resolveMergeBase,
   resolveRootCommit,
@@ -596,5 +599,95 @@ describe("isShallowRepository / resolveRootCommit", () => {
     repoDir = await mkdtemp(join(tmpdir(), "ce-harness-empty-repo-"));
     await execa("git", ["init", "--initial-branch=main", repoDir]);
     expect(await resolveRootCommit(repoDir)).toBeNull();
+  });
+});
+
+describe("pathHistory / searchCommitMessages / commitChangedPaths", () => {
+  let repoDir: string;
+
+  afterEach(async () => {
+    if (repoDir) await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("pathHistory returns commits touching a path, most-recent first", async () => {
+    repoDir = await createTempRepo();
+    await writeFile(join(repoDir, "a.txt"), "one\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "add a.txt"]);
+    await writeFile(join(repoDir, "a.txt"), "two\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "update a.txt"]);
+    await writeFile(join(repoDir, "unrelated.txt"), "noise\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "unrelated change"]);
+
+    const history = await pathHistory(repoDir, "a.txt");
+    expect(history.map((c) => c.subject)).toEqual(["update a.txt", "add a.txt"]);
+    for (const commit of history) {
+      expect(commit.sha).toMatch(/^[0-9a-f]{40}$/);
+      expect(commit.date.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("pathHistory returns an empty array for a path with no history", async () => {
+    repoDir = await createTempRepo();
+    expect(await pathHistory(repoDir, "never-existed.txt")).toEqual([]);
+  });
+
+  it("pathHistory returns an empty array (never throws) for a nonexistent repository", async () => {
+    expect(await pathHistory("/no/such/path", "a.txt")).toEqual([]);
+  });
+
+  it("pathHistory follows a rename", async () => {
+    repoDir = await createTempRepo();
+    await writeFile(join(repoDir, "old-name.txt"), "content\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "add old-name.txt"]);
+    await execa("git", ["-C", repoDir, "mv", "old-name.txt", "new-name.txt"]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "rename to new-name.txt"]);
+
+    const history = await pathHistory(repoDir, "new-name.txt");
+    expect(history.map((c) => c.subject)).toEqual(["rename to new-name.txt", "add old-name.txt"]);
+  });
+
+  it("searchCommitMessages finds commits matching any keyword, case-insensitively", async () => {
+    repoDir = await createTempRepo();
+    await writeFile(join(repoDir, "auth.txt"), "x\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "Add AUTHENTICATION support"]);
+    await writeFile(join(repoDir, "billing.txt"), "x\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "fix billing overflow"]);
+    await writeFile(join(repoDir, "unrelated.txt"), "x\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "unrelated tweak"]);
+
+    const matches = await searchCommitMessages(repoDir, ["authentication", "billing"]);
+    expect(matches.map((c) => c.subject).sort()).toEqual(
+      ["Add AUTHENTICATION support", "fix billing overflow"].sort(),
+    );
+  });
+
+  it("searchCommitMessages returns an empty array for an empty/blank keyword list", async () => {
+    repoDir = await createTempRepo();
+    expect(await searchCommitMessages(repoDir, [])).toEqual([]);
+    expect(await searchCommitMessages(repoDir, ["   "])).toEqual([]);
+  });
+
+  it("commitChangedPaths lists the files a commit touched", async () => {
+    repoDir = await createTempRepo();
+    await writeFile(join(repoDir, "one.txt"), "x\n", "utf8");
+    await writeFile(join(repoDir, "two.txt"), "y\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "add two files"]);
+    const sha = (await execa("git", ["-C", repoDir, "rev-parse", "HEAD"])).stdout.trim();
+
+    const paths = await commitChangedPaths(repoDir, sha);
+    expect(paths.sort()).toEqual(["one.txt", "two.txt"]);
+  });
+
+  it("commitChangedPaths returns an empty array (never throws) for an unknown SHA", async () => {
+    repoDir = await createTempRepo();
+    expect(await commitChangedPaths(repoDir, "0".repeat(40))).toEqual([]);
   });
 });
