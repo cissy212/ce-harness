@@ -46,6 +46,16 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    - `artifacts`: list of all artifacts with their status and dependencies
    - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context. Use these instead of assuming repo-local paths -- they always resolve inside the external store, never inside the target repository or its Git worktree.
 
+   Also check for `<changeRoot>/explore.md` (resolve `changeRoot` from
+   this same JSON, never construct it by hand). If present, read it now
+   -- it carries `/explore`'s system/context findings for this change.
+   It is **not** one of the `artifacts` listed above and is never part
+   of `applyRequires`, so never treat it as a dependency to satisfy or a
+   file to write/modify -- it is read-only context, exactly like a
+   `dependencies` file, just outside OpenSpec's own artifact graph. If
+   it doesn't exist, proceed without it -- `/propose` must work
+   standalone, without a prior `/explore` run.
+
 4. **Create artifacts in sequence until apply-ready**
 
    Use the **TodoWrite tool** to track progress through the artifacts.
@@ -64,7 +74,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
         - `instruction`: Schema-specific guidance for this artifact type
         - `resolvedOutputPath`: Resolved path or pattern to write the artifact -- always inside the external store
         - `dependencies`: Completed artifacts to read for context
-      - Read any completed dependency files for context
+      - Read any completed dependency files for context, plus `explore.md` from step 3 if it exists
       - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
       - Apply `context` and `rules` as constraints - but do NOT copy them into the file
       - Show brief progress: "Created <artifact-id>"
@@ -77,6 +87,12 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    c. **If an artifact requires user input** (unclear context):
       - Use **AskUserQuestion tool** to clarify
       - Then continue with creation
+
+   d. **Validate, once every `applyRequires` artifact is done**:
+      ```bash
+      openspec validate "<name>" --store "$CE_OPENSPEC_STORE"
+      ```
+      If validation fails, fix the artifacts (still only inside the store) and re-validate until it passes.
 
 5. **Show final status**
    ```bash
@@ -104,6 +120,7 @@ After completing all artifacts, summarize:
 **Guardrails**
 - Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
 - Always read dependency artifacts before creating a new one
+- If `<changeRoot>/explore.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
 - If a change with that name already exists, ask if user wants to continue it or create a new one
 - Verify each artifact file exists after writing before proceeding to next

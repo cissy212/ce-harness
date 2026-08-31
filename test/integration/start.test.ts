@@ -1621,7 +1621,7 @@ describe("ce start (integration)", () => {
       }
     });
 
-    it("documents the expected openspec subcommands: new change, list, context, instructions, validate", async () => {
+    it("documents the expected openspec subcommands: new change, list, context, status -- never invokes instructions/validate (those write/validate the schema-tracked proposal artifact, which is /propose's job now)", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
@@ -1629,8 +1629,33 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/openspec new change/);
       expect(content).toMatch(/openspec list/);
       expect(content).toMatch(/openspec context/);
-      expect(content).toMatch(/openspec instructions proposal/);
-      expect(content).toMatch(/openspec validate/);
+      expect(content).toMatch(/openspec status/);
+
+      // No fenced-code-block *invocation* of instructions/validate -- prose
+      // may still explain (in the negative) that this command doesn't call
+      // them, which is fine and shouldn't trip this check.
+      const invocationLines = content.split("\n").filter((line) => /^\s*openspec\s/.test(line));
+      expect(invocationLines.some((line) => line.includes("openspec instructions"))).toBe(false);
+      expect(invocationLines.some((line) => line.includes("openspec validate"))).toBe(false);
+    });
+
+    it("writes its findings to <changeRoot>/explore.md, never as an OpenSpec schema artifact", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
+
+      expect(content).toMatch(/changeRoot.*\/explore\.md/);
+      expect(content.toLowerCase()).toMatch(/not.*(an )?openspec schema artifact/);
+    });
+
+    it("never drafts proposal.md, design.md, or tasks.md -- that's /propose's job", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8").then(
+        (text) => text.toLowerCase(),
+      );
+
+      expect(content).toMatch(/never draft or write `proposal\.md`, `design\.md`, `tasks\.md`/);
     });
 
     it("explicitly forbids implementing product changes and touching the repository/worktree", async () => {

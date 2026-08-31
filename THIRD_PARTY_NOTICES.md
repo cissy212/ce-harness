@@ -48,7 +48,7 @@ provenance documentation out of the executable templates.
 - Source: `.opencode/commands/opsx-propose.md` + `.opencode/skills/openspec-propose/SKILL.md`, generated via `openspec init <dir> --tools opencode`
 - Upstream version: 1.6.0
 - License: MIT (confirmed)
-- Relationship: Adapted -- workflow, artifact ordering, and behavior preserved from upstream; `CE_OPENSPEC_STORE` made mandatory, `--store` added to every invocation, guardrails added against repo-local artifacts and product-code changes.
+- Relationship: Adapted -- workflow, artifact ordering, and behavior preserved from upstream; `CE_OPENSPEC_STORE` made mandatory, `--store` added to every invocation, guardrails added against repo-local artifacts and product-code changes; now reads `<changeRoot>/explore.md` (a ce-harness-owned, non-schema findings file -- see `templates/commands/explore.md`) for context before creating artifacts, and validates the change after creating artifacts (moved here from `/explore`, which no longer drafts or validates schema artifacts).
 
 ## templates/commands/apply.md
 - Upstream project: OpenSpec (`@fission-ai/openspec`)
