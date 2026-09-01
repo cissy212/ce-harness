@@ -114,6 +114,14 @@ Every claim in it must be grounded in what you actually found in step 6
 -- do not invent conclusions you don't have code evidence for, and do
 not draft proposed changes, designs, or acceptance criteria here.
 
+**Keep it concise and scoped to this issue.** Cite file paths (and line
+ranges where useful) instead of pasting large code excerpts; prefer
+short bullet points over prose paragraphs; and record only what's
+actually relevant to this issue, not a general survey of the
+repository. A short, well-scoped `explore.md` is the goal -- a much
+longer file for a small issue is a sign the exploration wandered, not
+that more detail is better.
+
 ## 8. Report back
 
 Reply in the conversation (not only in the file) with a concise summary
@@ -123,8 +131,10 @@ of:
 - **Relevant locations**: the key files/paths involved.
 - **Open questions**: anything left unclear for a later stage.
 
-Note that `<changeRoot>/explore.md` was written, and that `/propose`
-(directly, or via `/enrich` once available) is the next step.
+State that `<changeRoot>/explore.md` was written, and that `ce open
+--change` opens it (and any other artifacts already on this change) in
+an editor -- no internal path needed. Note that `/enrich` (or `/propose`
+directly) is the next step.
 
 ## Never
 

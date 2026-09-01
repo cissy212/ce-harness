@@ -8,6 +8,12 @@ import {
 } from "../core/workspace.js";
 import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
 import { readIdentityRecord } from "../core/projectIdentity.js";
+import {
+  activeChangeRoot,
+  formatArtifactChecklist,
+  listActiveChanges,
+  summarizeChangeArtifacts,
+} from "../core/activeChange.js";
 import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
 import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
 import { filterHarnessManagedChanges } from "../core/worktreeArtifacts.js";
@@ -124,7 +130,8 @@ export async function statusCommand(): Promise<void> {
       console.log(`Bootstrap:        not required`);
     } else {
       console.log(
-        `Bootstrap:        required (${workspace.bootstrap.findings.length} item(s))`,
+        `Bootstrap:        required before running code (e.g. \`/apply\`, \`/verify\`) -- ` +
+          `not before \`/explore\`/\`/enrich\`/\`/propose\` (${workspace.bootstrap.findings.length} item(s))`,
       );
       for (const finding of workspace.bootstrap.findings) {
         console.log(`  - ${finding.message}`);
@@ -184,6 +191,27 @@ export async function statusCommand(): Promise<void> {
         `Project id:       (legacy durable store -- run \`ce migrate-openspec\` to assign one)`,
       );
     }
+  }
+
+  // Active OpenSpec change(s) and their artifacts: the primary
+  // discovery mechanism for "where did /explore, /enrich, /propose
+  // actually write their output" -- a user should never need to learn
+  // Project Identity or the durable store's internal path just to
+  // inspect this. Pure filesystem discovery (see core/activeChange.ts),
+  // so it works even when the `openspec` binary itself is unavailable.
+  const activeChanges = await listActiveChanges(trusted.root);
+  if (activeChanges.length === 0) {
+    console.log(`Active change:    (none)`);
+  } else {
+    for (const name of activeChanges) {
+      const changeRoot = activeChangeRoot(trusted.root, name);
+      const summary = await summarizeChangeArtifacts(changeRoot);
+      console.log(`Active change:    ${name}`);
+      console.log(`  Artifacts:      ${formatArtifactChecklist(summary)}`);
+    }
+    console.log(
+      `View artifacts:   ce open --change${activeChanges.length > 1 ? " <name>" : ""}`,
+    );
   }
 
   const available = await isOpenSpecAvailable(workspace.workspacePath);

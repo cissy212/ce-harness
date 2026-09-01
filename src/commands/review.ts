@@ -13,7 +13,13 @@ export interface ReviewOptions {
   repo: string;
   /** Raw CLI argument -- validated as a positive integer before use. */
   prNumber: string;
-  /** Coding-agent runner id (e.g. "opencode", "claude"). Defaults to "opencode". */
+  /**
+   * Coding-agent runner id (e.g. "opencode", "claude"), passed through to
+   * `startCommand` unchanged. Left `undefined` here, `resolveRunner`'s own
+   * fallback ("opencode") applies -- but the `ce` CLI itself always
+   * supplies "claude" when `--runner` is omitted (see cliMain.ts), so this
+   * is undefined in practice only when `reviewCommand` is called directly.
+   */
   runner?: string;
 }
 

@@ -52,9 +52,11 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    It is **not** one of the `artifacts` listed above and is never part
    of `applyRequires`, so never treat it as a dependency to satisfy or a
    file to write/modify -- it is read-only context, exactly like a
-   `dependencies` file, just outside OpenSpec's own artifact graph. If
-   it doesn't exist, proceed without it -- `/propose` must work
-   standalone, without a prior `/explore` run.
+   `dependencies` file, just outside OpenSpec's own artifact graph. Use
+   it for context, not as content to copy -- translate only what each
+   artifact needs, the same as `enrich.md` below. If it doesn't exist,
+   proceed without it -- `/propose` must work standalone, without a
+   prior `/explore` run.
 
    Also check for `<changeRoot>/enrich.md`. If present, read it now --
    it carries `/enrich`'s confirmed requirement understanding for this
@@ -123,10 +125,22 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
 **Output**
 
-After completing all artifacts, summarize:
-- Change name and location
-- List of artifacts created with brief descriptions
+After completing all artifacts, summarize concisely -- an artifact
+checklist (✓ present, ✗ missing), never the durable store's internal
+path, e.g.:
+
+```
+Proposal ready.
+Artifacts: explore ✓  enrich ✓  proposal ✓  design ✓  tasks ✓
+View them with: ce open --change
+Next: /apply
+```
+
+- Change name, plus the checklist above (include `specs`/`reports` too
+  if this change has any)
 - What's ready: "All artifacts created! Ready for implementation."
+- "View them with: `ce open --change`" -- never recite the internal
+  store path
 - Prompt: "Run `/apply` to start implementing."
 
 **Artifact Creation Guidelines**

@@ -69,7 +69,8 @@ describe("Repository bootstrap detection (ce start integration)", () => {
     });
 
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
-    expect(output).toMatch(/needs local setup before normal use/i);
+    expect(output).toMatch(/needs local setup before running code/i);
+    expect(output).toMatch(/not before discovery\/specification/i);
     expect(output).toMatch(/node_modules\/ does not exist/);
     expect(output).toMatch(/Run: npm install/);
     expect(output).toMatch(/ce-harness never runs these automatically/i);
@@ -149,7 +150,7 @@ describe("Repository bootstrap detection (ce start integration)", () => {
     await statusCommand();
 
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
-    expect(output).toMatch(/Bootstrap:\s+required \(1 item\(s\)\)/);
+    expect(output).toMatch(/Bootstrap:\s+required before running code.*\(1 item\(s\)\)/);
     expect(output).toMatch(/Run: npm install/);
   });
 

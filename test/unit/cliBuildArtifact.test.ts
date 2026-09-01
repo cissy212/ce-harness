@@ -40,4 +40,35 @@ describe("dist/cli.js build artifact", () => {
     expect(result.stdout).toContain("start [options] <repo> <issue>");
     expect(result.stdout).toContain("resume");
   });
+
+  it('`ce start --help` presents "claude" (not "opencode") as --runner\'s default', async () => {
+    const result = await execa("node", [cliPath, "start", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/--runner <runner>/);
+    expect(result.stdout).toContain('(default: "claude")');
+  });
+
+  it('`ce review --help` presents "claude" (not "opencode") as --runner\'s default', async () => {
+    const result = await execa("node", [cliPath, "review", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/--runner <runner>/);
+    expect(result.stdout).toContain('(default: "claude")');
+  });
+
+  it('`ce open --help` documents --change for opening OpenSpec change artifacts', async () => {
+    const result = await execa("node", [cliPath, "open", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/--change \[name\]/);
+  });
+
+  it('`ce --help`\'s own description no longer describes the old repo-path-hash storage model', async () => {
+    const result = await execa("node", [cliPath, "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/<repo-hash>/);
+    expect(result.stdout).toMatch(/Project Identity/i);
+  });
 });

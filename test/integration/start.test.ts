@@ -1648,6 +1648,24 @@ describe("ce start (integration)", () => {
       expect(content.toLowerCase()).toMatch(/not.*(an )?openspec schema artifact/);
     });
 
+    it("instructs keeping explore.md concise and scoped to the issue, not a general repository survey", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
+
+      expect(content).toMatch(/Keep it concise and scoped to this issue/);
+      expect(content).toMatch(/not a general survey of the/);
+    });
+
+    it("tells the agent to report ce open --change as how to view the persisted findings, not an internal path", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
+
+      expect(content).toMatch(/ce open\s*\n?\s*--change/);
+      expect(content.toLowerCase()).not.toMatch(/\$ce_harness_home/);
+    });
+
     it("never drafts proposal.md, design.md, or tasks.md -- that's /propose's job", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
@@ -1782,6 +1800,24 @@ describe("ce start (integration)", () => {
 
       expect(content).toMatch(/changeRoot.*\/enrich\.md/);
       expect(content.toLowerCase()).toMatch(/not.*(an )?openspec schema artifact/);
+    });
+
+    it("instructs citing explore.md instead of restating it, to avoid duplicating findings across artifacts", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      expect(content).toMatch(/Keep it concise/);
+      expect(content).toMatch(/cite.*explore\.md/i);
+      expect(content).toMatch(/never a re-summary of the\s+whole\s+exploration/);
+    });
+
+    it("tells the agent to report ce open --change as how to view the persisted artifacts, not an internal path", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      expect(content).toMatch(/ce open --change/);
     });
 
     it("never places enrich.md inside the target repository or worktree", async () => {
@@ -1933,6 +1969,24 @@ describe("ce start (integration)", () => {
         /If it doesn't exist, proceed without\s*\n\s*it -- `\/propose` must keep working standalone, without a prior\s*\n\s*`\/enrich` run\./,
       );
       expect(content).not.toMatch(/enrich\.md.{0,80}\brequired\b/is);
+    });
+
+    it("reports an artifact checklist and ce open --change, never the durable store's internal path", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      expect(content).toMatch(/explore ✓\s+enrich ✓\s+proposal ✓\s+design ✓\s+tasks ✓/);
+      expect(content).toMatch(/View them with: `ce open --change`/);
+      expect(content.toLowerCase()).not.toMatch(/change name and location/);
+    });
+
+    it("tells the agent not to copy explore.md's content wholesale, mirroring the enrich.md guidance", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      expect(content).toMatch(/Use\s*\n\s*it for context, not as content to copy/);
     });
 
     it("carries no leading HTML comment or trailing provenance essay (provenance lives in THIRD_PARTY_NOTICES.md)", async () => {
@@ -3905,7 +3959,16 @@ describe("ce start (integration)", () => {
       await teardownFakeClaude(fakeClaude);
     });
 
-    it("defaults to OpenCode and persists runner: \"opencode\" when --runner is omitted", async () => {
+    // `startCommand`'s OWN fallback (via `resolveRunner(undefined)`) is
+    // still "opencode" -- this test exercises exactly that, by calling
+    // `startCommand` directly, which is what every test in this suite
+    // does. It does NOT exercise the real `ce start` CLI's default,
+    // which cliMain.ts's `--runner` option now sets to "claude" before
+    // `startCommand` is ever called -- see the black-box coverage of
+    // that in test/unit/cliBuildArtifact.test.ts, and
+    // core/runners/index.ts's doc comments for why these two defaults
+    // deliberately differ.
+    it("startCommand's own fallback (bypassing the CLI's --runner default) is still OpenCode, and persists runner: \"opencode\"", async () => {
       const { startCommand } = await import("../../src/commands/start.js");
       const { readWorkspace } = await import("../../src/core/workspace.js");
       vi.spyOn(console, "log").mockImplementation(() => undefined);

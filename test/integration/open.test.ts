@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -238,6 +238,150 @@ describe("ce open (integration)", () => {
 
     const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
     expect(recorded.argv).toEqual([workspace.worktreePath]);
+  });
+
+  describe("--change (opens the OpenSpec change's artifacts instead of the worktree)", () => {
+    async function trustedRoot(): Promise<string> {
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace);
+      return trusted!.root;
+    }
+
+    it("auto-resolves and opens the sole active change when --change is given with no name", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const changeRoot = join(root, "openspec", "changes", "contacts-email-notes");
+      await mkdir(changeRoot, { recursive: true });
+
+      await openCommand({ change: true });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([changeRoot]);
+    });
+
+    it("opens a specific active change by name, ignoring other active changes", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      await mkdir(join(root, "openspec", "changes", "alpha-change"), { recursive: true });
+      const betaRoot = join(root, "openspec", "changes", "beta-change");
+      await mkdir(betaRoot, { recursive: true });
+
+      await openCommand({ change: "beta-change" });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([betaRoot]);
+    });
+
+    it("refuses with an actionable message when there is no active change to open", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      await expect(openCommand({ change: true })).rejects.toThrow(CeError);
+      await expect(openCommand({ change: true })).rejects.toThrow(/No active OpenSpec change to open/);
+    });
+
+    it("refuses and lists every active change when more than one exists and no name was given", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      await mkdir(join(root, "openspec", "changes", "alpha-change"), { recursive: true });
+      await mkdir(join(root, "openspec", "changes", "beta-change"), { recursive: true });
+
+      try {
+        await openCommand({ change: true });
+        expect.fail("expected openCommand to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CeError);
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/Multiple active OpenSpec changes exist/);
+        expect(ceError.recovery).toContain("alpha-change");
+        expect(ceError.recovery).toContain("beta-change");
+        expect(ceError.recovery).toMatch(/ce open --change <name>/);
+      }
+    });
+
+    it("refuses with the list of active changes when the named change doesn't exist", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      await mkdir(join(root, "openspec", "changes", "alpha-change"), { recursive: true });
+
+      try {
+        await openCommand({ change: "does-not-exist" });
+        expect.fail("expected openCommand to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CeError);
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/No active OpenSpec change named "does-not-exist"/);
+        expect(ceError.recovery).toContain("alpha-change");
+      }
+    });
+
+    it("prints which change it is opening, distinct from the worktree-opening message", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      await mkdir(join(root, "openspec", "changes", "contacts-email-notes"), { recursive: true });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      await openCommand({ change: true });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Opening change "contacts-email-notes"/);
+      expect(output).toMatch(/VS Code/);
+    });
+
+    it("never creates, registers, or modifies anything -- purely opens the existing change directory", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      await mkdir(join(root, "openspec", "changes", "contacts-email-notes"), { recursive: true });
+
+      const workspaceFile = join(
+        harnessHomeDir,
+        "workspaces",
+        basenameOf(repoDir),
+        "issue-1",
+        "workspace.yml",
+      );
+      const contentBefore = await readFile(workspaceFile, "utf8");
+
+      await openCommand({ change: true });
+
+      const contentAfter = await readFile(workspaceFile, "utf8");
+      expect(contentAfter).toBe(contentBefore);
+    });
   });
 });
 

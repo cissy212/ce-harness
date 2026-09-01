@@ -422,6 +422,141 @@ describe("ce status (integration)", () => {
       expect(output).toMatch(/Workspace type:\s+Existing PR review/);
     });
   });
+
+  describe("Active OpenSpec change and artifacts", () => {
+    async function trustedRoot(): Promise<string> {
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace);
+      return trusted!.root;
+    }
+
+    it('reports "Active change: (none)" when no change has been created yet', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+\(none\)/);
+      expect(output).not.toMatch(/View artifacts:/);
+    });
+
+    it("shows a single active change with its artifact checklist and how to view it", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+
+      await mkdir(join(root, "openspec", "changes", "contacts-email-notes"), { recursive: true });
+      await writeFile(
+        join(root, "openspec", "changes", "contacts-email-notes", "explore.md"),
+        "findings\n",
+        "utf8",
+      );
+      await writeFile(
+        join(root, "openspec", "changes", "contacts-email-notes", "enrich.md"),
+        "**Status:** ready\n",
+        "utf8",
+      );
+      await writeFile(
+        join(root, "openspec", "changes", "contacts-email-notes", "proposal.md"),
+        "why\n",
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+contacts-email-notes/);
+      expect(output).toMatch(/Artifacts:\s+explore ✓\s+enrich ✓ \(ready\)\s+proposal ✓\s+design ✗\s+tasks ✗/);
+      expect(output).toMatch(/View artifacts:\s+ce open --change\s*$/m);
+    });
+
+    it("lists every active change when more than one exists, and suggests naming one to open", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+
+      await mkdir(join(root, "openspec", "changes", "alpha-change"), { recursive: true });
+      await mkdir(join(root, "openspec", "changes", "beta-change"), { recursive: true });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+alpha-change/);
+      expect(output).toMatch(/Active change:\s+beta-change/);
+      expect(output).toMatch(/View artifacts:\s+ce open --change <name>\s*$/m);
+    });
+
+    it("excludes archived changes from the active-change section", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+
+      await mkdir(join(root, "openspec", "changes", "archive", "2026-05-12-add-user-auth"), {
+        recursive: true,
+      });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+\(none\)/);
+      expect(output).not.toMatch(/add-user-auth/);
+    });
+
+    it("shows specs and reports counts when a change has delta specs and reports", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+
+      await mkdir(
+        join(root, "openspec", "changes", "contacts-email-notes", "specs", "contacts-directory"),
+        { recursive: true },
+      );
+      await writeFile(
+        join(root, "openspec", "changes", "contacts-email-notes", "specs", "contacts-directory", "spec.md"),
+        "delta\n",
+        "utf8",
+      );
+      await mkdir(join(root, "openspec", "changes", "contacts-email-notes", "reports"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(root, "openspec", "changes", "contacts-email-notes", "reports", "2026-05-12-verify.md"),
+        "report\n",
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/specs \(1: contacts-directory\)/);
+      expect(output).toMatch(/reports \(1\)/);
+    });
+  });
 });
 
 function basenameOf(path: string): string {

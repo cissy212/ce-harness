@@ -179,6 +179,13 @@ top of what changed, rather than starting over.
 - only present when Status is needs-clarification; "None." otherwise
 ```
 
+**Keep it concise.** `Relevant Current Context` should *cite* `explore.md`
+(e.g. "see explore.md's Findings on <topic>") rather than restate it --
+include only the specific facts that explain an assumption, constraint,
+conflict, or edge case above, never a re-summary of the whole
+exploration. Prefer short bullet points over prose. A clean, well-scoped
+task should produce a short `enrich.md`, not an exhaustive account.
+
 ## 9. Report back
 
 Reply in the conversation (not only in the file) with a concise summary:
@@ -190,6 +197,9 @@ Reply in the conversation (not only in the file) with a concise summary:
 - **Status**: `ready` or `needs-clarification`.
 - **Open questions**: only if any remain -- otherwise state plainly that
   none were found and why (e.g. "the request is small and unambiguous").
+- **Where to find it**: `enrich.md` was written to this change, alongside
+  whatever else already exists (`explore.md`, etc.) -- `ce open --change`
+  opens them all in an editor, no internal path needed.
 
 If this was a re-run on a change with implementation already underway
 (step 3), say so explicitly and recommend the in-progress work be

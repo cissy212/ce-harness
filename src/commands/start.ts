@@ -72,7 +72,15 @@ export interface StartOptions {
    * "Existing PR review" workspace.
    */
   from?: string;
-  /** Coding-agent runner id (e.g. "opencode", "claude"). Defaults to "opencode". */
+  /**
+   * Coding-agent runner id (e.g. "opencode", "claude"). Left `undefined`
+   * here, `resolveRunner` falls back to `DEFAULT_RUNNER_ID` ("opencode") --
+   * that fallback exists for legacy-workspace-resolution and any other
+   * caller that bypasses the CLI, not for real end-user default behavior:
+   * the `ce` CLI itself (cliMain.ts) always supplies "claude" here when
+   * `--runner` is omitted, so this field is undefined in practice only
+   * when `startCommand` is called directly (e.g. from tests).
+   */
   runner?: string;
   /**
    * Explicit Project Identity override: attach this repository's durable

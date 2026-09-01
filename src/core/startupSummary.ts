@@ -49,9 +49,11 @@ export function buildStartupSummary({
 
   if (bootstrap.required) {
     sections.push({
-      title: "Bootstrap needed",
+      title: "Bootstrap (before running code)",
       lines: [
-        "This repository needs local setup before normal use:",
+        "This repository needs local setup before running code in this worktree " +
+          "(e.g. `/apply`, `/verify`) -- not before discovery/specification " +
+          "(`/explore`, `/enrich`, `/propose`), which can proceed now:",
         ...bootstrap.findings.flatMap((finding) => {
           const findingLines = [`- ${finding.message}`, `  Run: ${finding.suggestedCommand}`];
           if (finding.sideEffectWarning) {
@@ -59,7 +61,7 @@ export function buildStartupSummary({
           }
           return findingLines;
         }),
-        "ce-harness never runs these automatically -- run them yourself inside the worktree above.",
+        "ce-harness never runs these automatically -- run them yourself inside the worktree above, whenever you're ready to run code.",
       ],
     });
   }

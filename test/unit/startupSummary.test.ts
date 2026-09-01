@@ -54,7 +54,7 @@ describe("startupSummary (ce start's success output)", () => {
         workspaceType: "Implementation",
         bootstrap: NO_BOOTSTRAP,
       });
-      expect(sections.some((s) => s.title === "Bootstrap needed")).toBe(false);
+      expect(sections.some((s) => s.title === "Bootstrap (before running code)")).toBe(false);
     });
 
     it("includes a Bootstrap section with each finding's message, command, and warning when required", () => {
@@ -75,7 +75,7 @@ describe("startupSummary (ce start's success output)", () => {
         },
       });
 
-      const bootstrapSection = sections.find((s) => s.title === "Bootstrap needed");
+      const bootstrapSection = sections.find((s) => s.title === "Bootstrap (before running code)");
       expect(bootstrapSection).toBeDefined();
       expect(bootstrapSection!.lines.join("\n")).toContain(
         "package.json found, but node_modules/ does not exist.",
@@ -104,7 +104,7 @@ describe("startupSummary (ce start's success output)", () => {
         },
       });
 
-      const bootstrapSection = sections.find((s) => s.title === "Bootstrap needed")!;
+      const bootstrapSection = sections.find((s) => s.title === "Bootstrap (before running code)")!;
       expect(bootstrapSection.lines.join("\n")).not.toMatch(/Warning:/);
     });
 
@@ -131,7 +131,7 @@ describe("startupSummary (ce start's success output)", () => {
         },
       });
 
-      const bootstrapSection = sections.find((s) => s.title === "Bootstrap needed")!;
+      const bootstrapSection = sections.find((s) => s.title === "Bootstrap (before running code)")!;
       expect(bootstrapSection.lines.join("\n")).toContain("npm finding");
       expect(bootstrapSection.lines.join("\n")).toContain("composer finding");
     });
@@ -154,7 +154,7 @@ describe("startupSummary (ce start's success output)", () => {
       });
 
       expect(sections.at(-1)!.title).toBe("Next suggested step");
-      const bootstrapIdx = sections.findIndex((s) => s.title === "Bootstrap needed");
+      const bootstrapIdx = sections.findIndex((s) => s.title === "Bootstrap (before running code)");
       expect(bootstrapIdx).toBeGreaterThan(0);
       expect(bootstrapIdx).toBeLessThan(sections.length - 1);
     });

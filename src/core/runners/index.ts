@@ -5,7 +5,20 @@ import type { RunnerSpec } from "./types.js";
 
 export type { RunnerSpec, RunnerWorkspacePaths, RunnerLaunchResult } from "./types.js";
 
-/** The runner every workspace uses unless `--runner` says otherwise, and every pre-existing workspace.yml (no `runner` field) is treated as having used. */
+/**
+ * `resolveRunner`'s fallback when no runner id is given at all -- used
+ * for interpreting a pre-existing `workspace.yml` with no `runner`
+ * field (from before this field existed) as the OpenCode workspace it
+ * always was, and for any other caller that leaves `runner` unset. This
+ * is deliberately narrower than "the runner a brand-new workspace
+ * gets": the `ce` CLI itself (cliMain.ts's `--runner` option default)
+ * supplies "claude" explicitly for a real `ce start`/`ce review`
+ * invocation with no `--runner` flag, so this constant's value never
+ * actually reaches a new workspace created through the CLI. Changing it
+ * would silently change which runner `ce resume`/`ce refresh` launch
+ * for every already-existing workspace predating the `runner` field --
+ * see `resolveRunner` below.
+ */
 export const DEFAULT_RUNNER_ID = OPENCODE_RUNNER.id;
 
 const REGISTRY: Record<string, RunnerSpec> = {
@@ -21,9 +34,12 @@ export function supportedRunnerIds(): string[] {
 /**
  * Resolves a runner id (from `--runner`, or a workspace's persisted
  * `runner` field) to its `RunnerSpec`. `undefined` resolves to
- * `DEFAULT_RUNNER_ID` -- this is what keeps every workspace created
- * before this field existed, and every `ce start` invoked without
- * `--runner`, behaving exactly as an OpenCode workspace always has.
+ * `DEFAULT_RUNNER_ID` ("opencode") -- this is what keeps every
+ * pre-existing workspace created before the `runner` field existed
+ * behaving exactly as it always has. A real `ce start`/`ce review`
+ * invocation never actually passes `undefined` here: the CLI's own
+ * `--runner` option default ("claude") is what a brand-new workspace
+ * gets when `--runner` is omitted -- see cliMain.ts.
  */
 export function resolveRunner(id: string | undefined): RunnerSpec {
   const key = id ?? DEFAULT_RUNNER_ID;

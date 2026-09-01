@@ -4,15 +4,19 @@ Personal, local-only developer harness for working on Git repositories.
 `ce start` creates an isolated Git worktree plus a workspace directory
 under `~/.ce-harness`, provisions this project's durable
 [OpenSpec](https://github.com/Fission-AI/OpenSpec) store for it, and
-launches a coding-agent runner — [OpenCode](https://opencode.ai)
-by default, or [Claude Code](https://claude.com/claude-code) via
-`--runner claude` — inside that worktree. The target repository itself is
+launches a coding-agent runner — [Claude Code](https://claude.com/claude-code)
+by default, or [OpenCode](https://opencode.ai) via
+`--runner opencode` — inside that worktree. The target repository itself is
 never modified with any harness/OpenSpec files — everything ce-harness
 creates lives outside of it. The OpenSpec store is *durable*: it lives at
-`~/.ce-harness/openspec/<project>/<repo-hash>`, outside every ephemeral
+`~/.ce-harness/openspec/<project-id>`, keyed by a stable, ce-harness-minted
+**Project Identity** rather than a hash of the repository's current path
+(see [Project Identity](#project-identity)), outside every ephemeral
 workspace/worktree `ce cleanup` ever deletes, so it survives cleanup and
 every later workspace for the same project reuses it — synced main specs
-and archived changes included — instead of starting from empty.
+and archived changes included — instead of starting from empty. `ce status`
+shows the active OpenSpec change and which of its artifacts exist; `ce open
+--change` opens them directly — neither requires knowing this internal path.
 
 This document is a complete, step-by-step installation guide for someone
 who has never used ce-harness before, followed by a full user guide
@@ -347,8 +351,8 @@ example `fix-login-bug` or `issue-42`).
   This is a deliberate simplicity constraint, not a technical limit of
   Git worktrees themselves.
 - **Runner-agnostic by design.** ce-harness supports
-  [OpenCode](https://opencode.ai) (the default) and
-  [Claude Code](https://claude.com/claude-code) via `--runner`, and the
+  [Claude Code](https://claude.com/claude-code) (the default) and
+  [OpenCode](https://opencode.ai) via `--runner`, and the
   workflow commands, skills, and reasoning lenses are written to make no
   runner-specific assumptions (e.g. they never hardcode an OpenCode- or
   Claude-specific path) — everything is wired together through plain
@@ -484,7 +488,7 @@ coding-agent runner inside the worktree.
 - `--base <ref>` / `--head <ref>` — optional; see
   [Reviewing an existing pull request or commit range](#reviewing-an-existing-pull-request-or-commit-range).
   Mutually exclusive with `--from`.
-- `--runner <runner>` — optional; `opencode` (default) or `claude`. See
+- `--runner <runner>` — optional; `claude` (default) or `opencode`. See
   [Choosing a coding-agent runner](#choosing-a-coding-agent-runner).
 - `--project-id <id>` / `--new-project` — optional, and mutually
   exclusive; only needed when ce-harness refuses to auto-resolve this
@@ -626,21 +630,23 @@ ce migrate-openspec
 ### Choosing a coding-agent runner
 
 ```bash
-ce start /path/to/your/repository fix-login-bug --runner claude
+ce start /path/to/your/repository fix-login-bug
 # or, explicitly:
+ce start /path/to/your/repository fix-login-bug --runner claude
+# or the other supported runner:
 ce start /path/to/your/repository fix-login-bug --runner opencode
 ```
 
 `--runner` selects which coding agent `ce start` launches inside the
-worktree: `opencode` (the default, unchanged from before this option
-existed) or `claude`, using your locally installed, authenticated
-[Claude Code](https://claude.com/claude-code) CLI (`claude`) — never the
-Anthropic API, and no API key is ever read or required. The choice is
-persisted in the workspace's `workspace.yml`, so `ce resume` always
-relaunches the same runner the workspace was started with, with no
-need to pass `--runner` again. Workspaces created before this option
-existed have no persisted runner and are treated as `opencode`
-workspaces, exactly as they always have been.
+worktree: `claude` (the default) — using your locally installed,
+authenticated [Claude Code](https://claude.com/claude-code) CLI (`claude`)
+— never the Anthropic API, and no API key is ever read or required — or
+`opencode`. The choice is persisted in the workspace's `workspace.yml`, so
+`ce resume` always relaunches the same runner the workspace was started
+with, with no need to pass `--runner` again. Workspaces created before
+this option existed have no persisted runner and are treated as
+`opencode` workspaces, exactly as they always have been — `ce start`'s
+own default only changed for brand-new workspaces.
 
 Both runners see the same canonical workflow: `/explore`, `/propose`,
 `/apply`, `/verify`, `/adversarial-review`, `/archive`, `/workspace`,

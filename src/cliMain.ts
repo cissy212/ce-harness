@@ -28,14 +28,19 @@ export async function runCli(): Promise<void> {
         "Personal, local-only developer harness for working on Git repositories.",
         "",
         "Each `ce start` creates an isolated Git worktree plus a workspace directory",
-        "under ~/.ce-harness, and provisions a durable, project-scoped OpenSpec store",
-        "at ~/.ce-harness/openspec/<project>/<repo-hash>, registered globally with",
-        'OpenSpec by a deterministic "ce-<project>-<hash>" id. Durable means the store',
-        "lives outside every workspace/worktree ce-harness ever deletes: it survives",
-        "`ce cleanup`, and every later workspace for the same project reuses the same",
-        "store (its synced main specs and archived changes included) instead of",
-        "starting from empty. The target repository and the temporary code worktree",
-        "are never modified with OpenSpec files. A workspace created before durable",
+        "under ~/.ce-harness, and provisions a durable OpenSpec store for this",
+        "project, keyed by a stable, ce-harness-minted Project Identity rather than",
+        "a hash of the repository's current path -- so a rename, a fresh clone, or a",
+        "different local path for the same repository all still recognize the same",
+        "project. Durable means the store lives outside every workspace/worktree",
+        "ce-harness ever deletes: it survives `ce cleanup`, and every later",
+        "workspace for the same project reuses the same store (its synced main",
+        "specs and archived changes included) instead of starting from empty. Run",
+        "`ce status` to see the active OpenSpec change and which of its artifacts",
+        "(explore/enrich/proposal/design/tasks/specs/reports) exist, and `ce open",
+        "--change` to open them directly -- neither requires knowing this store's",
+        "internal path. The target repository and the temporary code worktree are",
+        "never modified with OpenSpec files. A workspace created before durable",
         "storage existed keeps its old, workspace-scoped store unless explicitly",
         "moved with `ce migrate-openspec`.",
         "",
@@ -80,7 +85,8 @@ export async function runCli(): Promise<void> {
     )
     .option(
       "--runner <runner>",
-      'coding-agent runner to launch: "opencode" (default) or "claude"',
+      'coding-agent runner to launch: "claude" or "opencode"',
+      "claude",
     )
     .option(
       "--project-id <id>",
@@ -139,7 +145,8 @@ export async function runCli(): Promise<void> {
     .argument("<pr-number>", "GitHub pull request number")
     .option(
       "--runner <runner>",
-      'coding-agent runner to launch: "opencode" (default) or "claude"',
+      'coding-agent runner to launch: "claude" or "opencode"',
+      "claude",
     )
     .action(async (repo: string, prNumber: string, options: { runner?: string }) => {
       await run(() => reviewCommand({ repo, prNumber, runner: options.runner }));
@@ -176,11 +183,20 @@ export async function runCli(): Promise<void> {
     .command("open")
     .description(
       "Open the active workspace's worktree directly in an editor (VS Code today) -- " +
-        "no need to remember or copy the path `ce start`/`ce status` printed. Creates " +
-        "nothing, registers nothing, and never modifies workspace.yml.",
+        "no need to remember or copy the path `ce start`/`ce status` printed. With " +
+        "--change, opens the active OpenSpec change's artifacts (explore.md, enrich.md, " +
+        "proposal.md, design.md, tasks.md, specs/, reports/ -- whichever exist; see `ce " +
+        "status`) instead, without needing to know the durable store's internal path. " +
+        "Creates nothing, registers nothing, and never modifies workspace.yml.",
     )
-    .action(async () => {
-      await run(() => openCommand());
+    .option(
+      "--change [name]",
+      "open the OpenSpec change's artifacts instead of the worktree -- the sole active " +
+        "change if no name is given (see `ce status`), or a specific one by name when " +
+        "more than one is active",
+    )
+    .action(async (options: { change?: string | true }) => {
+      await run(() => openCommand({ change: options.change }));
     });
 
   program
@@ -222,7 +238,9 @@ export async function runCli(): Promise<void> {
     .command("status")
     .description(
       "Show details about the currently active ce-harness workspace, if any, " +
-        "including the OpenSpec store id, root path, and health (read-only).",
+        "including the OpenSpec store id, root path, health, and the active OpenSpec " +
+        "change's artifacts (explore/enrich/proposal/design/tasks/specs/reports -- see " +
+        "`ce open --change` to open them) (read-only).",
     )
     .action(async () => {
       await run(() => statusCommand());
