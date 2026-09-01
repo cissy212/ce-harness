@@ -2357,61 +2357,83 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/## Archive Failed/);
     });
 
-    it("checks for unresolved verify/adversarial-review evidence (Step 4), passively and read-only", async () => {
+    it("gates archive on durable, fresh PASS evidence from /verify and /adversarial-review (Step 4, hard gate)", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
       const normalized = content.replace(/\s+/g, " ");
 
       expect(content).toMatch(
-        /4\. \*\*Check for unresolved review evidence \(read-only, informational only\)\*\*/,
+        /4\. \*\*Require durable, fresh `PASS` evidence from `\/verify` and `\/adversarial-review` \(hard gate\)\*\*/,
       );
       expect(normalized).toMatch(
-        /This step never runs `\/verify` or `\/adversarial-review` itself, never\s*requires either to have run, and never modifies any report/i,
+        /It never runs `\/verify` or `\/adversarial-review`\s*itself and never modifies a report/i,
       );
+      expect(normalized).toMatch(/This applies only to OpenSpec implementation changes/i);
       expect(normalized).toMatch(
-        /This applies only to OpenSpec implementation changes/i,
+        /by filename date: `\*-verify\.md` \/ `\*-adversarial-review\.md`/,
       );
-      expect(content).toMatch(/the most recent `\*-verify\.md` file \(by filename date\)/);
-      expect(content).toMatch(/the most recent `\*-adversarial-review\.md` file \(by filename date\)/);
-      expect(content).toMatch(/## Overall Verdict/);
-      expect(normalized).toMatch(
-        /If a verify report exists and its verdict is not exactly `PASS`/i,
+      // Fingerprint covers uncommitted tracked+untracked changes, not just HEAD.
+      expect(content).toMatch(/git -C "\$CE_WORKTREE" diff HEAD/);
+      expect(content).toMatch(
+        /git -C "\$CE_WORKTREE" ls-files --others --exclude-standard -z \| \(cd "\$CE_WORKTREE" && xargs -0 cat\)/,
       );
+      // Artifacts hash covers proposal/design/tasks/specs, not just tasks.md.
+      expect(content).toMatch(/for f in proposal\.md design\.md tasks\.md; do/);
+      expect(content).toMatch(/find "<changeRoot>\/specs" -type f/);
+
+      // The four classifications, and that only Missing/Failing/Gapped/Stale block.
+      expect(content).toMatch(/\*\*Missing\*\* -- no report of that kind exists at all\. Required, not/);
+      expect(content).toMatch(/\*\*Failing\*\* -- its `\*\*Verdict:\*\*` line reads `FAIL`\./);
+      expect(content).toMatch(/\*\*Gapped\*\* -- its `\*\*Verdict:\*\*` line reads `PASS WITH GAPS`\./);
+      expect(content).toMatch(/\*\*Stale\*\* -- its `\*\*Verdict:\*\*` line reads `PASS`, but its/);
+      expect(content).toMatch(/\*\*Good\*\* -- its `\*\*Verdict:\*\*` line reads `PASS`, and both recorded/);
+      expect(normalized).toMatch(/\*\*If both are Good:\*\* proceed to step 5 -- no warning needed\./);
       expect(normalized).toMatch(
-        /If an adversarial-review report exists and its verdict is `FAIL` or\s*`PASS WITH GAPS`/i,
-      );
-      expect(normalized).toMatch(/Display a warning identifying the report file and its exact\s*verdict/i);
-      expect(normalized).toMatch(/Prompt user for confirmation to continue\.\s*- Proceed if user confirms\./i);
-      expect(normalized).toMatch(
-        /If no such reports exist, or every report found shows a clean\s*`PASS` verdict.*proceed without a warning -- archive behavior is\s*unchanged/i,
+        /\*\*If either is Missing, Failing, Gapped, or Stale: stop here\.\*\* Do\s*not proceed to step 5 or step 6\./,
       );
     });
 
-    it("never reruns verification and never blocks archive on unresolved review evidence", async () => {
+    it("Step 4's gate is unconditional -- no confirm-to-continue override, unlike steps 2-3's warnings", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
       const normalized = content.replace(/\s+/g, " ");
 
       expect(normalized).toMatch(
-        /it archives based on artifact\/task completion, plus a passive, read-only surfacing of unresolved evidence/i,
+        /This is unconditional -- unlike\s*steps 2 and 3's warnings, there is no "confirm to continue anyway\."/i,
       );
       expect(normalized).toMatch(
-        /It never reruns `\/verify` or `\/adversarial-review`, never\s*modifies a report, and never blocks archiving on their findings/i,
+        /This command requires a fresh, passing `\/verify` and `\/adversarial-review` report before archiving \(Step 4\): missing, `FAIL`, `PASS WITH GAPS`, or stale evidence/i,
+      );
+      expect(normalized).toMatch(/no confirm-to-continue override, unlike the softer artifact\/task-completion warnings in steps 2-3/i);
+      expect(normalized).toMatch(
+        /A later passing rerun always supersedes an earlier failure, since the gate only ever looks at the most recent report of each kind/i,
       );
     });
 
-    it("includes unresolved review evidence as a possible Warnings entry in the output template", async () => {
+    it('shows an "Archive Blocked" output naming both commands and telling the user exactly what to run next', async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
-      const normalized = content.replace(/\s+/g, " ");
 
-      expect(content).toMatch(/- Unresolved review evidence: <report filename> \(<verdict>\)/);
-      expect(normalized).toMatch(
-        /only when at least one holds \(incomplete\s*artifacts, incomplete tasks, a skipped sync, or unresolved review\s*evidence from Step 4\)/i,
+      expect(content).toMatch(/## Archive Blocked/);
+      expect(content).toMatch(/\*\*verify:\*\* <one of:/);
+      expect(content).toMatch(/\*\*adversarial-review:\*\* <same shapes as above, for `\/adversarial-review <name>`>/);
+      expect(content).toMatch(/Missing -- run `\/verify <name>` first\./);
+      expect(content).toMatch(
+        /FAIL -- run `\/verify <name>` again after addressing its findings\./,
       );
+      expect(content).toMatch(
+        /PASS WITH GAPS -- run `\/verify <name>` again; this gate requires a clean PASS\./,
+      );
+      expect(content).toMatch(
+        /PASS, but stale \(verified against a different commit\/tasks\.md than the current state\) -- run `\/verify <name>` again\./,
+      );
+      expect(content).toMatch(/Run whichever command\(s\) are needed above, then `\/archive <name>` again\./);
+      // No more "unresolved review evidence" line in the success-path Warnings --
+      // reaching Output On Success at all already implies Step 4 passed.
+      expect(content).not.toMatch(/Unresolved review evidence: <report filename>/);
     });
 
     it("resolves archive paths from OpenSpec JSON output, never hardcoded repo-local paths", async () => {
@@ -3348,6 +3370,60 @@ describe("ce start (integration)", () => {
         );
       });
     });
+
+    describe("durable verdict and staleness fields (for /archive's hard gate)", () => {
+      const readVerify = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+      };
+
+      it("resolves and records the current worktree fingerprint and artifacts hash before writing the report", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(/git -C "\$CE_WORKTREE" rev-parse HEAD/);
+        // Fingerprint: HEAD + uncommitted tracked diff + untracked file content.
+        expect(content).toMatch(/git -C "\$CE_WORKTREE" diff HEAD/);
+        expect(content).toMatch(
+          /git -C "\$CE_WORKTREE" ls-files --others --exclude-standard -z \| \(cd "\$CE_WORKTREE" && xargs -0 cat\) 2>\/dev\/null/,
+        );
+        // Artifacts hash: proposal/design/tasks/specs, not just tasks.md.
+        expect(content).toMatch(/for f in proposal\.md design\.md tasks\.md; do/);
+        expect(content).toMatch(/find "<changeRoot>\/specs" -type f 2>\/dev\/null \| sort \| xargs cat/);
+        expect(normalized).toMatch(
+          /`\/archive` later uses these three values to\s*detect whether this evidence has gone stale/i,
+        );
+        expect(normalized).toMatch(
+          /record `N\/A -- no\s*artifacts to hash` for the artifacts hash instead of running that\s*command/i,
+        );
+      });
+
+      it("writes the recorded fingerprint/hash into the report header, and a machine-checkable Verdict sentinel", async () => {
+        const content = await readVerify();
+
+        expect(content).toMatch(/\*\*Verified worktree commit:\*\* <full SHA -- human reference only>/);
+        expect(content).toMatch(
+          /\*\*Verified worktree fingerprint:\*\* <12-char hash covering the commit plus any uncommitted tracked\/untracked implementation changes>/,
+        );
+        expect(content).toMatch(
+          /\*\*Verified artifacts hash:\*\* <12-char hash covering proposal\.md\/design\.md\/tasks\.md\/specs\/, or "N\/A -- no artifacts to hash">/,
+        );
+        expect(content).toMatch(/^\*\*Verdict:\*\* PASS$/m);
+      });
+
+      it("instructs never renaming, reformatting, or double-tokening the Verdict sentinel line", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Write `\*\*Verdict:\*\*` followed by exactly one of `PASS`, `PASS WITH\s*GAPS`, or `FAIL` -- nothing else on that line\./,
+        );
+        expect(normalized).toMatch(
+          /so never rename it, reformat it, or leave more\s*than one token on it\./,
+        );
+      });
+    });
   });
 
   describe("/adversarial-review command template", () => {
@@ -3838,8 +3914,21 @@ describe("ce start (integration)", () => {
         // The emitted verdict token itself must remain exactly one of the
         // original three-way vocabulary shared with /verify -- "(adversarial)"
         // is prose clarification only, never part of the token written into
-        // the report body.
-        expect(content).toMatch(/^PASS$/m);
+        // the report body. It's written as a machine-checkable `**Verdict:**`
+        // sentinel line, not a bare token, so /archive can grep it.
+        expect(content).toMatch(/^\*\*Verdict:\*\* PASS$/m);
+      });
+
+      it("the Verdict sentinel line is machine-checkable: labeled, exactly one token, and instructed never to be reformatted", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Write `\*\*Verdict:\*\*` followed by exactly one of `PASS`, `PASS WITH\s*GAPS`, or `FAIL` -- nothing else on that line\./,
+        );
+        expect(normalized).toMatch(
+          /This is a durable,\s*machine-checkable field: `\/archive` greps it verbatim to decide whether\s*this evidence is good, so never rename it, reformat it, or leave more\s*than one token on it\./,
+        );
       });
     });
 
@@ -4072,6 +4161,61 @@ describe("ce start (integration)", () => {
 
         expect(content).toMatch(/\*\*Implementation workspace\*\*/);
         expect(content).toMatch(/\*\*Existing PR review workspace\*\*/);
+      });
+    });
+
+    describe("durable verdict and staleness fields (for /archive's hard gate)", () => {
+      const readAdversarialReview = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8");
+      };
+
+      it("resolves and records the current worktree fingerprint and artifacts hash before writing the report (Implementation workspaces)", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(/git -C "\$CE_WORKTREE" rev-parse HEAD/);
+        expect(content).toMatch(/git -C "\$CE_WORKTREE" diff HEAD/);
+        expect(content).toMatch(
+          /git -C "\$CE_WORKTREE" ls-files --others --exclude-standard -z \| \(cd "\$CE_WORKTREE" && xargs -0 cat\) 2>\/dev\/null/,
+        );
+        expect(content).toMatch(/for f in proposal\.md design\.md tasks\.md; do/);
+        expect(content).toMatch(/find "<changeRoot>\/specs" -type f 2>\/dev\/null \| sort \| xargs cat/);
+        expect(normalized).toMatch(
+          /`\/archive` later uses these three values to detect\s*whether this evidence has gone stale/i,
+        );
+      });
+
+      it("skips the fingerprint/hash fields entirely for an Existing PR review workspace, which has no changeRoot", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /An Existing PR review workspace has no `changeRoot` at all\s*\(there is no OpenSpec change, so no `\/archive` gate ever applies to it\)/i,
+        );
+        expect(content).toMatch(
+          /\*\*Reviewed worktree commit:\*\* <full SHA -- human reference only> -- Implementation workspaces only/,
+        );
+        expect(content).toMatch(
+          /\*\*Reviewed worktree fingerprint:\*\* <12-char hash covering the commit plus any uncommitted tracked\/untracked implementation changes> -- Implementation workspaces only/,
+        );
+        expect(content).toMatch(
+          /\*\*Reviewed artifacts hash:\*\* <12-char hash covering proposal\.md\/design\.md\/tasks\.md\/specs\/, or "N\/A -- no artifacts to hash"> -- Implementation workspaces only/,
+        );
+      });
+
+      it("writes a machine-checkable Verdict sentinel and instructs never renaming, reformatting, or double-tokening it", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(/^\*\*Verdict:\*\* PASS$/m);
+        expect(normalized).toMatch(
+          /Write `\*\*Verdict:\*\*` followed by exactly one of `PASS`, `PASS WITH\s*GAPS`, or `FAIL` -- nothing else on that line\./,
+        );
+        expect(normalized).toMatch(
+          /so never rename it, reformat it, or leave more\s*than one token on it\./,
+        );
       });
     });
   });

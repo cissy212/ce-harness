@@ -504,6 +504,44 @@ mkdir -p "<changeRoot>/reports"
 # write to: <changeRoot>/reports/<YYYY-MM-DD>-adversarial-review.md
 ```
 
+Before writing the report, resolve exactly (never estimate) what state
+this review covers -- `/archive` later uses these three values to detect
+whether this evidence has gone stale:
+
+```bash
+# Commit -- for human reference only; not itself what /archive compares.
+git -C "$CE_WORKTREE" rev-parse HEAD
+
+# Worktree fingerprint -- covers uncommitted implementation changes, not
+# just the commit: tracked changes staged or unstaged (git diff HEAD),
+# plus the actual content of untracked, non-ignored files (a new or
+# edited file nobody `git add`ed yet still changes this).
+{
+  git -C "$CE_WORKTREE" rev-parse HEAD
+  git -C "$CE_WORKTREE" diff HEAD
+  git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+} | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12
+
+# Artifacts hash -- covers the agreed contract this review actually
+# checked: proposal.md, design.md, tasks.md, and any delta specs -- not
+# just tasks.md, since a proposal/design change can invalidate evidence
+# just as much as a task change can.
+{
+  for f in proposal.md design.md tasks.md; do
+    [ -f "<changeRoot>/$f" ] && cat "<changeRoot>/$f"
+  done
+  find "<changeRoot>/specs" -type f 2>/dev/null | sort | xargs cat 2>/dev/null
+} | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12
+```
+
+If none of `proposal.md`/`design.md`/`tasks.md`/`specs/` exist (a
+non-spec-driven schema with nothing to hash), record `N/A -- no
+artifacts to hash` for the artifacts hash instead of running that
+command. An Existing PR review workspace has no `changeRoot` at all
+(there is no OpenSpec change, so no `/archive` gate ever applies to it)
+-- skip all three fields entirely for that workspace type; see the
+report structure below.
+
 **Existing PR review workspace:** there is no `changeRoot`. This is the
 **official, dedicated report location** for this workspace type -- resolve
 it from the `root.path` read in Step 1, and never invent a different one:
@@ -531,6 +569,9 @@ this workspace's type -- never both, and never invent a third variant.
 **Date:** YYYY-MM-DD
 **Change:** <changeRoot> -- Implementation workspaces only
 **Pull request:** <PR number/URL if known, else the head branch name> -- Existing PR review workspaces only
+**Reviewed worktree commit:** <full SHA -- human reference only> -- Implementation workspaces only
+**Reviewed worktree fingerprint:** <12-char hash covering the commit plus any uncommitted tracked/untracked implementation changes> -- Implementation workspaces only
+**Reviewed artifacts hash:** <12-char hash covering proposal.md/design.md/tasks.md/specs/, or "N/A -- no artifacts to hash"> -- Implementation workspaces only
 **Scope:** <what this review covers>
 **Baseline sources:** <artifact paths read (Implementation workspace), or PR description + repository docs actually read (Existing PR review workspace)>
 **Implementation sources:** <worktree diff range examined>
@@ -619,10 +660,16 @@ Or, if none: "None noticed."
 
 ## Overall Verdict
 
-PASS
+**Verdict:** PASS
 
 **Reason:** No Blocking or Non-blocking findings affecting this change.
 ```
+
+Write `**Verdict:**` followed by exactly one of `PASS`, `PASS WITH
+GAPS`, or `FAIL` -- nothing else on that line. This is a durable,
+machine-checkable field: `/archive` greps it verbatim to decide whether
+this evidence is good, so never rename it, reformat it, or leave more
+than one token on it.
 
 The verdict is derived **only** from the "Findings Affecting This Change"
 table -- pre-existing/adjacent issues never determine it on their own.

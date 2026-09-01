@@ -49,45 +49,81 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    **If no tasks file exists:** Proceed without task-related warning.
 
-4. **Check for unresolved review evidence (read-only, informational only)**
+4. **Require durable, fresh `PASS` evidence from `/verify` and `/adversarial-review` (hard gate)**
 
-   This step never runs `/verify` or `/adversarial-review` itself, never
-   requires either to have run, and never modifies any report -- it only
-   reads whichever reports already exist and surfaces what they already
-   say. This applies only to OpenSpec implementation changes (the only
-   kind `/archive` ever operates on); an Existing PR review's reports
-   live at a different, unrelated location and are not part of this
-   check.
+   A change cannot be archived as successfully completed unless both
+   have produced durable passing evidence -- this step enforces that,
+   deterministically, rather than relying on remembering whether an
+   earlier command failed. It never runs `/verify` or `/adversarial-review`
+   itself and never modifies a report -- it only reads whichever reports
+   already exist and gates on what they already say. This applies only
+   to OpenSpec implementation changes (the only kind `/archive` ever
+   operates on); an Existing PR review's reports live at a different,
+   unrelated location and are not part of this gate.
 
-   Look for the most recent report of each kind under `<changeRoot>/reports/`,
-   if any:
-   - the most recent `*-verify.md` file (by filename date)
-   - the most recent `*-adversarial-review.md` file (by filename date)
+   Resolve the current state to compare evidence against -- the same
+   two computations `/verify`/`/adversarial-review` themselves run
+   before writing a report (see their "Write the report" step); this
+   must keep computing the identical result for identical worktree/
+   artifact state, since a drifted computation would make every report
+   look stale (or fresh) for the wrong reason:
+   ```bash
+   # Worktree fingerprint -- covers uncommitted implementation changes,
+   # not just the commit.
+   {
+     git -C "$CE_WORKTREE" rev-parse HEAD
+     git -C "$CE_WORKTREE" diff HEAD
+     git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+   } | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12
 
-   For whichever of the two exist, read only their `## Overall Verdict`
-   section.
+   # Artifacts hash -- covers proposal.md/design.md/tasks.md/specs/, not
+   # just tasks.md.
+   {
+     for f in proposal.md design.md tasks.md; do
+       [ -f "<changeRoot>/$f" ] && cat "<changeRoot>/$f"
+     done
+     find "<changeRoot>/specs" -type f 2>/dev/null | sort | xargs cat 2>/dev/null
+   } | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12
+   ```
 
-   **If a verify report exists and its verdict is not exactly `PASS`**
-   (i.e. `PASS WITH GAPS` or `FAIL` -- which per `/verify`'s own verdict
-   rules means at least one requirement is `NOT VERIFIED`, a task is
-   `UNVERIFIED CHECKBOX`, a design commitment is `NOT VERIFIED`, or an
-   item is `BLOCKED`/`PARTIALLY VERIFIED`): note this as unresolved
-   verify evidence.
+   For **each** of `/verify` and `/adversarial-review`, find the most
+   recent report of that kind under `<changeRoot>/reports/` (by filename
+   date: `*-verify.md` / `*-adversarial-review.md`). A later report
+   always supersedes an earlier one of the same kind -- this is what
+   lets a passing rerun overturn an earlier failure without deleting the
+   history of either.
 
-   **If an adversarial-review report exists and its verdict is `FAIL` or
-   `PASS WITH GAPS`:** note this as unresolved adversarial-review
-   evidence.
+   Classify each as exactly one of:
+   - **Missing** -- no report of that kind exists at all. Required, not
+     optional.
+   - **Failing** -- its `**Verdict:**` line reads `FAIL`.
+   - **Gapped** -- its `**Verdict:**` line reads `PASS WITH GAPS`. This
+     gate only accepts a clean `PASS`.
+   - **Stale** -- its `**Verdict:**` line reads `PASS`, but its
+     `**Verified worktree fingerprint:**`/`**Reviewed worktree
+     fingerprint:**` or `**Verified artifacts hash:**`/`**Reviewed
+     artifacts hash:**` doesn't match the current values resolved above
+     (or it predates those fields existing, so has none to compare).
+     The worktree fingerprint changes on **any** implementation change
+     since the report was written -- committed or not, tracked or
+     untracked -- so this catches uncommitted work-in-progress just as
+     reliably as a new commit. The `**Verified/Reviewed worktree
+     commit:**` field is never compared here -- it's for human reference
+     only, since two different fingerprints can share the same commit
+     (uncommitted changes) while an unchanged fingerprint always implies
+     an unchanged commit too.
+   - **Good** -- its `**Verdict:**` line reads `PASS`, and both recorded
+     values (fingerprint and artifacts hash) match current.
 
-   **If either report shows unresolved evidence:**
-   - Display a warning identifying the report file and its exact
-     verdict (e.g. "reports/2026-08-10-verify.md: PASS WITH GAPS", or
-     "reports/2026-08-10-adversarial-review.md: FAIL").
-   - Prompt user for confirmation to continue.
-   - Proceed if user confirms.
+   **If both are Good:** proceed to step 5 -- no warning needed.
 
-   **If no such reports exist, or every report found shows a clean
-   `PASS` verdict:** proceed without a warning -- archive behavior is
-   unchanged from today.
+   **If either is Missing, Failing, Gapped, or Stale: stop here.** Do
+   not proceed to step 5 or step 6. This is unconditional -- unlike
+   steps 2 and 3's warnings, there is no "confirm to continue anyway."
+   Show the "Output On Blocked" template below, telling the user exactly
+   what's wrong with each blocking one (missing / failing / gapped /
+   stale, its report path if it has one) and the exact command to run
+   next (`/verify <name>` and/or `/adversarial-review <name>`).
 
 5. **Assess delta spec sync state**
 
@@ -130,8 +166,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    - Schema that was used
    - Archive location
    - Spec sync status (synced / sync skipped / no delta specs)
-   - Note about any warnings (incomplete artifacts/tasks, unresolved
-     review evidence)
+   - Note about any warnings (incomplete artifacts/tasks)
 
 **Output On Success**
 
@@ -147,20 +182,44 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 - Archived with N incomplete artifacts
 - Archived with N incomplete tasks
 - Delta spec sync was skipped (user chose to skip)
-- Unresolved review evidence: <report filename> (<verdict>)
 
 All artifacts complete. All tasks complete.
 ```
 
-Show whichever single **Specs** value actually applies -- never all
-three. Include the **Warnings** section, listing only the specific
+Reaching this template at all already means step 4's gate passed --
+both `/verify` and `/adversarial-review` evidence was Good -- so it
+never has a review-evidence warning to show; a blocked archive shows
+the "Output On Blocked" template below instead and never reaches this
+point. Show whichever single **Specs** value actually applies -- never
+all three. Include the **Warnings** section, listing only the specific
 warnings that actually apply, only when at least one holds (incomplete
-artifacts, incomplete tasks, a skipped sync, or unresolved review
-evidence from Step 4); omit the section entirely when none apply. When
-the **Warnings** section is present, change the heading to
-`## Archive Complete (with warnings)` and use "Review the archive if
-this was not intentional." as the closing line instead of "All
-artifacts complete. All tasks complete."
+artifacts, incomplete tasks, or a skipped sync); omit the section
+entirely when none apply. When the **Warnings** section is present,
+change the heading to `## Archive Complete (with warnings)` and use
+"Review the archive if this was not intentional." as the closing line
+instead of "All artifacts complete. All tasks complete."
+
+**Output On Blocked (Missing/Failing/Gapped/Stale Verification Evidence)**
+
+```
+## Archive Blocked
+
+**Change:** <change-name>
+
+Archiving requires a fresh, passing `/verify` and `/adversarial-review`
+report for the current worktree and tasks.md. This change doesn't have
+both yet:
+
+- **verify:** <one of: "Missing -- run `/verify <name>` first." | "reports/<file>: FAIL -- run `/verify <name>` again after addressing its findings." | "reports/<file>: PASS WITH GAPS -- run `/verify <name>` again; this gate requires a clean PASS." | "reports/<file>: PASS, but stale (verified against a different commit/tasks.md than the current state) -- run `/verify <name>` again.">
+- **adversarial-review:** <same shapes as above, for `/adversarial-review <name>`>
+
+Run whichever command(s) are needed above, then `/archive <name>` again.
+```
+
+Show a line for both `/verify` and `/adversarial-review` even when only
+one is the actual problem -- state plainly that the other is Good so
+the user isn't left guessing. This gate is unconditional: there is no
+option here to proceed anyway, unlike the artifact/task warnings above.
 
 **Output On Error (Archive Exists)**
 
@@ -181,7 +240,7 @@ Target archive directory already exists.
 **Guardrails**
 - Always prompt for change selection if not provided
 - Use artifact graph (openspec status --store "$CE_OPENSPEC_STORE" --json) for completion checking
-- Don't block archive on warnings - just inform and confirm
+- Don't block archive on the artifact/task-completion warnings (steps 2-3) - just inform and confirm; step 4's verification-evidence gate is different and is never soft (see below)
 - Preserve .openspec.yaml when moving to archive (it moves with the directory)
 - Show clear summary of what happened
 - If sync is requested, use the Skill tool to invoke `openspec-sync-specs` (agent-driven)
@@ -190,6 +249,6 @@ Target archive directory already exists.
 - Never assume repo-local `openspec/` paths -- always use `planningHome`, `changeRoot`, and `artifactPaths` resolved from the CLI's JSON output, which point inside the external store
 - Never modify product/application code during `/archive` -- this command only moves OpenSpec planning artifacts within the external store
 - Never create `openspec/`, `.opencode/`, reports, or any other harness/config file or directory inside the target repository or its Git worktree -- archiving happens only inside the external store at `$CE_OPENSPEC_STORE`
-- This command does not require a prior `/verify` or `/adversarial-review` report to archive -- it archives based on artifact/task completion, plus a passive, read-only surfacing of unresolved evidence from the most recent such reports if they exist (Step 4). It never reruns `/verify` or `/adversarial-review`, never modifies a report, and never blocks archiving on their findings -- only informs and confirms, exactly like the other warnings above.
+- This command requires a fresh, passing `/verify` and `/adversarial-review` report before archiving (Step 4): missing, `FAIL`, `PASS WITH GAPS`, or stale evidence (verified against a different worktree commit or tasks.md than the current state) unconditionally blocks archive -- no confirm-to-continue override, unlike the softer artifact/task-completion warnings in steps 2-3. A later passing rerun always supersedes an earlier failure, since the gate only ever looks at the most recent report of each kind. It never reruns `/verify` or `/adversarial-review` itself and never modifies a report -- it only reads the most recent report of each kind and gates on what it already says.
 
 _See `THIRD_PARTY_NOTICES.md` for this command's provenance and licensing._

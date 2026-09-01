@@ -508,6 +508,45 @@ inside the external OpenSpec store at `$CE_OPENSPEC_STORE` -- never create a
 `reports/` directory, `openspec/` directory, `.opencode/` directory, or any
 other file inside the target repository or its Git worktree.
 
+Before writing the report, resolve exactly (never estimate) what state
+this verification covers -- `/archive` later uses these three values to
+detect whether this evidence has gone stale:
+
+```bash
+# Commit -- for human reference only; not itself what /archive compares.
+git -C "$CE_WORKTREE" rev-parse HEAD
+
+# Worktree fingerprint -- covers uncommitted implementation changes, not
+# just the commit: tracked changes staged or unstaged (git diff HEAD),
+# plus the actual content of untracked, non-ignored files (a new or
+# edited file nobody `git add`ed yet still changes this). `ls-files`
+# prints paths relative to the repo root, not the caller's own cwd, so
+# the `cd "$CE_WORKTREE"` subshell before `cat` is required -- without
+# it, a caller running this from anywhere else would try to read paths
+# relative to its own location and silently miss every untracked file.
+{
+  git -C "$CE_WORKTREE" rev-parse HEAD
+  git -C "$CE_WORKTREE" diff HEAD
+  git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+} | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12
+
+# Artifacts hash -- covers the agreed contract this verification actually
+# checked: proposal.md, design.md, tasks.md, and any delta specs -- not
+# just tasks.md, since a proposal/design change can invalidate evidence
+# just as much as a task change can.
+{
+  for f in proposal.md design.md tasks.md; do
+    [ -f "<changeRoot>/$f" ] && cat "<changeRoot>/$f"
+  done
+  find "<changeRoot>/specs" -type f 2>/dev/null | sort | xargs cat 2>/dev/null
+} | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12
+```
+
+If none of `proposal.md`/`design.md`/`tasks.md`/`specs/` exist (a
+non-spec-driven schema with nothing to hash), record `N/A -- no
+artifacts to hash` for the artifacts hash instead of running that
+command.
+
 ### Report structure
 
 ```markdown
@@ -515,6 +554,9 @@ other file inside the target repository or its Git worktree.
 
 **Date:** YYYY-MM-DD
 **Change:** <changeRoot>
+**Verified worktree commit:** <full SHA -- human reference only>
+**Verified worktree fingerprint:** <12-char hash covering the commit plus any uncommitted tracked/untracked implementation changes>
+**Verified artifacts hash:** <12-char hash covering proposal.md/design.md/tasks.md/specs/, or "N/A -- no artifacts to hash">
 
 ## Scope
 
@@ -565,12 +607,25 @@ Or, if none applied: "N/A -- no lens applied."
 
 ## Overall Verdict
 
-PASS -- all requirements VERIFIED, all design commitments VERIFIED/N/A, all checked tasks VERIFIED, all executed commands PASS.
+**Verdict:** PASS
 
-PASS WITH GAPS -- no NOT VERIFIED requirements, no UNVERIFIED CHECKBOX tasks, and no FAILed commands, but one or more items are BLOCKED or PARTIALLY VERIFIED. List the gaps above.
-
-FAIL -- one or more requirements NOT VERIFIED, tasks UNVERIFIED CHECKBOX, design commitments NOT VERIFIED, or executed commands FAILed. See findings above.
+<one-line summary of why, referencing the criteria below>
 ```
+
+Write `**Verdict:**` followed by exactly one of `PASS`, `PASS WITH
+GAPS`, or `FAIL` -- nothing else on that line. This is a durable,
+machine-checkable field: `/archive` greps it verbatim to decide whether
+this evidence is good, so never rename it, reformat it, or leave more
+than one token on it.
+
+- `PASS` -- all requirements VERIFIED, all design commitments
+  VERIFIED/N/A, all checked tasks VERIFIED, all executed commands PASS.
+- `PASS WITH GAPS` -- no NOT VERIFIED requirements, no UNVERIFIED
+  CHECKBOX tasks, and no FAILed commands, but one or more items are
+  BLOCKED or PARTIALLY VERIFIED. List the gaps above.
+- `FAIL` -- one or more requirements NOT VERIFIED, tasks UNVERIFIED
+  CHECKBOX, design commitments NOT VERIFIED, or executed commands
+  FAILed. See findings above.
 
 ## 10. Report back (no automatic fixes)
 
