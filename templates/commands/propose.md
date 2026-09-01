@@ -84,6 +84,19 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    Use the **TodoWrite tool** to track progress through the artifacts.
 
+   **Realigning after a requirement change caught mid-implementation**:
+   if `enrich.md` (read in step 3) documents a requirement change found
+   on a re-run where implementation was already underway, the artifacts
+   it affects need revising even though `openspec status` already marks
+   them `done` -- the loop below only walks `ready` artifacts by
+   default, so don't let that skip a `done` artifact the change
+   actually touches. Revise only what the change affects. In
+   `tasks.md` specifically: preserve already-completed (`- [x]`) tasks
+   that remain valid under the changed requirement exactly as they are;
+   add, modify, or remove only the tasks the change affects -- never
+   regenerate the file wholesale, and never uncheck a task the change
+   didn't invalidate.
+
    Loop through artifacts in dependency order (artifacts with no pending dependencies first):
 
    a. **For each artifact that is `ready` (dependencies satisfied)**:
@@ -169,6 +182,7 @@ Next: /apply
 - If `<changeRoot>/explore.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it
 - If `<changeRoot>/enrich.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it. If its Status is `needs-clarification`, do not create any artifact; surface its Open Questions and stop instead
 - Never copy `enrich.md`'s sections verbatim into `proposal.md`, `design.md`, or `tasks.md` -- translate only the requirement facts each artifact needs
+- If `enrich.md` documents a requirement change caught after implementation was already underway, revise the `done` artifacts it affects instead of skipping them for being `done` already; in `tasks.md`, preserve already-completed tasks that remain valid and touch only what the change affects -- never regenerate it wholesale
 - Each task in `tasks.md` has one clear, independently verifiable success criterion; split a task that bundles independently completable responsibilities -- judge this semantically (separately checkable outcomes), never mechanically (never split solely because a sentence contains "and")
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
 - If a change with that name already exists, ask if user wants to continue it or create a new one

@@ -1835,6 +1835,22 @@ describe("ce start (integration)", () => {
       expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
       expect(readdirSync(worktreePath).sort()).toEqual([".git", "README.md"]);
     });
+
+    it("on a re-run with implementation already underway, recommends re-running /propose next to realign the artifacts (not just reviewing in-progress work)", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+      // Step 3's existing re-run detection (enrich.md exists + tasks.md
+      // has a checked task) is untouched -- only step 9's report changed.
+      expect(content).toMatch(
+        /`enrich\.md` already exists \*\*and\*\* `tasks\.md` exists with at least one\s*\n\s*`- \[x\]` checked task/,
+      );
+      expect(content).toMatch(
+        /say so explicitly and recommend re-running `\/propose` next/,
+      );
+      expect(content).toMatch(/to realign `proposal\.md`\/`design\.md`\/`tasks\.md`/);
+    });
   });
 
   describe("/propose command template", () => {
@@ -2039,6 +2055,26 @@ describe("ce start (integration)", () => {
       );
       expect(guardrailsSection).toMatch(/never mechanically \(never split solely because a sentence contains "and"\)/);
     });
+
+    it("revises already-done artifacts (not just ready ones) when enrich.md documents a post-implementation requirement change, preserving completed tasks", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      expect(content).toMatch(/Realigning after a requirement change caught mid-implementation/);
+      expect(content).toMatch(
+        /the loop below only walks `ready` artifacts by\s*\n\s*default, so don't let that skip a `done` artifact the change\s*\n\s*actually touches/,
+      );
+      expect(content).toMatch(
+        /preserve already-completed \(`- \[x\]`\) tasks\s*\n\s*that remain valid under the changed requirement exactly as they are/,
+      );
+      expect(content).toMatch(/never\s*\n\s*regenerate the file wholesale, and never uncheck a task the change/);
+
+      const guardrailsSection = content.slice(content.indexOf("**Guardrails**"));
+      expect(guardrailsSection).toMatch(
+        /revise the `done` artifacts it affects instead of skipping them for being `done` already/,
+      );
+    });
   });
 
   describe("/apply command template", () => {
@@ -2208,6 +2244,42 @@ describe("ce start (integration)", () => {
       // Still only 7 steps, no new command/stage introduced by this guard.
       expect(content).toMatch(/7\. \*\*On completion or pause, show status\*\*/);
       expect(content).not.toMatch(/8\. \*\*/);
+    });
+
+    it("stops before coding a human-driven requirement/scope change instead of folding it in against a stale agreed contract", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+      expect(content).toMatch(
+        /The human says something that changes or adds to the agreed\s*\n\s*requirement\/scope/,
+      );
+      expect(content).toMatch(/\*\*stop before writing any code for the\s*\n\s*changed\/new part\.\*\*/);
+      expect(content).toMatch(
+        /run `\/enrich\s*\n\s*<change>` to capture the new intent durably/,
+      );
+      expect(content).toMatch(/then\s*\n\s*`\/propose <change>` to realign `proposal\.md`\/`design\.md`\/\s*\n\s*`tasks\.md`/);
+      expect(content).toMatch(/already-completed\s*\n\s*tasks that remain valid are preserved, not redone/);
+    });
+
+    it("distinguishes a material requirement change from normal implementation discoveries that must not bounce back through the workflow", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+      expect(content).toMatch(/not an implementation detail discovered while\s*\n\s*coding/);
+      expect(content).toMatch(/not a bug fix needed to satisfy the existing spec/);
+      expect(content).toMatch(/not\s*\n\s*a clarification that leaves agreed behavior unchanged/);
+    });
+
+    it("reinforces the requirement-change guard in the Guardrails section", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+      const guardrailsSection = content.slice(content.indexOf("**Guardrails**"), content.indexOf("**Fluid Workflow Integration**"));
+      expect(guardrailsSection).toMatch(/Never implement against a known-stale agreed contract/);
+      expect(guardrailsSection).toMatch(/recommend `\/enrich` then `\/propose` to realign the artifacts/);
     });
   });
 

@@ -202,8 +202,11 @@ Reply in the conversation (not only in the file) with a concise summary:
   opens them all in an editor, no internal path needed.
 
 If this was a re-run on a change with implementation already underway
-(step 3), say so explicitly and recommend the in-progress work be
-reviewed against the updated `enrich.md` before continuing `/apply`.
+(step 3), say so explicitly and recommend re-running `/propose` next --
+to realign `proposal.md`/`design.md`/`tasks.md` with this updated
+`enrich.md` -- before continuing `/apply`. This is what turns a
+material requirement change into a durable, explicit update to the
+agreed contract, rather than a change only the conversation remembers.
 
 ## Never
 

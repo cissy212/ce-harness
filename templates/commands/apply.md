@@ -80,6 +80,19 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
      silently implement it as one lump or half-implement part of it;
      tell the user which task and why, and recommend re-running
      `/propose` to split it in `tasks.md`
+   - The human says something that changes or adds to the agreed
+     requirement/scope -- not an implementation detail discovered while
+     coding, not a bug fix needed to satisfy the existing spec, and not
+     a clarification that leaves agreed behavior unchanged, but a real
+     change to what was agreed → **stop before writing any code for the
+     changed/new part.** Do not fold it in silently. Tell the user
+     plainly what changed, that continuing would mean implementing
+     against a stale agreed contract, and recommend: run `/enrich
+     <change>` to capture the new intent durably (it already detects
+     in-progress implementation and treats this as blocking), then
+     `/propose <change>` to realign `proposal.md`/`design.md`/
+     `tasks.md`, then `/apply` again to resume -- already-completed
+     tasks that remain valid are preserved, not redone.
    - Implementation reveals a design issue → suggest updating artifacts
    - Error or blocker encountered → report and wait for guidance
    - User interrupts
@@ -148,6 +161,7 @@ What would you like to do?
 - Always read context files before starting (from the apply instructions output)
 - If task is ambiguous, pause and ask before implementing
 - If a task obviously bundles multiple independently completable responsibilities (more than one separately checkable success criterion), pause instead of silently implementing it as one lump -- judge this semantically, never by mechanically splitting on "and" -- and recommend re-running `/propose` to split it
+- Never implement against a known-stale agreed contract: if the human changes or adds to the requirement/scope (not an implementation detail, a spec-conforming bug fix, or a non-material clarification), stop before coding the changed/new part and recommend `/enrich` then `/propose` to realign the artifacts before resuming `/apply`
 - If implementation reveals issues, pause and suggest artifact updates
 - Keep code changes minimal and scoped to each task
 - Update task checkbox immediately after completing each task
