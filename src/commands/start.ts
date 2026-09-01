@@ -53,6 +53,7 @@ import { detectBootstrapNeeds, type BootstrapCheckResult } from "../core/bootstr
 import { renderBranchName, resolveBranchPattern } from "../core/branchNaming.js";
 import { buildStartupSummary, formatStartupSummary } from "../core/startupSummary.js";
 import { buildLaunchEnv } from "../core/launchEnv.js";
+import { presentAndLaunch } from "../core/workspacePresenter.js";
 
 export interface StartOptions {
   repo: string;
@@ -521,26 +522,25 @@ export async function startCommand({
     ),
   );
   console.log("");
-  console.log(`Launching ${selectedRunner.label} in "${worktreePath}"...`);
 
   // Everything the workspace needs (worktree, workspace dir, OpenSpec
   // store, workspace.yml, active pointer) is fully created and committed
-  // at this point. A failure to launch the runner from here on must
-  // never roll any of that back.
+  // at this point. Nothing from here on -- presenting the workspace, or a
+  // failure to launch the runner -- must ever roll any of that back.
   //
   // The launch environment itself is built by the same shared helper
   // `ce resume` uses, from the just-written `workspace` object -- so the
   // two commands can never define two different launch environments.
   const launchEnv = buildLaunchEnv(workspace);
-  const launchResult = await selectedRunner.launch({ cwd: worktreePath, env: launchEnv });
-  if (!launchResult.launched) {
-    throw new CeError(
-      `Failed to launch ${selectedRunner.label}: ${launchResult.message}`,
-      `The workspace was created successfully; enter it manually with:\n  ${selectedRunner.formatLaunchCommand(worktreePath, launchEnv)}`,
-    );
-  }
-
-  process.exitCode = launchResult.exitCode;
+  await presentAndLaunch({
+    repoPath: repoRoot,
+    worktreePath,
+    runner: selectedRunner,
+    launchEnv,
+    launchFailureRecoveryIntro: "The workspace was created successfully; enter it manually with:",
+    project: workspace.project,
+    issue: workspace.issue,
+  });
 }
 
 interface RollbackContext {

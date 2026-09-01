@@ -7,6 +7,7 @@ import { createTempRepo } from "../helpers/tempRepo.js";
 import { setupFakeOpenSpec, teardownFakeOpenSpec, type FakeOpenSpecEnv } from "../helpers/fakeOpenSpec.js";
 import { setupFakeOpenCode, teardownFakeOpenCode, type FakeOpenCodeEnv } from "../helpers/fakeOpenCode.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 
 describe("ce migrate-openspec (integration)", () => {
   let harnessHomeDir: string;
@@ -22,6 +23,7 @@ describe("ce migrate-openspec (integration)", () => {
     fakeOpenSpec = await setupFakeOpenSpec();
     fakeOpenCode = await setupFakeOpenCode();
     process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+    process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
   });
 
   afterEach(async () => {
@@ -33,6 +35,7 @@ describe("ce migrate-openspec (integration)", () => {
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
     delete process.env.CE_CODEGRAPH_BIN;
+    delete process.env.CE_OSASCRIPT_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });

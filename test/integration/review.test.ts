@@ -16,6 +16,7 @@ import {
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 import { nonExistentGhBin, setFakePrSnapshot, setupFakeGh, teardownFakeGh } from "../helpers/fakeGh.js";
 
 describe("ce review (integration)", () => {
@@ -42,6 +43,7 @@ describe("ce review (integration)", () => {
     fakeOpenCode = await setupFakeOpenCode();
     setupFakeGh();
     process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+    process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
   });
 
   afterEach(async () => {
@@ -55,6 +57,7 @@ describe("ce review (integration)", () => {
     await teardownFakeOpenCode(fakeOpenCode);
     teardownFakeGh();
     delete process.env.CE_CODEGRAPH_BIN;
+    delete process.env.CE_OSASCRIPT_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
     await rm(remoteDir, { recursive: true, force: true });

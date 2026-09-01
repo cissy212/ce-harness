@@ -18,6 +18,7 @@ import {
 } from "../helpers/fakeOpenCode.js";
 import { setupFakeClaude, teardownFakeClaude, type FakeClaudeEnv } from "../helpers/fakeClaude.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 
 describe("ce resume (integration)", () => {
   let harnessHomeDir: string;
@@ -34,6 +35,7 @@ describe("ce resume (integration)", () => {
     fakeOpenSpec = await setupFakeOpenSpec();
     fakeOpenCode = await setupFakeOpenCode();
     process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+    process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
   });
 
   afterEach(async () => {
@@ -47,6 +49,7 @@ describe("ce resume (integration)", () => {
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
     delete process.env.CE_CODEGRAPH_BIN;
+    delete process.env.CE_OSASCRIPT_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });

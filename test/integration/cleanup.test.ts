@@ -17,6 +17,7 @@ import {
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 import {
   nonExistentDockerBin,
   setupFakeDocker,
@@ -44,6 +45,7 @@ describe("ce cleanup (integration)", () => {
     // the real `codegraph` on PATH -- CodeGraph behavior itself is
     // covered by test/integration/codeGraph.test.ts.
     process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+    process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
     // Deterministic regardless of whether this machine happens to have
     // Docker installed/running, and regardless of what containers
     // happen to exist on it -- never touches a real Docker installation
@@ -62,6 +64,7 @@ describe("ce cleanup (integration)", () => {
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
     delete process.env.CE_CODEGRAPH_BIN;
+    delete process.env.CE_OSASCRIPT_BIN;
     teardownFakeDocker();
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });

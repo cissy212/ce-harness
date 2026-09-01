@@ -32,6 +32,7 @@ called out explicitly).
   - [Quick start](#quick-start)
   - [`ce` command reference](#ce-command-reference)
   - [Choosing a coding-agent runner](#choosing-a-coding-agent-runner)
+  - [Desktop experience (macOS + iTerm2)](#desktop-experience-macos--iterm2)
   - [Reviewing a GitHub pull request](#reviewing-a-github-pull-request)
   - [Starting an Implementation workspace from a specific ref](#starting-an-implementation-workspace-from-a-specific-ref)
   - [Reviewing an existing pull request or commit range](#reviewing-an-existing-pull-request-or-commit-range)
@@ -411,26 +412,40 @@ a separate, unsolved problem.
 ### Quick start
 
 ```bash
-ce start /path/to/your/repository fix-login-bug
+ce start /path/to/your/repository 130
+# or, with no ticket at all -- any short slug works just as well:
+ce start /path/to/your/repository fix-contact-empty-state
 ```
+
+The second argument is just an identifier for what you're working on —
+an issue number or a short slug, whichever you have. Neither is a
+special case: both are sanitized into a filesystem- and branch-safe form
+the same way, and produce an ordinary Implementation workspace either
+way. (Reviewing a PR is a different intent with its own command — see
+[Reviewing a GitHub pull request](#reviewing-a-github-pull-request).)
 
 This validates the repository, creates the worktree and workspace,
 provisions this project's durable OpenSpec store (reusing it unchanged if
 an earlier workspace for this repository already created it), and
-launches OpenCode inside the worktree with everything wired up. Before
-OpenCode launches, it prints a concise summary of what to do next:
+launches the configured coding-agent runner inside the worktree with
+everything wired up — on macOS with iTerm2, in a two-pane tab it opens
+for you automatically; see
+[Desktop experience](#desktop-experience-macos--iterm2). Before the
+runner launches, it prints a concise summary of what to do next:
 
 ```
 Workspace ready.
 
 Worktree
-~/.ce-harness/worktrees/your-repository/fix-login-bug
+~/.ce-harness/worktrees/your-repository/130
 
 Open in VS Code
-code ~/.ce-harness/worktrees/your-repository/fix-login-bug
+code ~/.ce-harness/worktrees/your-repository/130
 
 Next suggested step
 /explore
+
+Opened iTerm2 tab "your-repository · 130": left = shell, right = Claude Code, both in "~/.ce-harness/worktrees/your-repository/130".
 ```
 
 (If the repository needs local setup first, a "Bootstrap needed" section
@@ -438,7 +453,10 @@ appears between "Open in VS Code" and "Next suggested step" — see
 "Bootstrap detection" under [Core concepts](#core-concepts). The
 suggested next step is `/adversarial-review` instead, for an Existing PR
 review workspace — see
-[Reviewing a GitHub pull request](#reviewing-a-github-pull-request).)
+[Reviewing a GitHub pull request](#reviewing-a-github-pull-request). The
+final "Opened iTerm2 tab" line only appears on macOS with iTerm2
+available — see [Desktop experience](#desktop-experience-macos--iterm2)
+for what happens otherwise, including how the tab's title is chosen.)
 
 Opening that worktree in your editor later — after OpenCode has already
 launched, or in a second terminal — is a single command too, no need to
@@ -688,6 +706,77 @@ directory, with no environment variable needed).
 
 An unsupported `--runner` value fails immediately, before anything is
 created, and lists the supported runner ids.
+
+### Desktop experience (macOS + iTerm2)
+
+On macOS with [iTerm2](https://iterm2.com) installed, `ce start`, `ce
+review`, and `ce resume` prepare your whole working environment
+automatically: instead of launching the runner in the terminal you typed
+the command in, they open a new iTerm2 **tab**, split into two panes —
+
+- **left** — a plain interactive shell, already `cd`'d into the worktree
+  with the workspace's environment variables exported. This is where you
+  run `ce status`, `ce open`, `ce open --change`, `git status`, `npm`
+  commands, or any manual inspection.
+- **right** — the configured coding-agent runner, already launched in
+  that same worktree. This is where you run `/explore`, `/enrich`,
+  `/propose`, `/apply`, `/verify`, `/adversarial-review`, `/archive` as
+  appropriate for the workspace.
+
+This never opens a second iTerm2 *window* just because another one is
+already open: if any iTerm2 window exists, the new tab is added to the
+frontmost one; only when no iTerm2 window exists at all is a new window
+created (using its initial tab). An existing tab of yours is never
+reused or split — the ce workspace always gets its own, dedicated new
+tab. No flag is needed — this is the default (`auto`) behavior whenever
+iTerm2 is available. The terminal you ran the command from prints the
+usual startup summary, then a one-line confirmation, and is not one of
+the two panes.
+
+Both panes are titled with the workspace's identity, e.g. `MAT · 130`
+for an Implementation workspace or `MAT · review-pr-452` for a review
+one — so the tab reads clearly even with several ce workspaces (or your
+own unrelated tabs) open side by side.
+
+To recognize a project's tabs at a glance, give a repository its own tab
+color with the `ce-harness.tab-color` Git config key — a name (`red`,
+`orange`, `yellow`, `green`, `cyan`, `blue`, `purple`, `violet`,
+`magenta`, `pink`, `white`, `black`, `gray`) or a hex value (`#8A2BE2` or
+`8A2BE2`, `#RGB` shorthand also accepted):
+
+```bash
+git config ce-harness.tab-color "blue"    # e.g. in your market-audit-tool repo
+git config ce-harness.tab-color "green"   # e.g. in your Oz repo
+git config ce-harness.tab-color "violet"  # e.g. in this repo
+```
+
+This never creates or maintains an iTerm2 profile — no profile picker,
+nothing to keep in sync — it just colors the new tab directly. With no
+color configured, the tab keeps iTerm2's normal appearance. An
+unrecognized value is ignored with a warning, never blocking the launch.
+
+Everywhere this can't happen — Linux, macOS without iTerm2, or iTerm2's
+Automation permission not yet granted (System Settings → Privacy &
+Security → Automation) — `ce` falls back to exactly the single-terminal
+behavior it has always had: the runner launches directly in the terminal
+you're in, with the worktree path and the exact command to relaunch the
+runner later also printed for reference. A workspace is never rolled
+back just because presentation failed; terminal layout is convenience,
+never correctness.
+
+Configure whether this is attempted at all with the
+`ce-harness.terminal-layout` Git config key — the same mechanism as
+`ce-harness.branch-pattern` (see "Configurable branch naming" above) —
+set to `auto` (the default), `iterm2` (require it; still falls back
+gracefully if unavailable), or `none` (always use the single-terminal
+behavior):
+
+```bash
+git config --global ce-harness.terminal-layout none
+```
+
+`CE_TERMINAL_LAYOUT` (same three values) overrides this for a single
+invocation.
 
 ### Reviewing a GitHub pull request
 
@@ -997,11 +1086,13 @@ A few more exist purely to override ce-harness's own defaults (mainly
 useful for development/testing, not day-to-day use): `CE_HARNESS_HOME`
 (defaults to `~/.ce-harness`), `CE_OPENCODE_BIN` / `CE_OPENSPEC_BIN`
 (defaults to `opencode` / `openspec` on `PATH`), and `CE_TEMPLATES_ROOT`
-(defaults to ce-harness's own bundled `templates/` directory). One more
-is genuinely useful day to day: `CE_EDITOR_BIN` (defaults to `code` on
+(defaults to ce-harness's own bundled `templates/` directory). Two more
+are genuinely useful day to day: `CE_EDITOR_BIN` (defaults to `code` on
 `PATH`) overrides which editor CLI `ce open` invokes — set it in your own
 shell profile if you use a `code`-compatible fork instead of vanilla VS
-Code.
+Code — and `CE_TERMINAL_LAYOUT` (`auto` / `iterm2` / `none`) overrides
+the [desktop experience](#desktop-experience-macos--iterm2) for a single
+invocation.
 
 ### Directory layout reference
 

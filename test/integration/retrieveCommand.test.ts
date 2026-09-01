@@ -14,6 +14,7 @@ import {
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 
 async function writeFixtureFile(root: string, relPath: string, content: string): Promise<void> {
   const full = join(root, relPath);
@@ -36,6 +37,7 @@ describe("ce retrieve (integration)", () => {
     fakeOpenSpec = await setupFakeOpenSpec();
     fakeOpenCode = await setupFakeOpenCode();
     process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+    process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
   });
 
   afterEach(async () => {
@@ -49,6 +51,7 @@ describe("ce retrieve (integration)", () => {
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
     delete process.env.CE_CODEGRAPH_BIN;
+    delete process.env.CE_OSASCRIPT_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });

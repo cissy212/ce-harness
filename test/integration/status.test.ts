@@ -15,6 +15,7 @@ import {
   type FakeOpenCodeEnv,
 } from "../helpers/fakeOpenCode.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 import { deregisterWorktreeBookkeeping } from "../helpers/deregisterWorktree.js";
 
 describe("ce status (integration)", () => {
@@ -35,6 +36,7 @@ describe("ce status (integration)", () => {
     // the real `codegraph` on PATH -- CodeGraph behavior itself is
     // covered by test/integration/codeGraph.test.ts.
     process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+    process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
   });
 
   afterEach(async () => {
@@ -48,6 +50,7 @@ describe("ce status (integration)", () => {
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
     delete process.env.CE_CODEGRAPH_BIN;
+    delete process.env.CE_OSASCRIPT_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });

@@ -13,6 +13,7 @@ import {
 import { setupFakeOpenCode, teardownFakeOpenCode, type FakeOpenCodeEnv } from "../helpers/fakeOpenCode.js";
 import { setupFakeClaude, teardownFakeClaude, type FakeClaudeEnv } from "../helpers/fakeClaude.js";
 import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
+import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 
 describe("ce refresh (integration)", () => {
   let harnessHomeDir: string;
@@ -32,6 +33,7 @@ describe("ce refresh (integration)", () => {
     fakeOpenCode = await setupFakeOpenCode();
     fakeClaude = await setupFakeClaude();
     process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+    process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
 
     // A controlled copy of the real template library, so tests can change
     // one command's content and prove refresh reacts to exactly that,
@@ -53,6 +55,7 @@ describe("ce refresh (integration)", () => {
     await teardownFakeOpenCode(fakeOpenCode);
     await teardownFakeClaude(fakeClaude);
     delete process.env.CE_CODEGRAPH_BIN;
+    delete process.env.CE_OSASCRIPT_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
     await rm(fakeTemplatesDir, { recursive: true, force: true });

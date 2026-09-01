@@ -20,6 +20,7 @@ import {
   setupFakeCodeGraph,
   teardownFakeCodeGraph,
 } from "../helpers/fakeCodeGraph.js";
+import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 
 describe("CodeGraph (semantic code navigation) integration", () => {
   let harnessHomeDir: string;
@@ -36,6 +37,10 @@ describe("CodeGraph (semantic code navigation) integration", () => {
     fakeOpenSpec = await setupFakeOpenSpec();
     fakeOpenCode = await setupFakeOpenCode();
     setupFakeCodeGraph();
+    // Deterministic regardless of whether this machine happens to have
+    // real iTerm2/osascript -- iTerm2 presentation itself is covered by
+    // test/unit/iterm2.test.ts and test/unit/workspacePresenter.test.ts.
+    process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
   });
 
   afterEach(async () => {
@@ -48,6 +53,7 @@ describe("CodeGraph (semantic code navigation) integration", () => {
     await teardownFakeOpenSpec(fakeOpenSpec);
     await teardownFakeOpenCode(fakeOpenCode);
     teardownFakeCodeGraph();
+    delete process.env.CE_OSASCRIPT_BIN;
     await rm(harnessHomeDir, { recursive: true, force: true });
     await rm(repoDir, { recursive: true, force: true });
   });
@@ -301,6 +307,7 @@ describe("CodeGraph (semantic code navigation) integration", () => {
   describe("CodeGraph binary not on PATH", () => {
     it("ce start still succeeds; workspace records unavailable; no capability env vars injected", async () => {
       process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+      process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
       const { startCommand } = await import("../../src/commands/start.js");
       vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -317,6 +324,7 @@ describe("CodeGraph (semantic code navigation) integration", () => {
 
     it("never adds an exclude entry when CodeGraph is unavailable -- nothing to exclude", async () => {
       process.env.CE_CODEGRAPH_BIN = nonExistentCodeGraphBin();
+      process.env.CE_OSASCRIPT_BIN = nonExistentOsascriptBin();
       const { startCommand } = await import("../../src/commands/start.js");
       vi.spyOn(console, "log").mockImplementation(() => undefined);
       await startCommand({ repo: repoDir, issue: "issue-1" });

@@ -3,6 +3,7 @@ import { CeError } from "../core/errors.js";
 import { readActivePointer, readWorkspace, resolveTrustedOpenSpec, type Workspace } from "../core/workspace.js";
 import { buildLaunchEnv } from "../core/launchEnv.js";
 import { resolveRunner } from "../core/runners/index.js";
+import { presentAndLaunch } from "../core/workspacePresenter.js";
 
 /**
  * Re-enters the currently active workspace by relaunching the same
@@ -71,18 +72,17 @@ export async function resumeCommand(): Promise<void> {
   console.log(
     `Resuming workspace for project "${workspace.project}", issue "${workspace.issue}".`,
   );
-  console.log(`Launching ${runner.label} in "${workspace.worktreePath}"...`);
 
   // Built by the exact same helper `ce start` uses, from the workspace
   // metadata already on disk -- never rebuilt or reconstructed here.
   const launchEnv = buildLaunchEnv(workspace);
-  const launchResult = await runner.launch({ cwd: workspace.worktreePath, env: launchEnv });
-  if (!launchResult.launched) {
-    throw new CeError(
-      `Failed to launch ${runner.label}: ${launchResult.message}`,
-      `Enter the workspace manually with:\n  ${runner.formatLaunchCommand(workspace.worktreePath, launchEnv)}`,
-    );
-  }
-
-  process.exitCode = launchResult.exitCode;
+  await presentAndLaunch({
+    repoPath: workspace.repositoryPath,
+    worktreePath: workspace.worktreePath,
+    runner,
+    launchEnv,
+    launchFailureRecoveryIntro: "Enter the workspace manually with:",
+    project: workspace.project,
+    issue: workspace.issue,
+  });
 }
