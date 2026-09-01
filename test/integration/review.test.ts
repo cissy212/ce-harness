@@ -334,9 +334,9 @@ describe("ce review (integration)", () => {
     expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
   });
 
-  it("surfaces the existing active-workspace error unchanged when a workspace is already active", async () => {
+  it("reviewing a second PR while an earlier review workspace is the default succeeds, preserving the first and switching the default", async () => {
     const { reviewCommand } = await import("../../src/commands/review.js");
-    const { CeError } = await import("../../src/core/errors.js");
+    const { readActivePointer, workspaceExistsOnDisk } = await import("../../src/core/workspace.js");
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     const first = await setupSameRepoPr(1, "feature-one");
@@ -362,17 +362,14 @@ describe("ce review (integration)", () => {
       isCrossRepository: false,
     });
 
-    try {
-      await reviewCommand({ repo: repoDir, prNumber: "2" });
-      expect.fail("expected reviewCommand to throw");
-    } catch (error) {
-      expect(error).toBeInstanceOf(CeError);
-      const ceError = error as InstanceType<typeof CeError>;
-      expect(ceError.message).toMatch(/already active/i);
-      expect(ceError.message).toMatch(/Issue:\s+review-pr-1/);
-      expect(ceError.recovery).toMatch(/ce status/);
-      expect(ceError.recovery).toMatch(/ce cleanup/);
-    }
+    // Must not throw -- this is the same E2E blocker fixed for `ce
+    // start`, exercised through `ce review`'s delegation to it.
+    await expect(reviewCommand({ repo: repoDir, prNumber: "2" })).resolves.not.toThrow();
+
+    const project = basenameOf(repoDir);
+    expect(workspaceExistsOnDisk(project, "review-pr-1")).toBe(true);
+    expect(workspaceExistsOnDisk(project, "review-pr-2")).toBe(true);
+    expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "review-pr-2" });
   });
 
   it("does not invent a suffixed name on collision -- surfaces the existing collision error", async () => {

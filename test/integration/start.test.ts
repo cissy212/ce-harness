@@ -141,35 +141,84 @@ describe("ce start (integration)", () => {
     );
   });
 
-  it("refuses to overwrite an existing active workspace", async () => {
+  it("succeeds while another workspace is already the default, preserving it untouched, and makes the new one the default", async () => {
     const { startCommand } = await import("../../src/commands/start.js");
+    const { readActivePointer, readWorkspace, workspaceExistsOnDisk } = await import(
+      "../../src/core/workspace.js"
+    );
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await startCommand({ repo: repoDir, issue: "issue-1" });
-    await expect(startCommand({ repo: repoDir, issue: "issue-2" })).rejects.toThrow(
-      /already active/i,
-    );
+    const project = basenameOf(repoDir);
+    const beforeSecondStart = await readWorkspace(project, "issue-1");
+
+    // Must not throw -- this is the exact E2E blocker being fixed.
+    await expect(startCommand({ repo: repoDir, issue: "issue-2" })).resolves.not.toThrow();
+
+    // #130-equivalent (issue-1) is completely untouched.
+    expect(workspaceExistsOnDisk(project, "issue-1")).toBe(true);
+    const afterSecondStart = await readWorkspace(project, "issue-1");
+    expect(afterSecondStart).toEqual(beforeSecondStart);
+    expect(existsSync(join(harnessHomeDir, "worktrees", project, "issue-1"))).toBe(true);
+
+    // #143-equivalent (issue-2) was created normally.
+    expect(workspaceExistsOnDisk(project, "issue-2")).toBe(true);
+
+    // The new workspace is now the default.
+    const pointer = await readActivePointer();
+    expect(pointer).toEqual({ project, sanitizedIssue: "issue-2" });
   });
 
-  it("the active-workspace error is actionable: names the active project/issue and suggests ce status / ce cleanup", async () => {
+  it("prints a non-alarming note pointing back at the previous default workspace when start switches it", async () => {
     const { startCommand } = await import("../../src/commands/start.js");
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+    logSpy.mockClear();
+    await startCommand({ repo: repoDir, issue: "issue-2" });
+
+    const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+    const project = basenameOf(repoDir);
+    expect(output).toMatch(
+      new RegExp(`Note: ${project}/issue-1 was the previous default workspace and is untouched`),
+    );
+    expect(output).toMatch(new RegExp(`ce resume ${project}/issue-1`));
+  });
+
+  it("prints no previous-default note on the very first ce start (nothing to switch from)", async () => {
+    const { startCommand } = await import("../../src/commands/start.js");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    logSpy.mockClear();
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+
+    const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).not.toMatch(/previous default workspace/);
+  });
+
+  it("duplicate start of the exact same, already-existing workspace is still rejected, with a targeted (not bare) recovery suggestion", async () => {
+    const { startCommand } = await import("../../src/commands/start.js");
     const { CeError } = await import("../../src/core/errors.js");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await startCommand({ repo: repoDir, issue: "issue-1" });
 
     try {
-      await startCommand({ repo: repoDir, issue: "issue-2" });
+      await startCommand({ repo: repoDir, issue: "issue-1" });
       expect.fail("expected startCommand to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(CeError);
       const ceError = error as InstanceType<typeof CeError>;
-      expect(ceError.message).toMatch(/Active workspace:/);
-      expect(ceError.message).toMatch(new RegExp(`Project:\\s+${basenameOf(repoDir)}`));
-      expect(ceError.message).toMatch(/Issue:\s+issue-1/);
-      expect(ceError.recovery).toMatch(/ce status/);
-      expect(ceError.recovery).toMatch(/ce cleanup/);
-      expect(ceError.recovery).toMatch(/retry `ce start`/i);
+      const project = basenameOf(repoDir);
+      // The worktree-exists check fires first (before the workspace-dir
+      // check), so this is the message actually reached -- rejection
+      // itself is what matters here; "workspace already exists"
+      // wording is covered by other, more targeted tests elsewhere.
+      expect(ceError.message).toMatch(/already exists/i);
+      // Never a bare `ce cleanup` -- that would now act on whichever
+      // workspace is the current *default*, not necessarily this one.
+      expect(ceError.recovery).toContain(`ce cleanup ${project}/issue-1`);
+      expect(ceError.recovery).not.toContain("`ce cleanup`");
     }
   });
 

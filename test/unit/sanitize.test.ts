@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveProjectName, sanitizeIssue } from "../../src/core/sanitize.js";
+import { deriveProjectName, parseWorkspaceSelector, sanitizeIssue } from "../../src/core/sanitize.js";
 import { CeError } from "../../src/core/errors.js";
 
 describe("sanitizeIssue", () => {
@@ -49,5 +49,55 @@ describe("deriveProjectName", () => {
 
   it("handles trailing slash-free paths", () => {
     expect(deriveProjectName("/tmp/some-project")).toBe("some-project");
+  });
+});
+
+describe("parseWorkspaceSelector", () => {
+  it("splits <project>/<issue> into its two parts", () => {
+    expect(parseWorkspaceSelector("market-audit-tool/130")).toEqual({
+      project: "market-audit-tool",
+      sanitizedIssue: "130",
+    });
+  });
+
+  it("sanitizes the issue half the same way ce start does, so a hand-typed selector still resolves", () => {
+    expect(parseWorkspaceSelector("market-audit-tool/Fix Bug #42")).toEqual({
+      project: "market-audit-tool",
+      sanitizedIssue: "fix-bug-42",
+    });
+  });
+
+  it("matches the project half exactly, never re-sanitizing it", () => {
+    // A project segment with characters toSafeSegment would normally
+    // strip (e.g. uppercase) is passed through as-is -- it's expected to
+    // already match what `ce status` displays, not be re-derived here.
+    expect(parseWorkspaceSelector("My Project/130")).toEqual({
+      project: "My Project",
+      sanitizedIssue: "130",
+    });
+  });
+
+  it("uses only the first slash as the separator, so an issue containing a slash survives (then gets sanitized)", () => {
+    expect(parseWorkspaceSelector("market-audit-tool/feature/foo")).toEqual({
+      project: "market-audit-tool",
+      sanitizedIssue: "feature-foo",
+    });
+  });
+
+  it("throws a CeError with no slash at all", () => {
+    expect(() => parseWorkspaceSelector("market-audit-tool")).toThrow(CeError);
+  });
+
+  it("throws a CeError for an empty project or issue half", () => {
+    expect(() => parseWorkspaceSelector("/130")).toThrow(CeError);
+    expect(() => parseWorkspaceSelector("market-audit-tool/")).toThrow(CeError);
+    expect(() => parseWorkspaceSelector("  /  ")).toThrow(CeError);
+  });
+
+  it("trims surrounding whitespace from both halves", () => {
+    expect(parseWorkspaceSelector("  market-audit-tool / 130  ")).toEqual({
+      project: "market-audit-tool",
+      sanitizedIssue: "130",
+    });
   });
 });

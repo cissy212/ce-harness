@@ -348,6 +348,58 @@ describe("ce resume (integration)", () => {
       }
     });
   });
+
+  describe("targeting a specific workspace ([workspace] argument)", () => {
+    it("explicitly resuming a non-default workspace switches the default back to it", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { resumeCommand } = await import("../../src/commands/resume.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-143" });
+
+      await resumeCommand({ workspace: `${project}/issue-130` });
+
+      expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-130" });
+    });
+
+    it("resuming the already-default workspace explicitly is a harmless no-op on the pointer", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { resumeCommand } = await import("../../src/commands/resume.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+
+      await resumeCommand({ workspace: `${project}/issue-1` });
+
+      expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-1" });
+    });
+
+    it("refuses with an actionable, listed error when the targeted workspace doesn't exist", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { resumeCommand } = await import("../../src/commands/resume.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+
+      try {
+        await resumeCommand({ workspace: `${project}/no-such-issue` });
+        expect.fail("expected resumeCommand to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CeError);
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/No workspace found for/);
+        expect(ceError.recovery).toContain(`${project}/issue-1`);
+      }
+    });
+  });
 });
 
 function basenameOf(path: string): string {

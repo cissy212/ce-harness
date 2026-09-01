@@ -56,3 +56,34 @@ export function deriveProjectName(repoRoot: string): string {
   const name = basename(repoRoot);
   return toSafeSegment(name, "Project name");
 }
+
+export interface WorkspaceSelector {
+  project: string;
+  sanitizedIssue: string;
+}
+
+/**
+ * Parses a `<project>/<issue>` workspace selector -- e.g. as typed to
+ * `ce resume market-audit-tool/130` to address a specific, non-default
+ * workspace (see core/workspace.ts's `ActivePointer` doc comment for
+ * the "many workspaces, one default" model this supports). The issue
+ * half is sanitized exactly like `ce start` sanitizes it, so a selector
+ * copy-pasted from `ce status`'s output and one typed by hand both
+ * resolve to the same on-disk directory. The project half is matched
+ * exactly as shown by `ce status` -- never re-derived or re-sanitized
+ * here (unlike `deriveProjectName`, which only applies when deriving a
+ * project name fresh from a repository path, not when matching one a
+ * user already typed).
+ */
+export function parseWorkspaceSelector(selector: string): WorkspaceSelector {
+  const separatorIndex = selector.indexOf("/");
+  const project = separatorIndex === -1 ? "" : selector.slice(0, separatorIndex).trim();
+  const issue = separatorIndex === -1 ? "" : selector.slice(separatorIndex + 1).trim();
+  if (project.length === 0 || issue.length === 0) {
+    throw new CeError(
+      `Invalid workspace selector "${selector}" -- expected the form <project>/<issue>.`,
+      'e.g. "market-audit-tool/130". Run `ce status` to see available workspaces.',
+    );
+  }
+  return { project, sanitizedIssue: sanitizeIssue(issue) };
+}

@@ -258,45 +258,40 @@ export async function startCommand({
     );
   }
 
-  const existingActive = await readActivePointer();
-  if (existingActive) {
-    throw new CeError(
-      [
-        "A workspace is already active.",
-        "",
-        "Active workspace:",
-        `  Project: ${existingActive.project}`,
-        `  Issue:   ${existingActive.sanitizedIssue}`,
-      ].join("\n"),
-      [
-        "Useful commands:",
-        "",
-        "  ce status",
-        "      Show workspace details.",
-        "",
-        "  ce cleanup",
-        "      Remove the active workspace.",
-        "",
-        "Then retry `ce start` with the same arguments.",
-      ].join("\n"),
-    );
-  }
+  // The previously active (default) workspace, if any, is never a
+  // blocker: every workspace is already fully isolated and addressable
+  // by its own (project, sanitizedIssue) pair (see core/workspace.ts's
+  // `ActivePointer` doc comment), independent of which one happens to
+  // be the default. Read here only so the summary below can tell the
+  // user their previous default is untouched and how to get back to it
+  // -- never compared against this start's own target: starting the
+  // exact same, already-existing project/issue is caught by the
+  // worktree/workspace/branch existence checks immediately below,
+  // regardless of what's currently default.
+  const previousActive = await readActivePointer();
+  // Each of these three targets `ce cleanup <project>/<issue>`
+  // explicitly, never a bare `ce cleanup` -- since that now acts on
+  // whichever workspace is the current *default*, which may well be a
+  // different one than this exact, already-existing project/issue (see
+  // core/workspace.ts's `ActivePointer` doc comment). A bare suggestion
+  // here would risk cleaning up the wrong workspace.
+  const selectorSuffix = `${project}/${sanitizedIssue}`;
   if (existsSync(worktreePath)) {
     throw new CeError(
       `Worktree already exists at "${worktreePath}".`,
-      "Run `ce cleanup` to remove the existing worktree before starting again.",
+      `Run \`ce cleanup ${selectorSuffix}\` to remove the existing worktree before starting again.`,
     );
   }
   if (workspaceExistsOnDisk(project, sanitizedIssue)) {
     throw new CeError(
       `Workspace already exists at "${workspacePath}".`,
-      "Run `ce cleanup` to remove the existing workspace before starting again.",
+      `Run \`ce resume ${selectorSuffix}\` to continue it, or \`ce cleanup ${selectorSuffix}\` to remove it before starting again.`,
     );
   }
   if (await branchExists(repoRoot, internalBranch)) {
     throw new CeError(
       `Branch "${internalBranch}" already exists in "${repoRoot}".`,
-      `Delete the branch (git -C "${repoRoot}" branch -D ${internalBranch}) or run \`ce cleanup\`, then try again.`,
+      `Delete the branch (git -C "${repoRoot}" branch -D ${internalBranch}) or run \`ce cleanup ${selectorSuffix}\`, then try again.`,
     );
   }
   // The project's durable store may already be registered -- from an
@@ -521,6 +516,18 @@ export async function startCommand({
       }),
     ),
   );
+  // Non-alarming: the previous default workspace was never at risk --
+  // this just tells the user where it went and how to get back, since
+  // `ce resume`/`ce open`/`ce status`/`ce cleanup` with no argument now
+  // resolve to *this* workspace instead.
+  if (
+    previousActive &&
+    (previousActive.project !== project || previousActive.sanitizedIssue !== sanitizedIssue)
+  ) {
+    console.log(
+      `Note: ${previousActive.project}/${previousActive.sanitizedIssue} was the previous default workspace and is untouched. Resume it any time: ce resume ${previousActive.project}/${previousActive.sanitizedIssue}`,
+    );
+  }
   console.log("");
 
   // Everything the workspace needs (worktree, workspace dir, OpenSpec

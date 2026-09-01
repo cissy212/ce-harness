@@ -560,6 +560,76 @@ describe("ce status (integration)", () => {
       expect(output).toMatch(/reports \(1\)/);
     });
   });
+
+  describe("targeting a specific workspace ([workspace] argument), and the Other workspaces list", () => {
+    it("shows the requested non-default workspace's detail, never changing which is the default", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      await statusCommand({ workspace: `${project}/issue-130` });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Issue:\s+issue-130/);
+      expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-143" });
+    });
+
+    it("lists every other preserved workspace under Other workspaces when more than one exists", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Issue:\s+issue-143/);
+      expect(output).toMatch(/Other workspaces:/);
+      expect(output).toMatch(new RegExp(`${project}/issue-130`));
+    });
+
+    it("omits the Other workspaces section entirely when only one workspace exists", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).not.toMatch(/Other workspaces:/);
+    });
+
+    it("refuses with an actionable, listed error when the targeted workspace doesn't exist", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+
+      await expect(statusCommand({ workspace: `${project}/no-such-issue` })).rejects.toThrow(CeError);
+      await expect(statusCommand({ workspace: `${project}/no-such-issue` })).rejects.toThrow(
+        /No workspace found for/,
+      );
+    });
+  });
 });
 
 function basenameOf(path: string): string {

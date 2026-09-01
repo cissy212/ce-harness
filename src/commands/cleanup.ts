@@ -18,12 +18,16 @@ import {
   removeWorktree,
   statusPorcelain,
 } from "../core/git.js";
+import { parseWorkspaceSelector } from "../core/sanitize.js";
 import {
   clearActivePointer,
+  describeAvailableWorkspaces,
   readActivePointer,
   readWorkspace,
   removeWorkspaceDir,
   resolveTrustedOpenSpec,
+  workspaceExistsOnDisk,
+  type ActivePointer,
 } from "../core/workspace.js";
 import {
   describeOpenSpecStatus,
@@ -36,13 +40,33 @@ import { findRunningContainersMountingPath } from "../core/docker.js";
 
 export interface CleanupOptions {
   force?: boolean;
+  /**
+   * `<project>/<issue>` selector (see `ce status`) to remove a specific
+   * workspace instead of the current default. The active-default
+   * pointer is only ever cleared if the workspace removed is the one it
+   * currently points at -- cleaning up a non-default workspace never
+   * disturbs which one is default (see core/workspace.ts's
+   * `ActivePointer` doc comment).
+   */
+  workspace?: string;
 }
 
-export async function cleanupCommand({ force = false }: CleanupOptions): Promise<void> {
-  const pointer = await readActivePointer();
+export async function cleanupCommand({ force = false, workspace: selector }: CleanupOptions): Promise<void> {
+  const pointer: ActivePointer | null = selector
+    ? parseWorkspaceSelector(selector)
+    : await readActivePointer();
+
   if (!pointer) {
     console.log("No active workspace to clean up.");
+    console.log(await describeAvailableWorkspaces());
     return;
+  }
+
+  if (selector && !workspaceExistsOnDisk(pointer.project, pointer.sanitizedIssue)) {
+    throw new CeError(
+      `No workspace found for "${pointer.project}/${pointer.sanitizedIssue}".`,
+      await describeAvailableWorkspaces(),
+    );
   }
 
   const workspace = await readWorkspace(pointer.project, pointer.sanitizedIssue);
@@ -212,7 +236,20 @@ export async function cleanupCommand({ force = false }: CleanupOptions): Promise
 
   await deleteBranch(workspace.repositoryPath, workspace.internalBranch);
   await removeWorkspaceDir(workspace.project, workspace.sanitizedIssue);
-  await clearActivePointer();
+
+  // Only clear the default pointer if the workspace just removed is the
+  // one it currently points at -- read fresh (never reuse the `pointer`
+  // resolved above, which came from `selector` when one was given, not
+  // necessarily from the actual current default) so cleaning up a
+  // non-default workspace never disturbs an unrelated default.
+  const currentDefault = await readActivePointer();
+  if (
+    currentDefault &&
+    currentDefault.project === workspace.project &&
+    currentDefault.sanitizedIssue === workspace.sanitizedIssue
+  ) {
+    await clearActivePointer();
+  }
   await pruneWorktrees(workspace.repositoryPath);
 
   // Tidy up now-empty project-level directories, but never the top-level

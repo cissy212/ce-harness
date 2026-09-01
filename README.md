@@ -346,11 +346,22 @@ example `fix-login-bug` or `issue-42`).
     silently overwrite) a colliding archive-date folder; run `/explore`
     first in a reused workspace if you want to see what's already there
     before proposing a new change.
-- **One active workspace at a time.** ce-harness tracks a single active
-  workspace. `ce start` refuses to run if one is already active; run
-  `ce cleanup` first to finish or discard it before starting another.
-  This is a deliberate simplicity constraint, not a technical limit of
-  Git worktrees themselves.
+- **Many preserved workspaces, one default.** Every workspace is fully
+  isolated and addressable by its own `<project>/<issue>` (the same
+  identity `ce status` displays), independent of any other workspace —
+  including another one for the same project. ce-harness additionally
+  tracks which *one* is the current **default** for `ce resume`/`ce
+  open`/`ce status`/`ce cleanup` when run with no argument. `ce start`
+  never refuses because another workspace exists; the new workspace
+  simply becomes the default, and the previous one is left completely
+  untouched — reach it any time with `ce resume <project>/<issue>`
+  (which also switches the default back to it, since resuming means
+  "work on this now"; `ce open`/`ce status` with an explicit workspace
+  never change the default — they're read-only). `ce cleanup` is never
+  required just to switch which workspace you're working on; run `ce
+  cleanup <project>/<issue>` when you actually want to remove one — the
+  default pointer only changes if the workspace removed was the one it
+  pointed at. See [`ce` command reference](#ce-command-reference).
 - **Runner-agnostic by design.** ce-harness supports
   [Claude Code](https://claude.com/claude-code) (the default) and
   [OpenCode](https://opencode.ai) via `--runner`, and the
@@ -518,6 +529,13 @@ does **not** roll the workspace back — the workspace is still valid and
 active, so just run `ce resume` (see [Resuming a session](#resuming-a-session))
 instead of re-running `ce start`.
 
+`ce start` never refuses because another workspace already exists —
+including another one for the same project. The new workspace becomes
+the default for `ce resume`/`ce open`/`ce status`/`ce cleanup` when run
+with no argument; the previous default is left completely untouched, and
+`ce start` prints a short note reminding you it's still there and how to
+get back to it (`ce resume <project>/<issue>`).
+
 #### `ce review <repo> <pr-number>`
 
 The convenient way to review a GitHub pull request when all you know is
@@ -536,30 +554,39 @@ issue identifier defaulted to `review-pr-<number>`.
   `ce start` itself has no GitHub dependency at all — only `ce review`
   does.
 
-#### `ce resume`
+#### `ce resume [workspace]`
 
-Re-enters the active workspace: relaunches whichever runner `ce start`
-used for it (see [Choosing a coding-agent runner](#choosing-a-coding-agent-runner))
-with exactly the same environment, in the same worktree. Requires an
-active workspace and creates nothing — no new worktree, workspace,
-OpenSpec store, or CodeGraph index — and never modifies `workspace.yml`.
-See [Resuming a session](#resuming-a-session).
+Re-enters a workspace: relaunches whichever runner `ce start` used for
+it (see [Choosing a coding-agent runner](#choosing-a-coding-agent-runner))
+with exactly the same environment, in the same worktree. Creates
+nothing — no new worktree, workspace, OpenSpec store, or CodeGraph index
+— and never modifies `workspace.yml`. With no `[workspace]` argument,
+re-enters the current default. With `[workspace]` given as
+`<project>/<issue>` (e.g. `market-audit-tool/130` — see `ce status` for
+the exact identity), re-enters that workspace instead **and makes it the
+new default** — explicitly resuming a workspace means "work on this
+now." See [Resuming a session](#resuming-a-session).
 
-#### `ce open`
+#### `ce open [workspace]`
 
-Opens the active workspace's worktree directly in an editor (VS Code by
-default — `code <worktree-path>`), so you never have to remember or copy
-the path `ce start`/`ce status` printed. Requires an active workspace
-and creates nothing. Override the editor CLI with `CE_EDITOR_BIN` (any
+Opens a workspace's worktree directly in an editor (VS Code by default —
+`code <worktree-path>`), so you never have to remember or copy the path
+`ce start`/`ce status` printed. Creates nothing. With no `[workspace]`
+argument, opens the current default; with `[workspace]` (as
+`<project>/<issue>`), opens that one instead — purely a read, like `ce
+status`: it never changes which workspace is the default, even given
+explicitly. Override the editor CLI with `CE_EDITOR_BIN` (any
 `code`-compatible fork — VSCodium, Cursor's own `cursor` CLI, etc. — works
 today with no code change, since they accept the same `<binary> <path>`
 invocation).
 
-#### `ce status`
+#### `ce status [workspace]`
 
-Read-only; safe to run any time, including with no active workspace (it
-prints `No active workspace.` and exits). With an active workspace, it
-reports:
+Read-only; safe to run any time, including with no default workspace set
+(it prints `No active workspace.` and exits). With no `[workspace]`
+argument, reports on the current default; with `[workspace]` (as
+`<project>/<issue>`), reports on that one instead, without changing the
+default. Either way it reports:
 
 - Project, issue, workspace type (`Implementation` or `Existing PR
   review` — derived from whether `--base`/`--head` were used, never a
@@ -577,15 +604,23 @@ reports:
 - The reasoning-lenses directory and whether it exists
 - Whether the repository needs bootstrapping (dependencies installed,
   etc.), and if so, the exact commands to fix it
+- **Other workspaces:** every other workspace preserved on disk, as
+  `<project>/<issue>`, whenever more than one exists — so one not being
+  the default never leaves you wondering whether it's still there
 - The OpenSpec store id, root path, whether it's durable (survives `ce
   cleanup`) or a legacy, workspace-scoped store, and its health check
   result
 
-#### `ce cleanup [--force]`
+#### `ce cleanup [workspace] [--force]`
 
-Removes the active workspace's worktree, its Git branch, and the
-workspace directory. What happens to the OpenSpec store depends on its
-kind:
+Removes a workspace's worktree, its Git branch, and the workspace
+directory. With no `[workspace]` argument, removes the current default;
+with `[workspace]` (as `<project>/<issue>`), removes that one instead.
+The default pointer is only ever updated if the workspace just removed
+is the one it currently pointed at — cleaning up a non-default workspace
+never disturbs the default, and never requires `ce cleanup` at all just
+to start or resume working on something else. What happens to the
+OpenSpec store depends on its kind:
 
 - **Durable, project-scoped store** (the default since this workspace's
   `ce start`): left registered and untouched. It lives outside the
@@ -908,14 +943,17 @@ verdict rules — is identical to the Implementation-workspace flow.
 
 ### Resuming a session
 
-If OpenCode exits (you closed the terminal, it crashed, etc.) but you
-haven't run `ce cleanup`, the workspace is still active — re-running
-`ce start` will refuse ("a workspace is already active"). Get back into
+If OpenCode exits (you closed the terminal, it crashed, etc.), the
+workspace is still there, exactly as `ce start` left it — get back into
 it with:
 
 ```bash
 ce resume
 ```
+
+(Re-running `ce start` with the same repo/issue instead now suggests
+this exact command, rather than refusing outright — see [Many preserved
+workspaces, one default](#core-concepts) above.)
 
 This relaunches OpenCode with exactly the same environment `ce start`
 used the first time, in the same worktree. It requires an active
@@ -1234,13 +1272,18 @@ pattern (`git config ce-harness.branch-pattern "feature/{issue}"`), or
 remove the override entirely (`git config --unset
 ce-harness.branch-pattern`) to use the default.
 
-### `ce start` fails with "A workspace is already active..."
+### `ce start` fails with "Worktree/Workspace/Branch already exists..."
 
-Only one workspace can be active at a time. Run `ce status` to see what
-it is. If that's the workspace you meant to keep working in, run
-`ce resume` to get back into it — no need to start a new one. If you're
-actually done with it, run `ce cleanup` (see
-[`ce cleanup`](#ce-cleanup---force)) first, then start the new one.
+You already ran `ce start` for this exact `<repo>`/`<issue>` pair
+(possibly not as the current default, if you've since started or
+resumed something else — see [Many preserved workspaces, one
+default](#core-concepts)). The error itself names the exact command to
+run: `ce resume <project>/<issue>` to continue it, or `ce cleanup
+<project>/<issue>` (see [`ce cleanup`](#ce-cleanup-workspace---force))
+to remove it first if you want a genuinely fresh start. This never
+requires cleaning up or disturbing any *other* workspace — starting a
+new one for a different issue always just works, with no prerequisite
+`ce cleanup` at all.
 
 ### `ce start --base ... --head ...` fails to resolve a ref, or reports no shared history
 

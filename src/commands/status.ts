@@ -1,10 +1,16 @@
 import { existsSync } from "node:fs";
 import { branchExists, isRegisteredWorktree, statusPorcelain } from "../core/git.js";
+import { CeError } from "../core/errors.js";
+import { parseWorkspaceSelector } from "../core/sanitize.js";
 import {
+  describeAvailableWorkspaces,
+  listWorkspaces,
   readActivePointer,
   readWorkspace,
   resolveTrustedOpenSpec,
+  workspaceExistsOnDisk,
   workspaceType,
+  type ActivePointer,
 } from "../core/workspace.js";
 import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
 import { readIdentityRecord } from "../core/projectIdentity.js";
@@ -18,11 +24,32 @@ import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencod
 import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
 import { filterHarnessManagedChanges } from "../core/worktreeArtifacts.js";
 
-export async function statusCommand(): Promise<void> {
-  const pointer = await readActivePointer();
+export interface StatusOptions {
+  /**
+   * `<project>/<issue>` selector (see the "Other workspaces" section
+   * this command prints) to inspect a specific workspace instead of the
+   * current default. Purely a read: never changes which workspace is
+   * the default, even when given explicitly.
+   */
+  workspace?: string;
+}
+
+export async function statusCommand(options: StatusOptions = {}): Promise<void> {
+  const pointer: ActivePointer | null = options.workspace
+    ? parseWorkspaceSelector(options.workspace)
+    : await readActivePointer();
+
   if (!pointer) {
     console.log("No active workspace.");
+    console.log(await describeAvailableWorkspaces());
     return;
+  }
+
+  if (options.workspace && !workspaceExistsOnDisk(pointer.project, pointer.sanitizedIssue)) {
+    throw new CeError(
+      `No workspace found for "${pointer.project}/${pointer.sanitizedIssue}".`,
+      await describeAvailableWorkspaces(),
+    );
   }
 
   const workspace = await readWorkspace(pointer.project, pointer.sanitizedIssue);
@@ -96,6 +123,22 @@ export async function statusCommand(): Promise<void> {
   }
   console.log(`Branch exists:    ${branchStillExists ? "yes" : "no"}`);
   console.log(`Worktree changes: ${changesSummary}`);
+
+  // Discoverability for the "many workspaces, one default" model (see
+  // core/workspace.ts's `ActivePointer` doc comment): every other
+  // preserved workspace, so a user is never left wondering whether one
+  // still exists just because it isn't the default shown above. Printed
+  // unconditionally, before any section below that could return early
+  // (e.g. a workspace with no OpenSpec metadata), so it always appears.
+  const others = (await listWorkspaces()).filter(
+    (w) => !(w.project === workspace.project && w.sanitizedIssue === workspace.sanitizedIssue),
+  );
+  if (others.length > 0) {
+    console.log(`Other workspaces:`);
+    for (const other of others) {
+      console.log(`  ${other.project}/${other.sanitizedIssue}`);
+    }
+  }
 
   // The OpenCode config directory path is fully deterministic from
   // workspacePath, so it applies to every workspace regardless of

@@ -1174,6 +1174,77 @@ describe("ce cleanup (integration)", () => {
       expect(await readActivePointer()).toBeNull();
     });
   });
+
+  describe("targeting a specific workspace ([workspace] argument)", () => {
+    it("cleaning up a non-default workspace removes it without disturbing the default", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readActivePointer, workspaceExistsOnDisk } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-143" });
+
+      await cleanupCommand({ workspace: `${project}/issue-130` });
+
+      expect(workspaceExistsOnDisk(project, "issue-130")).toBe(false);
+      expect(workspaceExistsOnDisk(project, "issue-143")).toBe(true);
+      expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-143" });
+    });
+
+    it("cleaning up the default workspace explicitly by selector clears the pointer, same as cleaning it up bare", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+
+      await cleanupCommand({ workspace: `${project}/issue-1` });
+
+      expect(await readActivePointer()).toBeNull();
+    });
+
+    it("cleaning up the default workspace (bare, no selector) leaves the pointer cleared, with other workspaces untouched", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { readActivePointer, workspaceExistsOnDisk } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+
+      await cleanupCommand({});
+
+      expect(await readActivePointer()).toBeNull();
+      expect(workspaceExistsOnDisk(project, "issue-143")).toBe(false);
+      expect(workspaceExistsOnDisk(project, "issue-130")).toBe(true);
+    });
+
+    it("refuses with an actionable, listed error when the targeted workspace doesn't exist", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+
+      try {
+        await cleanupCommand({ workspace: `${project}/no-such-issue` });
+        expect.fail("expected cleanupCommand to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CeError);
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/No workspace found for/);
+        expect(ceError.recovery).toContain(`${project}/issue-1`);
+      }
+    });
+  });
 });
 
 function basenameOf(path: string): string {

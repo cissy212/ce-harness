@@ -662,3 +662,90 @@ describe("workspaceType", () => {
     expect(workspaceType(workspace)).toBe("Existing PR review");
   });
 });
+
+describe("listWorkspaces / describeAvailableWorkspaces (many preserved workspaces, discoverable independent of the default pointer)", () => {
+  let tempHome: string;
+  const originalEnv = process.env.CE_HARNESS_HOME;
+
+  beforeEach(async () => {
+    tempHome = await mkdtemp(join(tmpdir(), "ce-harness-workspace-list-"));
+    process.env.CE_HARNESS_HOME = tempHome;
+  });
+
+  afterEach(async () => {
+    if (originalEnv === undefined) {
+      delete process.env.CE_HARNESS_HOME;
+    } else {
+      process.env.CE_HARNESS_HOME = originalEnv;
+    }
+    await rm(tempHome, { recursive: true, force: true });
+  });
+
+  async function writeFixtureWorkspace(project: string, sanitizedIssue: string): Promise<void> {
+    const { writeWorkspace } = await import("../../src/core/workspace.js");
+    await writeWorkspace({
+      project,
+      repositoryPath: `/tmp/${project}`,
+      issue: sanitizedIssue,
+      sanitizedIssue,
+      baseBranch: "main",
+      internalBranch: `ce-harness/${sanitizedIssue}`,
+      worktreePath: join(tempHome, "worktrees", project, sanitizedIssue),
+      workspacePath: join(tempHome, "workspaces", project, sanitizedIssue),
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  it("returns an empty list when no workspace exists yet (workspacesRoot() itself absent)", async () => {
+    const { listWorkspaces } = await import("../../src/core/workspace.js");
+    expect(await listWorkspaces()).toEqual([]);
+  });
+
+  it("lists every workspace on disk, sorted by project then issue, regardless of which is the active-default pointer", async () => {
+    const { listWorkspaces, writeActivePointer } = await import("../../src/core/workspace.js");
+    await writeFixtureWorkspace("market-audit-tool", "issue-143");
+    await writeFixtureWorkspace("market-audit-tool", "issue-130");
+    await writeFixtureWorkspace("oz", "issue-7");
+    // The active pointer, even pointing at something that doesn't exist
+    // on disk, must never influence the scan -- it's a pure filesystem
+    // read.
+    await writeActivePointer({ project: "nonexistent", sanitizedIssue: "nothing" });
+
+    const result = await listWorkspaces();
+
+    expect(result).toEqual([
+      { project: "market-audit-tool", sanitizedIssue: "issue-130" },
+      { project: "market-audit-tool", sanitizedIssue: "issue-143" },
+      { project: "oz", sanitizedIssue: "issue-7" },
+    ]);
+  });
+
+  it("never throws for an unreadable/malformed workspacesRoot -- simply contributes no entries", async () => {
+    const { listWorkspaces } = await import("../../src/core/workspace.js");
+    // A file where a directory is expected -- exercises the readdir
+    // failure path without needing real permission manipulation.
+    await mkdir(join(tempHome, "workspaces"), { recursive: true });
+    await writeFile(join(tempHome, "workspaces", "not-a-dir-but-named-like-a-project"), "x", "utf8");
+
+    await expect(listWorkspaces()).resolves.toEqual([]);
+  });
+
+  it("describeAvailableWorkspaces suggests ce start when nothing exists yet", async () => {
+    const { describeAvailableWorkspaces } = await import("../../src/core/workspace.js");
+    const text = await describeAvailableWorkspaces();
+    expect(text).toMatch(/No workspaces exist yet/);
+    expect(text).toMatch(/ce start <repo> <issue>/);
+  });
+
+  it("describeAvailableWorkspaces lists every <project>/<issue> pair when workspaces exist", async () => {
+    const { describeAvailableWorkspaces } = await import("../../src/core/workspace.js");
+    await writeFixtureWorkspace("market-audit-tool", "issue-130");
+    await writeFixtureWorkspace("market-audit-tool", "issue-143");
+
+    const text = await describeAvailableWorkspaces();
+
+    expect(text).toMatch(/Available workspaces:/);
+    expect(text).toContain("market-audit-tool/issue-130");
+    expect(text).toContain("market-audit-tool/issue-143");
+  });
+});

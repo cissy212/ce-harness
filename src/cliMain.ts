@@ -70,7 +70,13 @@ export async function runCli(): Promise<void> {
         "range (e.g. an existing pull request), which creates an Existing PR",
         "review workspace, not an Implementation one -- --from and --base/--head",
         "are mutually exclusive. Every ref this command accepts must already",
-        "exist locally; ce-harness never fetches automatically.",
+        "exist locally; ce-harness never fetches automatically. Multiple",
+        "workspaces can be preserved at once, including more than one for the",
+        "same project -- this never requires `ce cleanup` first. The new",
+        "workspace becomes the default for `ce resume`/`ce open`/`ce",
+        "status`/`ce cleanup` when run with no argument; any previously",
+        "default workspace is left completely untouched and stays reachable",
+        "with `ce resume <project>/<issue>` (see `ce status`).",
       ].join(" "),
     )
     .argument("<repo>", "path to the target Git repository")
@@ -155,13 +161,18 @@ export async function runCli(): Promise<void> {
   program
     .command("resume")
     .description(
-      "Re-enter the active workspace by relaunching the same runner (opencode or claude) " +
-        "`ce start` used, with the same environment -- creates nothing, registers nothing, " +
-        "and never modifies workspace.yml. Use this instead of reconstructing the launch " +
-        "command by hand after the runner exits.",
+      "Re-enter a workspace by relaunching the same runner (opencode or claude) `ce start` " +
+        "used, with the same environment -- creates nothing, registers nothing, and never " +
+        "modifies workspace.yml. With no argument, re-enters the current default workspace; " +
+        "with [workspace] (as <project>/<issue>, e.g. market-audit-tool/130 -- see `ce " +
+        "status`), re-enters that one instead and makes it the new default, since resuming " +
+        "means \"work on this now\". Many workspaces can be preserved at once; this never " +
+        "deletes or otherwise touches any of the others. Use this instead of reconstructing " +
+        "the launch command by hand after the runner exits.",
     )
-    .action(async () => {
-      await run(() => resumeCommand());
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
+    .action(async (workspace: string | undefined) => {
+      await run(() => resumeCommand({ workspace }));
     });
 
   program
@@ -182,21 +193,25 @@ export async function runCli(): Promise<void> {
   program
     .command("open")
     .description(
-      "Open the active workspace's worktree directly in an editor (VS Code today) -- " +
-        "no need to remember or copy the path `ce start`/`ce status` printed. With " +
-        "--change, opens the active OpenSpec change's artifacts (explore.md, enrich.md, " +
-        "proposal.md, design.md, tasks.md, specs/, reports/ -- whichever exist; see `ce " +
-        "status`) instead, without needing to know the durable store's internal path. " +
-        "Creates nothing, registers nothing, and never modifies workspace.yml.",
+      "Open a workspace's worktree directly in an editor (VS Code today) -- no need to " +
+        "remember or copy the path `ce start`/`ce status` printed. With no argument, opens " +
+        "the current default workspace; with [workspace] (as <project>/<issue> -- see `ce " +
+        "status`), opens that one instead, without changing which workspace is the default " +
+        "-- purely a read, like `ce status`. With --change, opens the resolved workspace's " +
+        "active OpenSpec change's artifacts (explore.md, enrich.md, proposal.md, design.md, " +
+        "tasks.md, specs/, reports/ -- whichever exist) instead of the worktree, without " +
+        "needing to know the durable store's internal path. Creates nothing, registers " +
+        "nothing, and never modifies workspace.yml or which workspace is the default.",
     )
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
     .option(
       "--change [name]",
       "open the OpenSpec change's artifacts instead of the worktree -- the sole active " +
         "change if no name is given (see `ce status`), or a specific one by name when " +
         "more than one is active",
     )
-    .action(async (options: { change?: string | true }) => {
-      await run(() => openCommand({ change: options.change }));
+    .action(async (workspace: string | undefined, options: { change?: string | true }) => {
+      await run(() => openCommand({ workspace, change: options.change }));
     });
 
   program
@@ -237,13 +252,16 @@ export async function runCli(): Promise<void> {
   program
     .command("status")
     .description(
-      "Show details about the currently active ce-harness workspace, if any, " +
-        "including the OpenSpec store id, root path, health, and the active OpenSpec " +
-        "change's artifacts (explore/enrich/proposal/design/tasks/specs/reports -- see " +
-        "`ce open --change` to open them) (read-only).",
+      "Show details about a ce-harness workspace, including the OpenSpec store id, root " +
+        "path, health, and the active OpenSpec change's artifacts (explore/enrich/proposal/" +
+        "design/tasks/specs/reports -- see `ce open --change` to open them). With no " +
+        "argument, shows the current default workspace, plus an \"Other workspaces\" list " +
+        "of every other one preserved on disk; with [workspace] (as <project>/<issue>), " +
+        "shows that one instead, without changing the default (read-only).",
     )
-    .action(async () => {
-      await run(() => statusCommand());
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
+    .action(async (workspace: string | undefined) => {
+      await run(() => statusCommand({ workspace }));
     });
 
   program
@@ -301,22 +319,26 @@ export async function runCli(): Promise<void> {
   program
     .command("cleanup")
     .description(
-      "Remove the active workspace's worktree, branch, and workspace directory. " +
-        "If the workspace's OpenSpec store is a legacy, workspace-scoped one, this " +
-        "unregisters it first (never deletes its files directly -- removing the " +
-        "workspace directory does that) and it is lost, exactly like before. This " +
-        "project's durable OpenSpec store (the default since `ce migrate-openspec` " +
-        "was introduced) is left registered and untouched: it lives outside the " +
-        "workspace directory entirely, so cleanup cannot reach it.",
+      "Remove a workspace's worktree, branch, and workspace directory. With no argument, " +
+        "removes the current default workspace; with [workspace] (as <project>/<issue> -- " +
+        "see `ce status`), removes that one instead -- the default pointer is only ever " +
+        "updated if the workspace removed was the one it pointed at, so cleaning up a " +
+        "non-default workspace never disturbs the default. If the workspace's OpenSpec " +
+        "store is a legacy, workspace-scoped one, this unregisters it first (never deletes " +
+        "its files directly -- removing the workspace directory does that) and it is lost, " +
+        "exactly like before. This project's durable OpenSpec store (the default since `ce " +
+        "migrate-openspec` was introduced) is left registered and untouched: it lives " +
+        "outside the workspace directory entirely, so cleanup cannot reach it.",
     )
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
     .option(
       "--force",
       "discard tracked or untracked changes in the worktree, and proceed with " +
         "filesystem cleanup even if unregistering the OpenSpec store failed",
       false,
     )
-    .action(async (options: { force: boolean }) => {
-      await run(() => cleanupCommand({ force: options.force }));
+    .action(async (workspace: string | undefined, options: { force: boolean }) => {
+      await run(() => cleanupCommand({ force: options.force, workspace }));
     });
 
   async function run(fn: () => Promise<void>): Promise<void> {

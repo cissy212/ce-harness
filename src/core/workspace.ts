@@ -1,10 +1,10 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, type Dirent } from "node:fs";
+import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { CeError } from "./errors.js";
-import { activePointerFile, workspaceFile, workspacePath } from "./paths.js";
+import { activePointerFile, workspaceFile, workspacePath, workspacesRoot } from "./paths.js";
 import {
   expectedDurableOpenSpecRoot,
   expectedLegacyDurableOpenSpecRoot,
@@ -224,6 +224,24 @@ export const WorkspaceSchema = z
 
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 
+/**
+ * The workspace that zero-argument commands (`ce resume`, `ce open`,
+ * `ce status`, `ce cleanup`) operate on when no `[project/issue]`
+ * selector is given -- a convenience default, never an exclusivity
+ * lock. Many workspaces can (and normally do) exist on disk
+ * simultaneously, each fully isolated and addressable by its own
+ * `(project, sanitizedIssue)` pair (see `workspaceFile` below) -- this
+ * pointer only ever tracks which *one* is the current default. `ce
+ * start` sets it to the workspace it just created; `ce resume
+ * <project/issue>` moves it to whichever workspace was just explicitly
+ * resumed (since resuming means "work on this now"); `ce cleanup
+ * <project/issue>` clears it only if the workspace removed was the one
+ * it pointed at. `ce open`/`ce status` never write it, even when given
+ * an explicit selector -- looking at or inspecting a workspace is never
+ * itself "switching to" it. Nothing about a workspace's own existence,
+ * validity, or resumability ever depends on being pointed at by this
+ * file; see `listWorkspaces` below for discovering the others.
+ */
 const ActivePointerSchema = z.object({
   project: z.string().min(1),
   sanitizedIssue: z.string().min(1),
@@ -272,6 +290,69 @@ export async function readWorkspace(project: string, sanitizedIssue: string): Pr
 
 export function workspaceExistsOnDisk(project: string, sanitizedIssue: string): boolean {
   return existsSync(workspacePath(project, sanitizedIssue));
+}
+
+/**
+ * Lists every workspace that currently exists on disk -- every
+ * `workspaces/<project>/<issue>/workspace.yml` found -- regardless of
+ * whether it is the current default (see `ActivePointer` above). Purely
+ * a filesystem scan: never reads or depends on `state/active.yml`.
+ * Sorted for stable, predictable output. Never throws: an unreadable
+ * root, project, or issue directory simply contributes no entries,
+ * exactly like `listActiveChanges` in core/activeChange.ts.
+ */
+export async function listWorkspaces(): Promise<ActivePointer[]> {
+  const root = workspacesRoot();
+  const result: ActivePointer[] = [];
+
+  let projectEntries: Dirent[];
+  try {
+    projectEntries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  for (const projectEntry of projectEntries) {
+    if (!projectEntry.isDirectory()) continue;
+
+    let issueEntries: Dirent[];
+    try {
+      issueEntries = await readdir(join(root, projectEntry.name), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const issueEntry of issueEntries) {
+      if (!issueEntry.isDirectory()) continue;
+      if (existsSync(workspaceFile(projectEntry.name, issueEntry.name))) {
+        result.push({ project: projectEntry.name, sanitizedIssue: issueEntry.name });
+      }
+    }
+  }
+
+  result.sort(
+    (a, b) => a.project.localeCompare(b.project) || a.sanitizedIssue.localeCompare(b.sanitizedIssue),
+  );
+  return result;
+}
+
+/**
+ * Ready-to-use recovery text for "no such workspace"/"no default
+ * workspace" errors across `ce resume`/`ce open`/`ce status`/`ce
+ * cleanup`: either the full `<project>/<issue>` list from
+ * `listWorkspaces`, or a suggestion to `ce start` when none exist yet.
+ * Centralized so all four commands describe "what else is available"
+ * identically, never drifting into four slightly different phrasings.
+ */
+export async function describeAvailableWorkspaces(): Promise<string> {
+  const available = await listWorkspaces();
+  if (available.length === 0) {
+    return "No workspaces exist yet. Start one with:\n\n  ce start <repo> <issue>";
+  }
+  return [
+    "Available workspaces:",
+    ...available.map((w) => `  ${w.project}/${w.sanitizedIssue}`),
+  ].join("\n");
 }
 
 export async function removeWorkspaceDir(project: string, sanitizedIssue: string): Promise<void> {
