@@ -100,6 +100,16 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
         - `dependencies`: Completed artifacts to read for context
       - Read any completed dependency files for context, plus `explore.md` and (if its Status is `ready`) `enrich.md` from step 3, if they exist
       - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
+      - **For `tasks.md` specifically**: write each task so it has exactly
+        one clear, independently verifiable success criterion. If a task
+        bundles multiple independently completable responsibilities,
+        split it into separate tasks. Judge this semantically -- do the
+        pieces have separate, independently checkable outcomes? -- never
+        mechanically: do not split a task just because its description
+        contains "and". Keep tasks useful to whoever implements them,
+        not artificially microscopic -- naturally cohesive work (e.g. a
+        small field, its migration, and its validation, for one column)
+        stays one task.
       - Apply `context` and `rules` as constraints - but do NOT copy them into the file
       - Show brief progress: "Created <artifact-id>"
 
@@ -159,6 +169,7 @@ Next: /apply
 - If `<changeRoot>/explore.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it
 - If `<changeRoot>/enrich.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it. If its Status is `needs-clarification`, do not create any artifact; surface its Open Questions and stop instead
 - Never copy `enrich.md`'s sections verbatim into `proposal.md`, `design.md`, or `tasks.md` -- translate only the requirement facts each artifact needs
+- Each task in `tasks.md` has one clear, independently verifiable success criterion; split a task that bundles independently completable responsibilities -- judge this semantically (separately checkable outcomes), never mechanically (never split solely because a sentence contains "and")
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
 - If a change with that name already exists, ask if user wants to continue it or create a new one
 - Verify each artifact file exists after writing before proceeding to next

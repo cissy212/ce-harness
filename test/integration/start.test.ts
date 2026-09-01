@@ -2015,6 +2015,30 @@ describe("ce start (integration)", () => {
       expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
       expect(readdirSync(worktreePath).sort()).toEqual([".git", "README.md"]);
     });
+
+    it("instructs one clear, independently verifiable success criterion per task.md task, splitting bundled ones semantically rather than mechanically on \"and\"", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      expect(content).toMatch(/For `tasks\.md` specifically/);
+      expect(content).toMatch(/one clear, independently verifiable success criterion/);
+      expect(content).toMatch(/split it into separate tasks/);
+      expect(content).toMatch(/never\s*\n?\s*mechanically: do not split a task just because its description\s*\n?\s*contains "and"/);
+      expect(content).toMatch(/not artificially microscopic/);
+    });
+
+    it("reinforces the tasks.md granularity rule in the Guardrails section", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      const guardrailsSection = content.slice(content.indexOf("**Guardrails**"));
+      expect(guardrailsSection).toMatch(
+        /Each task in `tasks\.md` has one clear, independently verifiable success criterion/,
+      );
+      expect(guardrailsSection).toMatch(/never mechanically \(never split solely because a sentence contains "and"\)/);
+    });
   });
 
   describe("/apply command template", () => {
@@ -2155,6 +2179,35 @@ describe("ce start (integration)", () => {
       expect(existsSync(join(worktreePath, "apply.md"))).toBe(false);
       expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
       expect(readdirSync(worktreePath).sort()).toEqual([".git", "README.md"]);
+    });
+
+    it("guards against silently implementing an obviously bundled/ambiguous task instead of pausing to recommend re-running /propose", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+      expect(content).toMatch(
+        /Task obviously bundles multiple independently completable\s*\n\s*responsibilities/,
+      );
+      expect(content).toMatch(/not just a description containing "and"/);
+      expect(content).toMatch(/recommend re-running\s*\n\s*`\/propose` to split it in `tasks\.md`/);
+    });
+
+    it("reinforces the bundled-task guard in the Guardrails section, without turning it into a state machine or new command", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+      const guardrailsSection = content.slice(content.indexOf("**Guardrails**"), content.indexOf("**Fluid Workflow Integration**"));
+      expect(guardrailsSection).toMatch(
+        /a task obviously bundles multiple independently completable responsibilities/i,
+      );
+      expect(guardrailsSection).toMatch(/never by mechanically splitting on "and"/);
+      expect(guardrailsSection).toMatch(/recommend re-running `\/propose` to split it/);
+
+      // Still only 7 steps, no new command/stage introduced by this guard.
+      expect(content).toMatch(/7\. \*\*On completion or pause, show status\*\*/);
+      expect(content).not.toMatch(/8\. \*\*/);
     });
   });
 

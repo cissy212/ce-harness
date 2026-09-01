@@ -74,6 +74,12 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    **Pause if:**
    - Task is unclear → ask for clarification
+   - Task obviously bundles multiple independently completable
+     responsibilities (more than one separately checkable success
+     criterion, not just a description containing "and") → do not
+     silently implement it as one lump or half-implement part of it;
+     tell the user which task and why, and recommend re-running
+     `/propose` to split it in `tasks.md`
    - Implementation reveals a design issue → suggest updating artifacts
    - Error or blocker encountered → report and wait for guidance
    - User interrupts
@@ -141,6 +147,7 @@ What would you like to do?
 - Keep going through tasks until done or blocked
 - Always read context files before starting (from the apply instructions output)
 - If task is ambiguous, pause and ask before implementing
+- If a task obviously bundles multiple independently completable responsibilities (more than one separately checkable success criterion), pause instead of silently implementing it as one lump -- judge this semantically, never by mechanically splitting on "and" -- and recommend re-running `/propose` to split it
 - If implementation reveals issues, pause and suggest artifact updates
 - Keep code changes minimal and scoped to each task
 - Update task checkbox immediately after completing each task

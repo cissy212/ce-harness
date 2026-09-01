@@ -48,14 +48,14 @@ provenance documentation out of the executable templates.
 - Source: `.opencode/commands/opsx-propose.md` + `.opencode/skills/openspec-propose/SKILL.md`, generated via `openspec init <dir> --tools opencode`
 - Upstream version: 1.6.0
 - License: MIT (confirmed)
-- Relationship: Adapted -- workflow, artifact ordering, and behavior preserved from upstream; `CE_OPENSPEC_STORE` made mandatory, `--store` added to every invocation, guardrails added against repo-local artifacts and product-code changes; now reads `<changeRoot>/explore.md` (a ce-harness-owned, non-schema findings file -- see `templates/commands/explore.md`) for context before creating artifacts, and validates the change after creating artifacts (moved here from `/explore`, which no longer drafts or validates schema artifacts).
+- Relationship: Adapted -- workflow, artifact ordering, and behavior preserved from upstream; `CE_OPENSPEC_STORE` made mandatory, `--store` added to every invocation, guardrails added against repo-local artifacts and product-code changes; now reads `<changeRoot>/explore.md` (a ce-harness-owned, non-schema findings file -- see `templates/commands/explore.md`) for context before creating artifacts, and validates the change after creating artifacts (moved here from `/explore`, which no longer drafts or validates schema artifacts); each `tasks.md` task must now have one clear, independently verifiable success criterion, split semantically (never by mechanically breaking on "and") when it bundles independently completable responsibilities.
 
 ## templates/commands/apply.md
 - Upstream project: OpenSpec (`@fission-ai/openspec`)
 - Source: `.opencode/commands/opsx-apply.md` + `.opencode/skills/openspec-apply-change/SKILL.md`, generated via `openspec init <dir> --tools opencode`
 - Upstream version: 1.6.0
 - License: MIT (confirmed)
-- Relationship: Adapted -- change selection/resume, task loop, checkbox updates, and completion reporting preserved from upstream; `CE_OPENSPEC_STORE` made mandatory, product-code changes scoped to `$CE_WORKTREE`, guardrails added.
+- Relationship: Adapted -- change selection/resume, task loop, checkbox updates, and completion reporting preserved from upstream; `CE_OPENSPEC_STORE` made mandatory, product-code changes scoped to `$CE_WORKTREE`, guardrails added; a task that obviously bundles multiple independently completable responsibilities now pauses implementation and recommends re-running `/propose` to split it, rather than being silently implemented as one lump.
 
 ## templates/commands/archive.md
 - Upstream project: OpenSpec (`@fission-ai/openspec`)
