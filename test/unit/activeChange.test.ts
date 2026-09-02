@@ -6,6 +6,8 @@ import {
   activeChangeRoot,
   formatArtifactChecklist,
   listActiveChanges,
+  readChangeOwnership,
+  resolveActiveChangesForWorkspace,
   summarizeChangeArtifacts,
 } from "../../src/core/activeChange.js";
 
@@ -60,6 +62,130 @@ describe("activeChange (durable-store discovery for `ce status` / `ce open --cha
       await writeFixtureFile(durableRoot, "openspec/changes/.stray-file", "not a change\n");
 
       expect(await listActiveChanges(durableRoot)).toEqual(["real-change"]);
+    });
+  });
+
+  describe("readChangeOwnership", () => {
+    it("returns null when the change has no ownership sidecar (legacy change)", async () => {
+      const changeRoot = join(durableRoot, "openspec", "changes", "legacy-change");
+      await mkdir(changeRoot, { recursive: true });
+      expect(await readChangeOwnership(changeRoot)).toBeNull();
+    });
+
+    it("reads project and issue from a valid sidecar", async () => {
+      const changeRoot = join(durableRoot, "openspec", "changes", "tagged-change");
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/tagged-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "130"\n',
+      );
+      expect(await readChangeOwnership(changeRoot)).toEqual({ project: "my-project", issue: "130" });
+    });
+
+    it("returns null for a malformed sidecar instead of throwing", async () => {
+      const changeRoot = join(durableRoot, "openspec", "changes", "broken-change");
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/broken-change/.ce-workspace.yml",
+        "not: [valid: yaml:\n",
+      );
+      expect(await readChangeOwnership(changeRoot)).toBeNull();
+    });
+
+    it("returns null when the sidecar is missing the expected fields", async () => {
+      const changeRoot = join(durableRoot, "openspec", "changes", "incomplete-change");
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/incomplete-change/.ce-workspace.yml",
+        "project: my-project\n",
+      );
+      expect(await readChangeOwnership(changeRoot)).toBeNull();
+    });
+  });
+
+  describe("resolveActiveChangesForWorkspace", () => {
+    it("falls back to the full list when no active change carries an ownership sidecar (fully legacy store)", async () => {
+      await mkdir(join(durableRoot, "openspec", "changes", "alpha-change"), { recursive: true });
+      await mkdir(join(durableRoot, "openspec", "changes", "beta-change"), { recursive: true });
+
+      expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "130")).toEqual([
+        "alpha-change",
+        "beta-change",
+      ]);
+    });
+
+    it("narrows to only the change(s) owned by the given workspace when ownership is recorded", async () => {
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/issue-130-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "130"\n',
+      );
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/issue-143-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "143"\n',
+      );
+
+      expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "130")).toEqual([
+        "issue-130-change",
+      ]);
+      expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "143")).toEqual([
+        "issue-143-change",
+      ]);
+    });
+
+    it("keeps a legacy workspace's own untagged change usable after a different, newer workspace starts tagging its own changes (mixed legacy + tagged store)", async () => {
+      // Workspace A's pre-existing legacy change: no ownership sidecar.
+      await mkdir(join(durableRoot, "openspec", "changes", "legacy-a-change"), { recursive: true });
+      // Workspace B's newer change, created after this mechanism existed.
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/tagged-b-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "143"\n',
+      );
+
+      // Workspace A must still resolve its own legacy change -- never []
+      // just because some *other* change in the shared store is tagged.
+      expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "130")).toEqual([
+        "legacy-a-change",
+      ]);
+      // Workspace B resolves its own tagged change as before.
+      expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "143")).toEqual([
+        "tagged-b-change",
+      ]);
+    });
+
+    it("preserves ambiguity across multiple untagged candidates when this workspace has no exact match", async () => {
+      await mkdir(join(durableRoot, "openspec", "changes", "legacy-one"), { recursive: true });
+      await mkdir(join(durableRoot, "openspec", "changes", "legacy-two"), { recursive: true });
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/tagged-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "143"\n',
+      );
+
+      expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "130")).toEqual([
+        "legacy-one",
+        "legacy-two",
+      ]);
+    });
+
+    it("never leaks a change owned by a different workspace, even when this workspace has none of its own (no untagged candidates either)", async () => {
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/issue-143-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "143"\n',
+      );
+
+      expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "130")).toEqual([]);
+    });
+
+    it("excludes archived changes the same way listActiveChanges does", async () => {
+      await mkdir(join(durableRoot, "openspec", "changes", "archive", "2026-05-12-old-change"), {
+        recursive: true,
+      });
+
+      expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "130")).toEqual([]);
     });
   });
 

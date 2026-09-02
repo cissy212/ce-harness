@@ -17,7 +17,7 @@ import { readIdentityRecord } from "../core/projectIdentity.js";
 import {
   activeChangeRoot,
   formatArtifactChecklist,
-  listActiveChanges,
+  resolveActiveChangesForWorkspace,
   summarizeChangeArtifacts,
 } from "../core/activeChange.js";
 import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
@@ -242,7 +242,15 @@ export async function statusCommand(options: StatusOptions = {}): Promise<void> 
   // Project Identity or the durable store's internal path just to
   // inspect this. Pure filesystem discovery (see core/activeChange.ts),
   // so it works even when the `openspec` binary itself is unavailable.
-  const activeChanges = await listActiveChanges(trusted.root);
+  // Narrowed to this workspace's own change(s) when `/propose` recorded
+  // an association -- see core/activeChange.ts's doc comment -- falling
+  // back to this workspace's own untagged/legacy candidates when it has
+  // no exact match, never to a change tagged for a different workspace.
+  const activeChanges = await resolveActiveChangesForWorkspace(
+    trusted.root,
+    workspace.project,
+    workspace.issue,
+  );
   if (activeChanges.length === 0) {
     console.log(`Active change:    (none)`);
   } else {

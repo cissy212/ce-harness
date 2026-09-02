@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -384,6 +384,126 @@ describe("ce open (integration)", () => {
 
       const contentAfter = await readFile(workspaceFile, "utf8");
       expect(contentAfter).toBe(contentBefore);
+    });
+  });
+
+  describe("workspace -> active change association", () => {
+    async function trustedRootFor(project: string, sanitizedIssue: string): Promise<string> {
+      const { readWorkspace, resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+      const workspace = await readWorkspace(project, sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace);
+      return trusted!.root;
+    }
+
+    /** Mirrors what /propose's ownership sidecar step writes. */
+    async function tagChange(
+      root: string,
+      name: string,
+      project: string,
+      issue: string,
+    ): Promise<string> {
+      const changeRoot = join(root, "openspec", "changes", name);
+      await mkdir(changeRoot, { recursive: true });
+      await writeFile(
+        join(changeRoot, ".ce-workspace.yml"),
+        `project: "${project}"\nissue: "${issue}"\n`,
+        "utf8",
+      );
+      return changeRoot;
+    }
+
+    it("resolves each workspace's own associated change, even though both share the same durable store", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+
+      const change130 = await tagChange(root, "fix-contact-empty-state", project, "issue-130");
+      const change143 = await tagChange(root, "add-billing-export", project, "issue-143");
+
+      await openCommand({ workspace: `${project}/issue-130`, change: true });
+      let recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([change130]);
+
+      await openCommand({ workspace: `${project}/issue-143`, change: true });
+      recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([change143]);
+    });
+
+    it("explicitly targeting one workspace's change never switches the default workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+      await tagChange(root, "fix-contact-empty-state", project, "issue-130");
+      await tagChange(root, "add-billing-export", project, "issue-143");
+
+      await openCommand({ workspace: `${project}/issue-130`, change: true });
+
+      expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-143" });
+    });
+
+    it("a legacy change with no ownership sidecar still auto-resolves when it's the only active change", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-1");
+      const legacyRoot = join(root, "openspec", "changes", "legacy-change");
+      await mkdir(legacyRoot, { recursive: true });
+
+      await openCommand({ change: true });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([legacyRoot]);
+    });
+
+    it("never leaks another workspace's associated change when this workspace has none of its own", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+      await tagChange(root, "add-billing-export", project, "issue-143");
+
+      await expect(
+        openCommand({ workspace: `${project}/issue-130`, change: true }),
+      ).rejects.toThrow(/No active OpenSpec change to open/);
+    });
+
+    it("keeps a legacy workspace's untagged change usable after a different, newer workspace starts tagging its own (mixed legacy + tagged store)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+      // issue-130's change predates the association mechanism: no sidecar.
+      const legacyRoot = join(root, "openspec", "changes", "legacy-change");
+      await mkdir(legacyRoot, { recursive: true });
+      // issue-143's change is newer and tagged.
+      await tagChange(root, "add-billing-export", project, "issue-143");
+
+      await openCommand({ workspace: `${project}/issue-130`, change: true });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([legacyRoot]);
     });
   });
 

@@ -561,6 +561,136 @@ describe("ce status (integration)", () => {
     });
   });
 
+  describe("workspace -> active change association", () => {
+    async function trustedRootFor(project: string, sanitizedIssue: string): Promise<string> {
+      const { readWorkspace, resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+      const workspace = await readWorkspace(project, sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace);
+      return trusted!.root;
+    }
+
+    /** Mirrors what /propose's ownership sidecar step writes. */
+    async function tagChange(
+      root: string,
+      name: string,
+      project: string,
+      issue: string,
+    ): Promise<string> {
+      const changeRoot = join(root, "openspec", "changes", name);
+      await mkdir(changeRoot, { recursive: true });
+      await writeFile(
+        join(changeRoot, ".ce-workspace.yml"),
+        `project: "${project}"\nissue: "${issue}"\n`,
+        "utf8",
+      );
+      return changeRoot;
+    }
+
+    it("reports each workspace's own associated change, even though both share the same durable store", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+      await tagChange(root, "fix-contact-empty-state", project, "issue-130");
+      await tagChange(root, "add-billing-export", project, "issue-143");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      await statusCommand({ workspace: `${project}/issue-130` });
+      let output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+fix-contact-empty-state/);
+      expect(output).not.toMatch(/add-billing-export/);
+
+      logSpy.mockClear();
+      await statusCommand({ workspace: `${project}/issue-143` });
+      output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+add-billing-export/);
+      expect(output).not.toMatch(/fix-contact-empty-state/);
+    });
+
+    it("explicit read-only targeting never switches the default workspace", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+      await tagChange(root, "fix-contact-empty-state", project, "issue-130");
+      await tagChange(root, "add-billing-export", project, "issue-143");
+
+      await statusCommand({ workspace: `${project}/issue-130` });
+
+      expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-143" });
+    });
+
+    it("a legacy workspace/change with no ownership sidecar still reports safely", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRootFor(basenameOf(repoDir), "issue-1");
+      await mkdir(join(root, "openspec", "changes", "legacy-change"), { recursive: true });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+legacy-change/);
+    });
+
+    it("never leaks another workspace's associated change when this workspace has none of its own", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+      await tagChange(root, "add-billing-export", project, "issue-143");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      await statusCommand({ workspace: `${project}/issue-130` });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+\(none\)/);
+      expect(output).not.toMatch(/add-billing-export/);
+    });
+
+    it("keeps a legacy workspace's untagged change usable after a different, newer workspace starts tagging its own (mixed legacy + tagged store)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+      // issue-130's change predates the association mechanism: no sidecar.
+      await mkdir(join(root, "openspec", "changes", "legacy-change"), { recursive: true });
+      // issue-143's change is newer and tagged.
+      await tagChange(root, "add-billing-export", project, "issue-143");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      await statusCommand({ workspace: `${project}/issue-130` });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+legacy-change/);
+      expect(output).not.toMatch(/add-billing-export/);
+    });
+  });
+
   describe("targeting a specific workspace ([workspace] argument), and the Other workspaces list", () => {
     it("shows the requested non-default workspace's detail, never changing which is the default", async () => {
       const { startCommand } = await import("../../src/commands/start.js");

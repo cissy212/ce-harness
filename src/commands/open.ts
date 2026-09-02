@@ -10,7 +10,7 @@ import {
   type ActivePointer,
 } from "../core/workspace.js";
 import { DEFAULT_EDITOR, formatOpenCommand, openInEditor } from "../core/editor.js";
-import { activeChangeRoot, listActiveChanges } from "../core/activeChange.js";
+import { activeChangeRoot, resolveActiveChangesForWorkspace } from "../core/activeChange.js";
 
 export interface OpenCommandOptions {
   /**
@@ -114,7 +114,17 @@ export async function openCommand(options: OpenCommandOptions = {}): Promise<voi
     );
   }
 
-  const activeChanges = await listActiveChanges(trusted.root);
+  // Narrowed to changes `/propose` durably associated with *this*
+  // workspace (see core/activeChange.ts) -- the durable store is shared
+  // across every workspace for the project, so an un-narrowed list can't
+  // tell two workspaces' changes apart once each has its own. Falls back
+  // to this workspace's own untagged/legacy candidates when it has no
+  // exact match -- never to a change tagged for a different workspace.
+  const activeChanges = await resolveActiveChangesForWorkspace(
+    trusted.root,
+    workspace.project,
+    workspace.issue,
+  );
   let changeName: string;
   if (typeof options.change === "string") {
     if (!activeChanges.includes(options.change)) {

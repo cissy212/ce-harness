@@ -46,6 +46,20 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    - `artifacts`: list of all artifacts with their status and dependencies
    - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context. Use these instead of assuming repo-local paths -- they always resolve inside the external store, never inside the target repository or its Git worktree.
 
+   **Record this workspace's ownership of the change** (idempotent --
+   safe to re-run on every `/propose` invocation for this change, not
+   just the first): this is what lets `ce status`/`ce open --change`
+   find the right change automatically later, even when other
+   workspaces for this project have their own active changes.
+   ```bash
+   printf 'project: "%s"\nissue: "%s"\n' "$CE_PROJECT" "$CE_ISSUE" > "<changeRoot>/.ce-workspace.yml"
+   ```
+   Resolve `<changeRoot>` from the JSON above, never construct it by
+   hand. This file is **not** one of the `artifacts` listed above, is
+   never part of `applyRequires`, and is ce-harness's own bookkeeping --
+   never read it, never treat it as a dependency, and never mention it
+   in this command's output.
+
    Also check for `<changeRoot>/explore.md` (resolve `changeRoot` from
    this same JSON, never construct it by hand). If present, read it now
    -- it carries `/explore`'s system/context findings for this change.
@@ -179,6 +193,7 @@ Next: /apply
 **Guardrails**
 - Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
 - Always read dependency artifacts before creating a new one
+- Always write/refresh `<changeRoot>/.ce-workspace.yml` right after resolving `changeRoot` in step 3, recording `$CE_PROJECT`/`$CE_ISSUE` -- it is never one of the schema artifacts, never a dependency, and never mentioned in this command's output
 - If `<changeRoot>/explore.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it
 - If `<changeRoot>/enrich.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it. If its Status is `needs-clarification`, do not create any artifact; surface its Open Questions and stop instead
 - Never copy `enrich.md`'s sections verbatim into `proposal.md`, `design.md`, or `tasks.md` -- translate only the requirement facts each artifact needs

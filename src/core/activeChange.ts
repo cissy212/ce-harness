@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { parse } from "yaml";
 
 /**
  * Read-only discovery of a durable OpenSpec store's active (i.e. not yet
@@ -65,6 +66,90 @@ export async function listActiveChanges(durableRoot: string): Promise<string[]> 
   } catch {
     return [];
   }
+}
+
+/**
+ * Filename of the small, ce-harness-owned sidecar `/propose` writes into
+ * a change directory right after creating it, recording which workspace
+ * (`project` + `issue`, matching `workspace.project`/`workspace.issue`
+ * exactly -- the same values `CE_PROJECT`/`CE_ISSUE` are set to for the
+ * runner session, see core/launchEnv.ts) is durably associated with that
+ * change. A dotfile so it's never mistaken for one of OpenSpec's own
+ * schema artifacts and never shows up in `summarizeChangeArtifacts`'s
+ * checklist -- ce-harness bookkeeping, exactly like `explore.md`/
+ * `enrich.md` are ce-harness content, just not human-facing.
+ */
+export const CHANGE_OWNERSHIP_FILENAME = ".ce-workspace.yml";
+
+export interface ChangeOwnership {
+  project: string;
+  issue: string;
+}
+
+/**
+ * Best-effort read of a change's ownership sidecar. Never throws: a
+ * missing file (every change created before this mechanism existed, or
+ * one proposed by hand outside `/propose`) or an unreadable/malformed
+ * one just yields `null` -- "no known owner", not an error -- so callers
+ * degrade to today's un-narrowed behavior rather than crash.
+ */
+export async function readChangeOwnership(changeRoot: string): Promise<ChangeOwnership | null> {
+  try {
+    const raw = await readFile(join(changeRoot, CHANGE_OWNERSHIP_FILENAME), "utf8");
+    const parsed = parse(raw) as Record<string, unknown> | null;
+    if (typeof parsed?.project === "string" && typeof parsed?.issue === "string") {
+      return { project: parsed.project, issue: parsed.issue };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Narrows `listActiveChanges(durableRoot)` down to the change(s) this
+ * exact workspace should see -- `ce open --change`'s and `ce status`'s
+ * fix for the ambiguity a project with more than one workspace, each
+ * with its own active change, hits: the durable OpenSpec store is
+ * shared across every workspace for the same project, so an un-narrowed
+ * `listActiveChanges` result can't tell which change belongs to which
+ * workspace on its own.
+ *
+ * Three-tier resolution, applied in order:
+ * 1. Any change whose sidecar (see above) names exactly this
+ *    `(project, issue)` -- returned as soon as at least one exists.
+ * 2. Otherwise, every candidate with *no* ownership sidecar at all
+ *    (untagged/legacy -- created before this mechanism existed, or by
+ *    hand outside `/propose`). Zero, one, or several of these are all
+ *    returned as-is -- zero stays `[]`, one is the unambiguous legacy
+ *    answer, and several preserve today's existing "pick one" ambiguity
+ *    for the caller's own 0/1/many handling to resolve, exactly as
+ *    before this mechanism existed.
+ * 3. A change whose sidecar names a *different* workspace is never
+ *    returned here, in either tier -- narrowing must never let one
+ *    workspace's change leak into another's result. This is also what
+ *    keeps a legacy workspace usable even after a different, newer
+ *    workspace in the same project starts tagging its own changes: the
+ *    legacy workspace still finds its own untagged change in tier 2,
+ *    it just no longer sees the other workspace's tagged one in tier 1.
+ */
+export async function resolveActiveChangesForWorkspace(
+  durableRoot: string,
+  project: string,
+  issue: string,
+): Promise<string[]> {
+  const all = await listActiveChanges(durableRoot);
+  const owned: string[] = [];
+  const unowned: string[] = [];
+  for (const name of all) {
+    const ownership = await readChangeOwnership(activeChangeRoot(durableRoot, name));
+    if (!ownership) {
+      unowned.push(name);
+    } else if (ownership.project === project && ownership.issue === issue) {
+      owned.push(name);
+    }
+  }
+  return owned.length > 0 ? owned : unowned;
 }
 
 /** Best-effort read of `enrich.md`'s own `**Status:**` line. Never throws -- an unreadable or unexpectedly-shaped file just yields no status, never a crash. */

@@ -362,6 +362,12 @@ example `fix-login-bug` or `issue-42`).
   cleanup <project>/<issue>` when you actually want to remove one — the
   default pointer only changes if the workspace removed was the one it
   pointed at. See [`ce` command reference](#ce-command-reference).
+  `/propose` durably associates the OpenSpec change it creates with the
+  workspace that created it, so `ce open --change`/`ce status` resolve
+  the right change for each workspace automatically even when several
+  workspaces for the same project each have their own active change —
+  a change created before this association existed just falls back to
+  today's "the sole active change, or ask" behavior.
 - **Runner-agnostic by design.** ce-harness supports
   [Claude Code](https://claude.com/claude-code) (the default) and
   [OpenCode](https://opencode.ai) via `--runner`, and the
@@ -610,6 +616,11 @@ default. Either way it reports:
 - The OpenSpec store id, root path, whether it's durable (survives `ce
   cleanup`) or a legacy, workspace-scoped store, and its health check
   result
+- The active OpenSpec change(s) for this workspace and their artifact
+  checklist — narrowed to the change(s) `/propose` associated with this
+  specific workspace when more than one exists for the project, falling
+  back to every active change in the store for changes created before
+  that association existed
 
 #### `ce cleanup [workspace] [--force]`
 
