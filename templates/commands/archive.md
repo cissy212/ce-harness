@@ -147,7 +147,16 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    mkdir -p "<planningHome.changesDir>/archive"
    ```
 
-   Generate target name using current date: `YYYY-MM-DD-<change-name>`
+   Generate the target name using the current date: `YYYY-MM-DD-<change-name>`.
+   **Never infer this date from memory, training data, or any other
+   form of model knowledge** -- compute it deterministically from the
+   system clock, the same way `/verify` and `/adversarial-review`
+   compute their own report dates:
+   ```bash
+   date -u +%Y-%m-%d
+   ```
+   Use this command's exact output, verbatim, as `YYYY-MM-DD` below --
+   never a remembered, assumed, or estimated date.
 
    **Check if target already exists:**
    - If yes: Fail with error, suggest renaming existing archive or using different date
@@ -245,6 +254,7 @@ Target archive directory already exists.
 ```
 
 **Guardrails**
+- Never write the archive directory's date prefix from memory or assumption -- always run `date -u +%Y-%m-%d` and use its exact output.
 - Always prompt for change selection if not provided
 - Use artifact graph (openspec status --store "$CE_OPENSPEC_STORE" --json) for completion checking
 - Don't block archive on the artifact/task-completion warnings (steps 2-3) - just inform and confirm; step 4's verification-evidence gate is different and is never soft (see below)

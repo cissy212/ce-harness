@@ -302,3 +302,91 @@ describe("verification freshness fingerprint, executed for real", () => {
     });
   });
 });
+
+/**
+ * Report-date determinism: a real E2E run found `/verify`/
+ * `/adversarial-review`/`/archive` telling the agent to "use today's
+ * date" for the report filename (and, for `/verify`/
+ * `/adversarial-review`, the report's own `**Date:**` field; for
+ * `/archive`, the archive directory's `YYYY-MM-DD` prefix) with no
+ * deterministic source -- the agent guessed, and guessed wrong (a stale
+ * training-cutoff date). The fix: each file now instructs running `date
+ * -u +%Y-%m-%d` (the system clock, via the same Bash tool every other
+ * embedded snippet in these templates already uses) and reusing its
+ * exact output everywhere a date is needed, never inferring it from
+ * memory. These tests extract that exact instruction from the real
+ * templates/commands/*.md files and execute it for real, the same
+ * "prove the shell behavior, not just the markdown text" approach the
+ * fingerprint/artifacts-hash tests above use.
+ */
+describe("report date determinism (verify.md, adversarial-review.md, archive.md)", () => {
+  const DATE_COMMAND_PATTERN = /date -u \+%Y-%m-%d/;
+
+  function extractDateCommand(content: string, label: string): string {
+    const match = content.match(DATE_COMMAND_PATTERN);
+    if (!match) {
+      throw new Error(`${label}: deterministic date command not found`);
+    }
+    return match[0];
+  }
+
+  async function runDateCommand(snippet: string): Promise<string> {
+    const result = await execa("bash", ["-c", snippet]);
+    return result.stdout.trim();
+  }
+
+  it("all three files instruct the exact same deterministic system-clock command", async () => {
+    const commands = [];
+    for (const file of FILES) {
+      commands.push(extractDateCommand(await readTemplate(file), file));
+    }
+    expect(commands[0]).toBe("date -u +%Y-%m-%d");
+    expect(commands[1]).toBe(commands[0]);
+    expect(commands[2]).toBe(commands[0]);
+  });
+
+  it("none of the three files still instruct the old, unqualified \"use today's date\" (the bug: no deterministic source)", async () => {
+    for (const file of FILES) {
+      const content = await readTemplate(file);
+      expect(content).not.toMatch(/use today's date/i);
+    }
+  });
+
+  it("each file explicitly forbids inferring the date from model memory/training data", async () => {
+    for (const file of FILES) {
+      const content = await readTemplate(file);
+      expect(content).toMatch(/never infer .* date from memory/i);
+    }
+  });
+
+  it("following the template literally (running the extracted command) always produces the real, current UTC date -- never a guess", async () => {
+    const expected = new Date().toISOString().slice(0, 10);
+    for (const file of FILES) {
+      const snippet = extractDateCommand(await readTemplate(file), file);
+      const output = await runDateCommand(snippet);
+
+      expect(output).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(output).toBe(expected);
+      // Never a future date relative to the moment the test runs --
+      // exactly the failure mode a memory-based guess could produce.
+      expect(new Date(`${output}T00:00:00Z`).getTime()).toBeLessThanOrEqual(Date.now());
+    }
+  });
+
+  it("the command's output is stable across repeated invocations (deterministic, not randomized)", async () => {
+    const snippet = extractDateCommand(await readTemplate("verify.md"), "verify.md");
+    const a = await runDateCommand(snippet);
+    const b = await runDateCommand(snippet);
+    expect(a).toBe(b);
+  });
+
+  it("verify.md and adversarial-review.md's guardrails both require the same deterministic command", async () => {
+    const verify = await readTemplate("verify.md");
+    const adversarial = await readTemplate("adversarial-review.md");
+    const archive = await readTemplate("archive.md");
+
+    for (const content of [verify, adversarial, archive]) {
+      expect(content).toMatch(/date -u \+%Y-%m-%d.*and use its exact output/);
+    }
+  });
+});

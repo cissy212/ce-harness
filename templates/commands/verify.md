@@ -495,6 +495,22 @@ the `rtk` prefix for the full raw output.
 
 ## 9. Write the report
 
+**Never infer today's date from memory, training data, or any other
+form of model knowledge -- always compute it from the system clock:**
+
+```bash
+date -u +%Y-%m-%d
+```
+
+Use this command's exact output, verbatim, as `<YYYY-MM-DD>` everywhere
+below (the filename, and the report's own `**Date:**` field) -- never a
+remembered, assumed, or estimated date. This is the same
+never-guess-it-yourself discipline the worktree fingerprint and
+artifacts hash below already follow for "what state does this
+verification cover" -- the report's own date is exactly as
+deterministic a fact, and guessing it wrong (e.g. from a stale training
+cutoff) has bitten real usage before.
+
 Resolve the report destination from `changeRoot` (never construct it by
 hand):
 
@@ -503,10 +519,10 @@ mkdir -p "<changeRoot>/reports"
 # write to: <changeRoot>/reports/<YYYY-MM-DD>-verify.md
 ```
 
-Use today's date in the filename. This directory and file live **only**
-inside the external OpenSpec store at `$CE_OPENSPEC_STORE` -- never create a
-`reports/` directory, `openspec/` directory, `.opencode/` directory, or any
-other file inside the target repository or its Git worktree.
+This directory and file live **only** inside the external OpenSpec
+store at `$CE_OPENSPEC_STORE` -- never create a `reports/` directory,
+`openspec/` directory, `.opencode/` directory, or any other file inside
+the target repository or its Git worktree.
 
 Before writing the report, resolve exactly (never estimate) what state
 this verification covers -- `/archive` later uses these three values to
@@ -643,6 +659,7 @@ command either way, that is entirely `/archive`'s own gate to decide:
   `/adversarial-review` on a report that isn't a clean `PASS`.
 
 **Guardrails**
+- Never write the report's date (filename or `**Date:**` field) from memory or assumption -- always run `date -u +%Y-%m-%d` and use its exact output.
 - Every `openspec` command must include `--store "$CE_OPENSPEC_STORE"`.
 - Never assume repo-local `openspec/` paths -- always resolve `changeRoot`
   and `artifactPaths` from the CLI's JSON output.

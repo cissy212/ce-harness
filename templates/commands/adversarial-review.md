@@ -496,6 +496,20 @@ change into a full-system audit -- note it, classify it, and move on.
 
 ## 9. Write the report
 
+**Never infer today's date from memory, training data, or any other
+form of model knowledge -- always compute it from the system clock:**
+
+```bash
+date -u +%Y-%m-%d
+```
+
+Use this command's exact output, verbatim, as `<YYYY-MM-DD>` everywhere
+below (the filename, and the report's own `**Date:**` field) -- never a
+remembered, assumed, or estimated date. `/verify` follows this exact
+same rule, from this exact same command, for the same reason: guessing
+the date wrong (e.g. from a stale training cutoff) has bitten real
+usage before.
+
 **Implementation workspace:** resolve the report destination from
 `changeRoot` (never construct it by hand):
 
@@ -551,11 +565,11 @@ mkdir -p "<root.path>/reviews"
 # write to: <root.path>/reviews/<YYYY-MM-DD>-adversarial-review.md
 ```
 
-Either way, use today's date in the filename. This directory and file live
-**only** inside the external OpenSpec store at `$CE_OPENSPEC_STORE` -- never
-create a `reports/` directory, `reviews/` directory, `openspec/` directory,
-`.opencode/` directory, or any other file inside the target repository or
-its Git worktree.
+Either way, this directory and file live **only** inside the external
+OpenSpec store at `$CE_OPENSPEC_STORE` -- never create a `reports/`
+directory, `reviews/` directory, `openspec/` directory, `.opencode/`
+directory, or any other file inside the target repository or its Git
+worktree.
 
 ### Report structure
 
@@ -716,6 +730,7 @@ report to be a fresh, clean `PASS`:
   archiving will succeed.
 
 **Guardrails**
+- Never write the report's date (filename or `**Date:**` field) from memory or assumption -- always run `date -u +%Y-%m-%d` and use its exact output.
 - Every `openspec` command must include `--store "$CE_OPENSPEC_STORE"`.
 - Never assume repo-local `openspec/` paths -- always resolve
   `changeRoot`/`artifactPaths` (Implementation workspaces) or `root.path`
