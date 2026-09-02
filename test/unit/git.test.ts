@@ -8,13 +8,22 @@ import { createBareRemote, cloneRepo, createTempRepo } from "../helpers/tempRepo
 import { CeError } from "../../src/core/errors.js";
 import {
   addLocalExcludePattern,
+  commitAllChanges,
   commitChangedPaths,
   addWorktree,
   branchExists,
+  computeWorktreeFingerprint,
   deleteBranch,
   detectBaseBranch,
+  diffNameStatus,
+  fetchRemoteBranch,
+  hasInProgressMergeOrRebase,
+  isDirty,
   isRegisteredWorktree,
   isShallowRepository,
+  logRange,
+  mergeRef,
+  pushBranch,
   queryRemoteDefaultBranch,
   readCachedRemoteDefaultBranch,
   readOriginOrSolitaryRemoteUrl,
@@ -689,5 +698,249 @@ describe("pathHistory / searchCommitMessages / commitChangedPaths", () => {
   it("commitChangedPaths returns an empty array (never throws) for an unknown SHA", async () => {
     repoDir = await createTempRepo();
     expect(await commitChangedPaths(repoDir, "0".repeat(40))).toEqual([]);
+  });
+});
+
+describe("ce publish's git primitives", () => {
+  let repoDir: string;
+  let remoteDir: string;
+
+  beforeEach(async () => {
+    repoDir = await createTempRepo();
+    remoteDir = await createBareRemote("main");
+    await execa("git", ["-C", repoDir, "remote", "add", "origin", remoteDir]);
+  });
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+    await rm(remoteDir, { recursive: true, force: true });
+  });
+
+  describe("fetchRemoteBranch", () => {
+    it("updates the normal remote-tracking ref, resolvable via resolveCommit afterward", async () => {
+      // Advance the bare remote's main independently of repoDir's clone.
+      const seed = await cloneRepo(remoteDir, "ce-harness-seed-");
+      await writeFile(join(seed, "remote-change.txt"), "x\n", "utf8");
+      await execa("git", ["-C", seed, "add", "."]);
+      await execa("git", ["-C", seed, "commit", "-m", "remote advance"]);
+      await execa("git", ["-C", seed, "push", "origin", "main"]);
+      const remoteHead = (await execa("git", ["-C", seed, "rev-parse", "main"])).stdout.trim();
+      await rm(seed, { recursive: true, force: true });
+
+      await fetchRemoteBranch(repoDir, "origin", "main");
+      expect(await resolveCommit(repoDir, "origin/main")).toBe(remoteHead);
+    });
+  });
+
+  describe("hasInProgressMergeOrRebase", () => {
+    it("is false for a clean repository", async () => {
+      expect(await hasInProgressMergeOrRebase(repoDir)).toBe(false);
+    });
+
+    it("is true while a conflicting merge is unresolved", async () => {
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "README.md"), "feature version\n", "utf8");
+      await execa("git", ["-C", repoDir, "commit", "-am", "feature change"]);
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+      await writeFile(join(repoDir, "README.md"), "main version\n", "utf8");
+      await execa("git", ["-C", repoDir, "commit", "-am", "main change"]);
+
+      await execa("git", ["-C", repoDir, "merge", "feature"], { reject: false });
+      expect(await hasInProgressMergeOrRebase(repoDir)).toBe(true);
+
+      await execa("git", ["-C", repoDir, "merge", "--abort"]);
+      expect(await hasInProgressMergeOrRebase(repoDir)).toBe(false);
+    });
+  });
+
+  describe("mergeRef", () => {
+    it("cleanly merges a fast-forwardable/non-conflicting ref, creating a merge commit", async () => {
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "feature.txt"), "x\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "feature work"]);
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+      await writeFile(join(repoDir, "unrelated.txt"), "y\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "unrelated main work"]);
+      await execa("git", ["-C", repoDir, "checkout", "feature"]);
+
+      const result = await mergeRef(repoDir, "main");
+      expect(result.merged).toBe(true);
+      expect(existsSync(join(repoDir, "feature.txt"))).toBe(true);
+      expect(existsSync(join(repoDir, "unrelated.txt"))).toBe(true);
+      expect(await hasInProgressMergeOrRebase(repoDir)).toBe(false);
+    });
+
+    it("aborts cleanly on conflict, leaving the worktree exactly as it was", async () => {
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "README.md"), "feature version\n", "utf8");
+      await execa("git", ["-C", repoDir, "commit", "-am", "feature change"]);
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+      await writeFile(join(repoDir, "README.md"), "main version\n", "utf8");
+      await execa("git", ["-C", repoDir, "commit", "-am", "main change"]);
+      await execa("git", ["-C", repoDir, "checkout", "feature"]);
+      const headBefore = (await execa("git", ["-C", repoDir, "rev-parse", "HEAD"])).stdout.trim();
+
+      const result = await mergeRef(repoDir, "main");
+      expect(result.merged).toBe(false);
+      expect(await hasInProgressMergeOrRebase(repoDir)).toBe(false);
+      expect((await execa("git", ["-C", repoDir, "rev-parse", "HEAD"])).stdout.trim()).toBe(headBefore);
+      expect(await isDirty(repoDir)).toBe(false);
+    });
+  });
+
+  describe("commitAllChanges", () => {
+    it("stages and commits tracked and untracked changes under the given message", async () => {
+      await writeFile(join(repoDir, "README.md"), "changed\n", "utf8");
+      await writeFile(join(repoDir, "new-file.txt"), "new\n", "utf8");
+
+      await commitAllChanges(repoDir, "publish: apply verified changes");
+
+      expect(await isDirty(repoDir)).toBe(false);
+      const log = await execa("git", ["-C", repoDir, "log", "-1", "--pretty=%s"]);
+      expect(log.stdout.trim()).toBe("publish: apply verified changes");
+    });
+  });
+
+  describe("pushBranch", () => {
+    it("pushes a local branch to the remote under a different, explicit remote branch name", async () => {
+      await execa("git", ["-C", repoDir, "checkout", "-b", "internal-branch"]);
+      await writeFile(join(repoDir, "feature.txt"), "x\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "feature work"]);
+      const localHead = (await execa("git", ["-C", repoDir, "rev-parse", "HEAD"])).stdout.trim();
+
+      await pushBranch(repoDir, "origin", "internal-branch", "feature/130-example");
+
+      const remoteRef = await execa("git", [
+        "-C",
+        remoteDir,
+        "rev-parse",
+        "refs/heads/feature/130-example",
+      ]);
+      expect(remoteRef.stdout.trim()).toBe(localHead);
+      // The internal branch name itself must never appear as a ref on the remote.
+      const remoteBranches = await execa("git", ["-C", remoteDir, "branch", "--list"]);
+      expect(remoteBranches.stdout).not.toContain("internal-branch");
+    });
+
+    it("a second push after new commits is a plain fast-forward (no force needed)", async () => {
+      await execa("git", ["-C", repoDir, "checkout", "-b", "internal-branch"]);
+      await writeFile(join(repoDir, "one.txt"), "x\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "first"]);
+      await pushBranch(repoDir, "origin", "internal-branch", "feature/130-example");
+
+      await writeFile(join(repoDir, "two.txt"), "y\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "second"]);
+      const localHead = (await execa("git", ["-C", repoDir, "rev-parse", "HEAD"])).stdout.trim();
+
+      await expect(pushBranch(repoDir, "origin", "internal-branch", "feature/130-example")).resolves.not.toThrow();
+      const remoteRef = await execa("git", [
+        "-C",
+        remoteDir,
+        "rev-parse",
+        "refs/heads/feature/130-example",
+      ]);
+      expect(remoteRef.stdout.trim()).toBe(localHead);
+    });
+  });
+
+  describe("computeWorktreeFingerprint", () => {
+    it("is stable when nothing changes", async () => {
+      const first = await computeWorktreeFingerprint(repoDir);
+      const second = await computeWorktreeFingerprint(repoDir);
+      expect(first).toBe(second);
+      expect(first).toMatch(/^[0-9a-f]{12}$/);
+    });
+
+    it("changes when HEAD moves", async () => {
+      const before = await computeWorktreeFingerprint(repoDir);
+      await writeFile(join(repoDir, "committed.txt"), "x\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "add committed.txt"]);
+      expect(await computeWorktreeFingerprint(repoDir)).not.toBe(before);
+    });
+
+    it("changes when an already-tracked file is modified (uncommitted, unstaged)", async () => {
+      const before = await computeWorktreeFingerprint(repoDir);
+      await writeFile(join(repoDir, "README.md"), "modified\n", "utf8");
+      expect(await computeWorktreeFingerprint(repoDir)).not.toBe(before);
+    });
+
+    it("changes when an already-tracked file is modified and staged", async () => {
+      const before = await computeWorktreeFingerprint(repoDir);
+      await writeFile(join(repoDir, "README.md"), "staged change\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      expect(await computeWorktreeFingerprint(repoDir)).not.toBe(before);
+    });
+
+    it("changes when a new untracked file is added", async () => {
+      const before = await computeWorktreeFingerprint(repoDir);
+      await writeFile(join(repoDir, "new-untracked.txt"), "content\n", "utf8");
+      expect(await computeWorktreeFingerprint(repoDir)).not.toBe(before);
+    });
+
+    it("changes when an existing untracked file's content is modified (name unchanged)", async () => {
+      await writeFile(join(repoDir, "scratch.txt"), "v1\n", "utf8");
+      const before = await computeWorktreeFingerprint(repoDir);
+      await writeFile(join(repoDir, "scratch.txt"), "v2\n", "utf8");
+      expect(await computeWorktreeFingerprint(repoDir)).not.toBe(before);
+    });
+
+    it("is unaffected by an ignored, untracked file", async () => {
+      await writeFile(join(repoDir, ".gitignore"), "ignored.txt\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "add gitignore"]);
+
+      const before = await computeWorktreeFingerprint(repoDir);
+      await writeFile(join(repoDir, "ignored.txt"), "should not affect the fingerprint\n", "utf8");
+      expect(await computeWorktreeFingerprint(repoDir)).toBe(before);
+    });
+  });
+
+  describe("logRange / diffNameStatus", () => {
+    it("logRange lists only the non-merge commits reachable from toRef but not fromRef", async () => {
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "a.txt"), "1\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "add a"]);
+      await writeFile(join(repoDir, "b.txt"), "2\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "add b"]);
+
+      const commits = await logRange(repoDir, "main", "feature");
+      expect(commits.map((c) => c.subject).sort()).toEqual(["add a", "add b"]);
+    });
+
+    it("logRange excludes a merge commit from the range", async () => {
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "a.txt"), "1\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "add a"]);
+      await execa("git", ["-C", repoDir, "checkout", "main"]);
+      await writeFile(join(repoDir, "unrelated.txt"), "x\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "unrelated"]);
+      await execa("git", ["-C", repoDir, "checkout", "feature"]);
+      const result = await mergeRef(repoDir, "main");
+      expect(result.merged).toBe(true);
+
+      const commits = await logRange(repoDir, "main", "feature");
+      expect(commits.map((c) => c.subject)).toEqual(["add a"]);
+    });
+
+    it("diffNameStatus reports the changed files between two refs", async () => {
+      await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+      await writeFile(join(repoDir, "a.txt"), "1\n", "utf8");
+      await writeFile(join(repoDir, "b.txt"), "2\n", "utf8");
+      await execa("git", ["-C", repoDir, "add", "."]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "add a and b"]);
+
+      const files = await diffNameStatus(repoDir, "main", "feature");
+      expect(files.sort()).toEqual(["a.txt", "b.txt"]);
+    });
   });
 });

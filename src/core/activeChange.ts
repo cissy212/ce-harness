@@ -152,6 +152,73 @@ export async function resolveActiveChangesForWorkspace(
   return owned.length > 0 ? owned : unowned;
 }
 
+export interface ArchivedChangeInfo {
+  /** The bare change name, with the `YYYY-MM-DD-` archive-date prefix stripped. */
+  name: string;
+  /** The archive directory's own name, e.g. `2026-09-02-addressbook-email-notes`. */
+  archiveDirName: string;
+}
+
+const ARCHIVE_DIR_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}-/;
+
+/**
+ * Lists this durable store's archived changes, most-recently-archived
+ * first (the archive dir name's date prefix sorts chronologically, so a
+ * reverse lexicographic sort gives most-recent-first directly). Never
+ * throws: a missing `openspec/changes/archive/` directory (nothing
+ * archived yet) is reported as an empty list, matching
+ * `listActiveChanges`'s tolerant-of-absence convention.
+ */
+export async function listArchivedChanges(durableRoot: string): Promise<ArchivedChangeInfo[]> {
+  const archiveDir = join(durableRoot, "openspec", "changes", "archive");
+  try {
+    const entries = await readdir(archiveDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        archiveDirName: entry.name,
+        name: entry.name.replace(ARCHIVE_DIR_DATE_PREFIX, ""),
+      }))
+      .sort((a, b) => b.archiveDirName.localeCompare(a.archiveDirName));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The archived change most recently archived by *this exact workspace*
+ * (`project` + `issue`, via the same `.ce-workspace.yml` ownership
+ * sidecar `resolveActiveChangesForWorkspace` reads -- `mv`ing a change
+ * directory into `archive/` at `/archive` time carries the sidecar along
+ * with everything else, so it needs no separate archival step of its
+ * own). Used by `ce publish` to find the change to derive a publish
+ * branch name and PR content from, without requiring the caller to
+ * already know its name.
+ *
+ * Returns null when no archived change is owned by this workspace --
+ * either nothing has been archived yet, every archived change predates
+ * the ownership mechanism (legacy), or every one belongs to a different
+ * workspace. `ce publish` degrades gracefully in that case (an
+ * issue-only branch name, PR content derived straight from the diff)
+ * rather than guessing which archived change to attribute the publish
+ * to.
+ */
+export async function resolveArchivedChangeForWorkspace(
+  durableRoot: string,
+  project: string,
+  issue: string,
+): Promise<{ name: string; changeRoot: string } | null> {
+  const archived = await listArchivedChanges(durableRoot);
+  for (const entry of archived) {
+    const changeRoot = join(durableRoot, "openspec", "changes", "archive", entry.archiveDirName);
+    const ownership = await readChangeOwnership(changeRoot);
+    if (ownership && ownership.project === project && ownership.issue === issue) {
+      return { name: entry.name, changeRoot };
+    }
+  }
+  return null;
+}
+
 /** Best-effort read of `enrich.md`'s own `**Status:**` line. Never throws -- an unreadable or unexpectedly-shaped file just yields no status, never a crash. */
 async function readEnrichStatus(path: string): Promise<"ready" | "needs-clarification" | undefined> {
   try {

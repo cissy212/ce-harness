@@ -8,6 +8,7 @@ import { refreshCommand } from "./commands/refresh.js";
 import { openCommand } from "./commands/open.js";
 import { migrateOpenSpecCommand } from "./commands/migrateOpenSpec.js";
 import { retrieveCommand } from "./commands/retrieve.js";
+import { publishCommand } from "./commands/publish.js";
 import type { RetrievalSource } from "./core/retrieval.js";
 import { formatError } from "./core/errors.js";
 
@@ -263,6 +264,63 @@ export async function runCli(): Promise<void> {
     .action(async (workspace: string | undefined) => {
       await run(() => statusCommand({ workspace }));
     });
+
+  program
+    .command("publish")
+    .description(
+      [
+        "Ship a completed, archived workspace as a normal GitHub pull request --",
+        "the deterministic half of `/publish` (see templates/commands/publish.md",
+        "for the agent-driven half: reading the archived change's artifacts and",
+        "verification evidence to write the PR title/body, and getting explicit",
+        "confirmation before any remote mutation). With no --confirm (the",
+        "default): read-only plus one `git fetch` of the base branch -- reports",
+        "a full JSON plan (repository, base, branch, included commits/files,",
+        "update status) and, if the remote base advanced, safely merges it into",
+        "the workspace's own branch when that's a clean merge (never on",
+        "conflict). Performs no push and creates no PR. With --confirm: commits",
+        "any still-uncommitted changes, pushes the branch under a plain,",
+        "repository-appropriate name (never `ce-harness/*`), and creates the PR",
+        "-- never merges it, never enables auto-merge. Requires the `gh` CLI",
+        "installed, authenticated, and a GitHub origin remote.",
+      ].join(" "),
+    )
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
+    .option("--change <name>", "attribute this publish to a specific OpenSpec change instead of auto-resolving the workspace's most recently archived one")
+    .option("--confirm", "perform the remote mutation: commit if needed, push, and create the PR", false)
+    .option("--title <text>", "PR title (required with --confirm)")
+    .option("--body-file <path>", "path to a file containing the PR body (required with --confirm)")
+    .option("--expected-head <sha>", "the workspace branch's commit the plan was generated against (required with --confirm)")
+    .option(
+      "--expected-fingerprint <hash>",
+      "the plan's expectedFingerprint (HEAD plus every uncommitted change) -- required with --confirm; " +
+        "--expected-head alone cannot detect a file added or changed without the branch's commit moving",
+    )
+    .action(
+      async (
+        workspace: string | undefined,
+        options: {
+          change?: string;
+          confirm: boolean;
+          title?: string;
+          bodyFile?: string;
+          expectedHead?: string;
+          expectedFingerprint?: string;
+        },
+      ) => {
+        await run(() =>
+          publishCommand({
+            workspace,
+            change: options.change,
+            confirm: options.confirm,
+            title: options.title,
+            bodyFile: options.bodyFile,
+            expectedHead: options.expectedHead,
+            expectedFingerprint: options.expectedFingerprint,
+          }),
+        );
+      },
+    );
 
   program
     .command("retrieve")

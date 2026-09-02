@@ -691,6 +691,68 @@ predates Project Identity).
 ce migrate-openspec
 ```
 
+#### `ce publish [workspace] [--change <name>]`
+
+The deterministic half of shipping a completed, archived change as a
+normal GitHub pull request — see `/publish` (in
+[The workflow inside OpenCode](#the-workflow-inside-opencode)) for the
+full, agent-driven flow (reading the archived change's artifacts and
+real verification evidence to write the PR title/body, showing the full
+plan, and requiring explicit confirmation). This CLI command is the
+plumbing `/publish` calls; running it directly is mostly useful for
+inspecting the plan.
+
+With no `--confirm` (the default): entirely local, plus one `git fetch`
+of the base branch — never pushes, never creates a PR. It fetches the
+base branch, compares it against the workspace's own internal branch,
+and safely merges the base in if it advanced and the merge is clean
+(refuses with a clear error on any conflict — it never resolves one
+itself). Prints a JSON plan: exact repository (`repoSlug`, derived from
+the `origin` remote — GitHub only), base branch, the branch name that
+will be exposed to the target repository (never `ce-harness/*` — a
+separate, independently configurable pattern from the workspace's own
+internal branch, defaulting to `feature/{issue}-{change}` or
+`feature/{issue}` — see below), included commits and files, and any
+uncommitted changes that will be committed on `--confirm`.
+
+With `--confirm --title <text> --body-file <path> --expected-head <sha>
+--expected-fingerprint <hash>`: commits any still-uncommitted changes
+(using `--title` as the commit message), pushes the branch, and creates
+the pull request — or, if one is already open for that branch, reports
+its existing URL instead of creating a duplicate. Both `--expected-head`
+(the branch's commit) and `--expected-fingerprint` (a hash covering
+HEAD plus every staged/unstaged tracked change and untracked file —
+from the plan's `expectedFingerprint`, computed the same way `/verify`/
+`/adversarial-review`/`/archive` already fingerprint a worktree) must
+still match, checked immediately before anything is committed or
+pushed, or this refuses. `--expected-head` alone isn't sufficient: a
+file can be added or modified in the worktree *without* the branch's
+commit moving at all, which is exactly the gap `--expected-fingerprint`
+closes — so the content actually pushed is always exactly what the
+approved plan showed, never something that changed in between. **Never
+merges the pull request, and never enables auto-merge** — there is no
+option or code path that does either.
+
+`--change <name>` attributes the publish to a specific OpenSpec change
+instead of letting it auto-resolve the workspace's most recently
+archived one (via the same `.ce-workspace.yml` ownership sidecar `ce
+status`/`ce open --change` use — see
+[Many preserved workspaces, one default](#core-concepts)); publishing
+still works with no OpenSpec change involved at all.
+
+Refuses outright for an Existing PR review workspace (there's no
+OpenSpec-driven implementation of its own to publish), and requires the
+`gh` CLI installed and authenticated.
+
+**Publish-branch naming**: configurable the same way as `ce
+start`'s own internal branch pattern, via a separate Git config key —
+the workspace's internal `ce-harness/{issue}` branch itself is never
+pushed or exposed anywhere:
+
+```bash
+git config ce-harness.publish-branch-pattern "release/{issue}"
+```
+
 ### Choosing a coding-agent runner
 
 ```bash
@@ -996,15 +1058,20 @@ config, wired up automatically):
 | `/verify` | Checks the implementation against the change's proposal, design, specs, and tasks — the **conformance baseline**. Runs discovered test/lint/build commands and writes a report into the OpenSpec store. Never fixes code. **Refuses to run in an `Existing PR review` workspace** (there's no OpenSpec-driven implementation to check conformance against) — use `/adversarial-review` there instead. |
 | `/adversarial-review` | In an `Implementation` workspace: runs after `/verify` and independently hunts for defects, gaps, and risks the specification itself doesn't describe, challenging `/verify`'s report rather than duplicating it. In an `Existing PR review` workspace: the **only** review step — reviews the commit range directly against the PR description and repository conventions, with no OpenSpec change involved. Never fixes code, either way. |
 | `/archive` | Archives a completed change: checks artifact/task completion, offers to sync delta specs into the main specs, and moves the change into the store's archive. |
+| `/publish` | Ships the completed, archived change as a normal GitHub pull request: fetches and safely updates against the current base branch, shows the exact repository/branch/included commits/PR title/PR description, and only pushes and opens the PR after explicit confirmation. Never merges, never enables auto-merge. |
 
 In an **Implementation** workspace, the typical order is: `/explore` or
 `/propose` → `/apply` (repeat as needed) → `/verify` → `/adversarial-review`
-→ `/archive`. In an **Existing PR review** workspace, `/adversarial-review`
-is the whole workflow — run it directly, no other command is needed or
-applicable. None of these commands ever write OpenSpec files, reports, or
-harness config inside your actual repository or worktree — only inside
-the external OpenSpec store, and (for `/apply`) actual code changes
-inside the worktree itself.
+→ `/archive` → `/publish`. In an **Existing PR review** workspace,
+`/adversarial-review` is the whole workflow — run it directly, no other
+command is needed or applicable (`/publish` refuses there too, for the
+same reason `/verify` does: there's no OpenSpec-driven implementation of
+its own to publish). None of these commands ever write OpenSpec files,
+reports, or harness config inside your actual repository or worktree —
+only inside the external OpenSpec store, and (for `/apply`) actual code
+changes inside the worktree itself; `/publish` is the one exception that
+also reaches an external service (GitHub), and only after you explicitly
+confirm its preview.
 
 ### Reasoning lenses
 

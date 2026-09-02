@@ -184,6 +184,8 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 - Delta spec sync was skipped (user chose to skip)
 
 All artifacts complete. All tasks complete.
+
+Next: /publish
 ```
 
 Reaching this template at all already means step 4's gate passed --
@@ -197,7 +199,12 @@ artifacts, incomplete tasks, or a skipped sync); omit the section
 entirely when none apply. When the **Warnings** section is present,
 change the heading to `## Archive Complete (with warnings)` and use
 "Review the archive if this was not intentional." as the closing line
-instead of "All artifacts complete. All tasks complete."
+instead of "All artifacts complete. All tasks complete." -- either way,
+always end with "Next: /publish" on its own line: `/archive` only
+closes the development contract, it never pushes or opens a pull
+request itself -- `/publish` is the separate, explicit step for that
+(see templates/commands/publish.md), and this pointer is what tells the
+user it exists.
 
 **Output On Blocked (Missing/Failing/Gapped/Stale Verification Evidence)**
 

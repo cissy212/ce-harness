@@ -6,8 +6,13 @@ import { CeError } from "../../src/core/errors.js";
 import {
   BRANCH_PATTERN_CONFIG_KEY,
   DEFAULT_BRANCH_PATTERN,
+  DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE,
+  DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE,
+  PUBLISH_BRANCH_PATTERN_CONFIG_KEY,
   renderBranchName,
+  renderPublishBranchName,
   resolveBranchPattern,
+  resolvePublishBranchPattern,
 } from "../../src/core/branchNaming.js";
 
 describe("branch naming (configurable per repository via Git config)", () => {
@@ -80,6 +85,75 @@ describe("branch naming (configurable per repository via Git config)", () => {
         expect(ceError.message).toMatch(/does not include the "\{issue\}" placeholder/);
         expect(ceError.recovery).toMatch(/git config ce-harness\.branch-pattern "feature\/\{issue\}"/);
         expect(ceError.recovery).toMatch(/git config --unset ce-harness\.branch-pattern/);
+      }
+    });
+  });
+
+  describe("resolvePublishBranchPattern", () => {
+    it('defaults to "feature/{issue}-{change}" when a change is known and nothing is configured', async () => {
+      expect(await resolvePublishBranchPattern(repoDir, true)).toBe(DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE);
+    });
+
+    it('defaults to "feature/{issue}" when no change is known and nothing is configured', async () => {
+      expect(await resolvePublishBranchPattern(repoDir, false)).toBe(
+        DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE,
+      );
+    });
+
+    it("uses the repository's local Git config override regardless of whether a change is known", async () => {
+      await execa("git", ["-C", repoDir, "config", PUBLISH_BRANCH_PATTERN_CONFIG_KEY, "release/{issue}"]);
+
+      expect(await resolvePublishBranchPattern(repoDir, true)).toBe("release/{issue}");
+      expect(await resolvePublishBranchPattern(repoDir, false)).toBe("release/{issue}");
+    });
+
+    it("is independent from ce-harness.branch-pattern -- setting one never affects the other", async () => {
+      await execa("git", ["-C", repoDir, "config", BRANCH_PATTERN_CONFIG_KEY, "bugfix/{issue}"]);
+
+      expect(await resolvePublishBranchPattern(repoDir, false)).toBe(DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE);
+      expect(await resolveBranchPattern(repoDir)).toBe("bugfix/{issue}");
+    });
+  });
+
+  describe("renderPublishBranchName", () => {
+    it("renders the default with-change pattern to a normal, descriptive branch name", () => {
+      expect(renderPublishBranchName(DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE, "130", "addressbook-email-notes")).toBe(
+        "feature/130-addressbook-email-notes",
+      );
+    });
+
+    it("renders the default without-change pattern using only the issue", () => {
+      expect(renderPublishBranchName(DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE, "130", null)).toBe(
+        "feature/130",
+      );
+    });
+
+    it("never uses ce-harness's internal branch naming for the published branch", () => {
+      const rendered = renderPublishBranchName(DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE, "130", "add-auth");
+      expect(rendered.startsWith("ce-harness/")).toBe(false);
+    });
+
+    it("throws a clear, actionable CeError when the pattern uses {change} but no change name was resolved", () => {
+      expect(() => renderPublishBranchName("feature/{issue}-{change}", "130", null)).toThrow(CeError);
+      try {
+        renderPublishBranchName("feature/{issue}-{change}", "130", null);
+        expect.fail("expected renderPublishBranchName to throw");
+      } catch (error) {
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/requires "\{change\}"/);
+        expect(ceError.recovery).toMatch(/--change/);
+      }
+    });
+
+    it("throws a clear, actionable CeError when the rendered branch would start with ce-harness/", () => {
+      expect(() => renderPublishBranchName("ce-harness/{issue}", "130", null)).toThrow(CeError);
+      try {
+        renderPublishBranchName("ce-harness/{issue}", "130", null);
+        expect.fail("expected renderPublishBranchName to throw");
+      } catch (error) {
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/starts with "ce-harness\/"/);
+        expect(ceError.recovery).toMatch(/git config ce-harness\.publish-branch-pattern/);
       }
     });
   });

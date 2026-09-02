@@ -57,3 +57,69 @@ export function renderBranchName(pattern: string, sanitizedIssue: string): strin
   }
   return pattern.split(ISSUE_PLACEHOLDER).join(sanitizedIssue);
 }
+
+/**
+ * `ce publish`'s branch name for the target repository -- deliberately a
+ * separate pattern/config key from the one above, never derived from it:
+ * `internalBranch` (`ce-harness/{issue}` by default) is ce-harness's own
+ * working branch and is never pushed or exposed anywhere -- `ce publish`
+ * only ever pushes the *commits* it points at, under this independently
+ * computed name. Two defaults: with a resolved OpenSpec change name,
+ * `{issue}-{change}` (e.g. `feature/130-addressbook-email-notes`,
+ * matching a real repository's normal branch-naming feel); without one
+ * (no change could be resolved -- see core/activeChange.ts's
+ * `resolveArchivedChangeForWorkspace`), just `{issue}`. Configurable the
+ * same way as `ce-harness.branch-pattern`, via a Git config key:
+ *
+ *   git config ce-harness.publish-branch-pattern "release/{issue}"
+ */
+export const DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE = "feature/{issue}-{change}";
+export const DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE = "feature/{issue}";
+export const PUBLISH_BRANCH_PATTERN_CONFIG_KEY = "ce-harness.publish-branch-pattern";
+const CHANGE_PLACEHOLDER = "{change}";
+/** Never-publish-under-this-prefix guard -- see renderPublishBranchName. */
+const HARNESS_BRANCH_PREFIX = "ce-harness/";
+
+/**
+ * Resolves the publish-branch pattern configured for `repoPath` (via
+ * `ce-harness.publish-branch-pattern`), falling back to one of the two
+ * defaults above depending on whether a change name was resolved.
+ */
+export async function resolvePublishBranchPattern(repoPath: string, hasChange: boolean): Promise<string> {
+  const configured = await readGitConfig(repoPath, PUBLISH_BRANCH_PATTERN_CONFIG_KEY);
+  if (configured) return configured;
+  return hasChange ? DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE : DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE;
+}
+
+/**
+ * Renders `pattern` into the exact branch name `ce publish` will push
+ * to the target repository. Throws if `pattern` uses `{change}` but no
+ * `changeName` was resolved (same "catch the misconfiguration early"
+ * reasoning as `renderBranchName`'s missing-`{issue}` check), and throws
+ * if the *rendered* result would start with `ce-harness/` -- whether
+ * from a hand-misconfigured pattern or (structurally impossible today,
+ * but checked anyway) any other source -- since a branch exposed to the
+ * target repository must never carry ce-harness's own internal naming.
+ */
+export function renderPublishBranchName(
+  pattern: string,
+  sanitizedIssue: string,
+  changeName: string | null,
+): string {
+  if (pattern.includes(CHANGE_PLACEHOLDER) && !changeName) {
+    throw new CeError(
+      `The configured publish-branch pattern "${pattern}" requires "${CHANGE_PLACEHOLDER}", but no OpenSpec change name could be resolved for this workspace.`,
+      `Pass an explicit --change <name>, or configure a pattern that doesn't use "${CHANGE_PLACEHOLDER}" (e.g. \`git config ${PUBLISH_BRANCH_PATTERN_CONFIG_KEY} "${DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE}"\`).`,
+    );
+  }
+  let rendered = pattern.split(ISSUE_PLACEHOLDER).join(sanitizedIssue);
+  if (changeName) rendered = rendered.split(CHANGE_PLACEHOLDER).join(changeName);
+
+  if (rendered.startsWith(HARNESS_BRANCH_PREFIX)) {
+    throw new CeError(
+      `The configured publish-branch pattern renders to "${rendered}", which starts with "${HARNESS_BRANCH_PREFIX}" -- branches exposed to the target repository must never use ce-harness's own internal branch naming.`,
+      `Configure a pattern that doesn't start with "${HARNESS_BRANCH_PREFIX}" (e.g. \`git config ${PUBLISH_BRANCH_PATTERN_CONFIG_KEY} "feature/${ISSUE_PLACEHOLDER}"\`).`,
+    );
+  }
+  return rendered;
+}

@@ -6,8 +6,10 @@ import {
   activeChangeRoot,
   formatArtifactChecklist,
   listActiveChanges,
+  listArchivedChanges,
   readChangeOwnership,
   resolveActiveChangesForWorkspace,
+  resolveArchivedChangeForWorkspace,
   summarizeChangeArtifacts,
 } from "../../src/core/activeChange.js";
 
@@ -186,6 +188,78 @@ describe("activeChange (durable-store discovery for `ce status` / `ce open --cha
       });
 
       expect(await resolveActiveChangesForWorkspace(durableRoot, "my-project", "130")).toEqual([]);
+    });
+  });
+
+  describe("listArchivedChanges", () => {
+    it("returns an empty list when nothing has been archived yet", async () => {
+      expect(await listArchivedChanges(durableRoot)).toEqual([]);
+    });
+
+    it("lists archived changes, most-recently-archived first, with the date prefix stripped from name", async () => {
+      await mkdir(join(durableRoot, "openspec", "changes", "archive", "2026-05-12-add-user-auth"), {
+        recursive: true,
+      });
+      await mkdir(join(durableRoot, "openspec", "changes", "archive", "2026-09-02-addressbook-email-notes"), {
+        recursive: true,
+      });
+
+      expect(await listArchivedChanges(durableRoot)).toEqual([
+        { name: "addressbook-email-notes", archiveDirName: "2026-09-02-addressbook-email-notes" },
+        { name: "add-user-auth", archiveDirName: "2026-05-12-add-user-auth" },
+      ]);
+    });
+  });
+
+  describe("resolveArchivedChangeForWorkspace", () => {
+    it("returns null when nothing is archived", async () => {
+      expect(await resolveArchivedChangeForWorkspace(durableRoot, "my-project", "130")).toBeNull();
+    });
+
+    it("returns null for a legacy archived change with no ownership sidecar", async () => {
+      await mkdir(join(durableRoot, "openspec", "changes", "archive", "2026-05-12-legacy-change"), {
+        recursive: true,
+      });
+      expect(await resolveArchivedChangeForWorkspace(durableRoot, "my-project", "130")).toBeNull();
+    });
+
+    it("resolves the archived change owned by this exact workspace", async () => {
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/archive/2026-09-02-addressbook-email-notes/.ce-workspace.yml",
+        'project: "my-project"\nissue: "130"\n',
+      );
+
+      expect(await resolveArchivedChangeForWorkspace(durableRoot, "my-project", "130")).toEqual({
+        name: "addressbook-email-notes",
+        changeRoot: join(durableRoot, "openspec", "changes", "archive", "2026-09-02-addressbook-email-notes"),
+      });
+    });
+
+    it("never resolves an archived change owned by a different workspace", async () => {
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/archive/2026-09-02-someone-elses-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "143"\n',
+      );
+
+      expect(await resolveArchivedChangeForWorkspace(durableRoot, "my-project", "130")).toBeNull();
+    });
+
+    it("resolves the most recently archived one when this workspace owns more than one", async () => {
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/archive/2026-05-12-first-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "130"\n',
+      );
+      await writeFixtureFile(
+        durableRoot,
+        "openspec/changes/archive/2026-09-02-second-change/.ce-workspace.yml",
+        'project: "my-project"\nissue: "130"\n',
+      );
+
+      const resolved = await resolveArchivedChangeForWorkspace(durableRoot, "my-project", "130");
+      expect(resolved?.name).toBe("second-change");
     });
   });
 

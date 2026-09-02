@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { execa } from "execa";
 import { CeError } from "./errors.js";
 
@@ -233,14 +234,14 @@ export async function resolveMergeBase(
 }
 
 /**
- * Fetches `refspec` from `remote` into `repoPath`. This is the only
- * function in ce-harness that ever fetches over the network -- used
- * exclusively by `ce review` (never by `ce start`, which requires refs
- * to already exist locally). Callers are expected to pass an explicit
- * destination (e.g. `+refs/pull/123/head:refs/ce-harness/reviews/pr-123/head`)
- * so the fetched commit is durably reachable via a real ref rather than
- * the ephemeral `FETCH_HEAD`, and so nothing under `refs/heads/*` (a
- * local branch) is ever created or moved by a fetch.
+ * Fetches `refspec` from `remote` into `repoPath`. The low-level fetch
+ * primitive -- `ce review` (via `fetchPrCommits`) and `ce publish` (via
+ * `fetchRemoteBranch` below) are its only two callers; `ce start` never
+ * fetches, requiring refs to already exist locally. Callers are expected
+ * to pass an explicit destination (e.g.
+ * `+refs/pull/123/head:refs/ce-harness/reviews/pr-123/head`) so the
+ * fetched commit is durably reachable via a real ref rather than the
+ * ephemeral `FETCH_HEAD`.
  */
 export async function fetchRefspec(repoPath: string, remote: string, refspec: string): Promise<void> {
   const result = await git(repoPath, ["fetch", remote, refspec]);
@@ -250,6 +251,186 @@ export async function fetchRefspec(repoPath: string, remote: string, refspec: st
       `Confirm "${remote}" is a valid remote for this repository and that the ref exists there, then try again.`,
     );
   }
+}
+
+/**
+ * Fetches `branch` from `remote` into the normal remote-tracking ref
+ * `refs/remotes/<remote>/<branch>` -- unlike `fetchPrCommits`'s
+ * namespaced destinations, this is a plain, ordinary branch fetch (what
+ * `git fetch <remote> <branch>` always does), used by `ce publish` to
+ * learn the base branch's current tip before comparing it against a
+ * workspace's internal branch. Still never touches `refs/heads/*` (no
+ * local branch is created or moved).
+ */
+export async function fetchRemoteBranch(repoPath: string, remote: string, branch: string): Promise<void> {
+  await fetchRefspec(repoPath, remote, `refs/heads/${branch}:refs/remotes/${remote}/${branch}`);
+}
+
+/**
+ * True if `repoPath` has an in-progress merge, rebase, or cherry-pick --
+ * checked via the same marker files Git itself uses (`MERGE_HEAD`,
+ * `rebase-merge`/`rebase-apply`, `CHERRY_PICK_HEAD`) under its Git
+ * directory, never by parsing human-readable/locale-dependent status
+ * text. `ce publish` refuses outright when this is true rather than
+ * layering its own merge attempt on top of an already-unresolved one.
+ */
+export async function hasInProgressMergeOrRebase(repoPath: string): Promise<boolean> {
+  const dirResult = await git(repoPath, ["rev-parse", "--git-dir"]);
+  if (dirResult.exitCode !== 0) return false;
+  const gitDir = resolve(repoPath, dirResult.stdout.trim());
+  return (
+    existsSync(join(gitDir, "MERGE_HEAD")) ||
+    existsSync(join(gitDir, "CHERRY_PICK_HEAD")) ||
+    existsSync(join(gitDir, "rebase-merge")) ||
+    existsSync(join(gitDir, "rebase-apply"))
+  );
+}
+
+/**
+ * Merges `ref` into the branch currently checked out in `repoPath`
+ * (expected to be a worktree, so this never disturbs any other
+ * worktree's checked-out branch). On a clean merge, returns `{ merged:
+ * true }` with the new merge commit made. On any conflict, immediately
+ * runs `git merge --abort` and returns `{ merged: false }` -- the
+ * worktree is left exactly as it was before this call, so a caller can
+ * report "blocked" without having left behind a half-finished merge.
+ * Never resolves a conflict itself and never force-anything -- this is
+ * "safe update" in the literal sense: it only ever succeeds when Git
+ * itself can apply the merge with no ambiguity.
+ */
+export async function mergeRef(repoPath: string, ref: string): Promise<{ merged: boolean }> {
+  const result = await git(repoPath, ["merge", "--no-edit", ref]);
+  if (result.exitCode === 0) return { merged: true };
+  await git(repoPath, ["merge", "--abort"]);
+  return { merged: false };
+}
+
+/** `git add -A && git commit -m <message>` in `repoPath`. Throws on failure (e.g. nothing to commit). */
+export async function commitAllChanges(repoPath: string, message: string): Promise<void> {
+  const addResult = await git(repoPath, ["add", "-A"]);
+  if (addResult.exitCode !== 0) {
+    throw new CeError(`Failed to stage changes in "${repoPath}": ${addResult.stderr.trim()}`);
+  }
+  const commitResult = await git(repoPath, ["commit", "-m", message]);
+  if (commitResult.exitCode !== 0) {
+    throw new CeError(`Failed to commit staged changes in "${repoPath}": ${commitResult.stderr.trim()}`);
+  }
+}
+
+/**
+ * Pushes `localRef` (a branch, or any committish) to `remoteBranch` on
+ * `remote`, creating or fast-forwarding it -- never `--force`. `ce
+ * publish` relies on this never rewriting history on the remote: it
+ * always pushes the same, monotonically-growing local branch under the
+ * same deterministic remote branch name, so a second publish for the
+ * same workspace is always a plain fast-forward, exactly like pushing
+ * new commits to an already-open pull request's branch.
+ */
+export async function pushBranch(
+  repoPath: string,
+  remote: string,
+  localRef: string,
+  remoteBranch: string,
+): Promise<void> {
+  const result = await git(repoPath, ["push", remote, `${localRef}:refs/heads/${remoteBranch}`]);
+  if (result.exitCode !== 0) {
+    throw new CeError(
+      `Failed to push "${localRef}" to "${remote}" as "${remoteBranch}": ${result.stderr.trim()}`,
+    );
+  }
+}
+
+/**
+ * A 12-hex-char fingerprint of `repoPath`'s exact current worktree
+ * state: `HEAD` plus every staged/unstaged tracked change (`git diff
+ * HEAD`) plus the content of every untracked, non-ignored file. This is
+ * the same "commit alone isn't enough -- uncommitted work is part of
+ * what's actually there" fingerprint `/verify`, `/adversarial-review`,
+ * and `/archive` already compute (as an embedded bash snippet, since
+ * they run inside the agent session) to detect implementation drift
+ * between verification and archival; this is the TypeScript port `ce
+ * publish` needs at the CLI layer, for the identical reason: two
+ * fingerprints computed moments apart are equal if and only if nothing
+ * in the worktree that could change what gets pushed has changed,
+ * including a file added or modified *without* the branch's commit
+ * itself moving -- exactly the gap a `HEAD`-only comparison misses.
+ *
+ * Never throws for a single untracked file that vanishes or becomes
+ * unreadable between listing and reading (tolerated exactly like the
+ * bash snippet's own `2>/dev/null`); does throw if `HEAD` itself or the
+ * diff against it can't be resolved at all (a fundamentally broken
+ * worktree, not a case to silently paper over).
+ */
+export async function computeWorktreeFingerprint(repoPath: string): Promise<string> {
+  const head = await git(repoPath, ["rev-parse", "HEAD"]);
+  if (head.exitCode !== 0) {
+    throw new CeError(`Could not resolve HEAD in "${repoPath}" to compute its fingerprint: ${head.stderr.trim()}`);
+  }
+  const diff = await git(repoPath, ["diff", "HEAD"]);
+  if (diff.exitCode !== 0) {
+    throw new CeError(
+      `Could not compute the working-tree diff against HEAD in "${repoPath}" to compute its fingerprint: ${diff.stderr.trim()}`,
+    );
+  }
+  const untracked = await git(repoPath, ["ls-files", "--others", "--exclude-standard"]);
+  const untrackedPaths =
+    untracked.exitCode === 0
+      ? untracked.stdout
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+      : [];
+
+  const hash = createHash("sha256");
+  hash.update(head.stdout);
+  hash.update(diff.stdout);
+  for (const path of untrackedPaths) {
+    try {
+      hash.update(await readFile(join(repoPath, path)));
+    } catch {
+      // Deleted or unreadable between listing and reading -- tolerated.
+    }
+  }
+  return hash.digest("hex").slice(0, 12);
+}
+
+/**
+ * Read-only commits reachable from `toRef` but not `fromRef`, oldest
+ * dependency-of-history concerns aside -- most-recent-last would be more
+ * natural for "what's included in this PR", but this matches
+ * `pathHistory`/`searchCommitMessages`'s existing most-recent-first
+ * convention for consistency; callers needing chronological order
+ * reverse it themselves. Excludes merge commits (`--no-merges`) so a
+ * base-branch update merge never shows up as one of "the" commits being
+ * published. Never fetches, never throws (empty array on failure).
+ */
+export async function logRange(repoPath: string, fromRef: string, toRef: string): Promise<CommitSummary[]> {
+  const result = await git(repoPath, [
+    "log",
+    "--no-merges",
+    "--date=iso-strict",
+    "--pretty=format:%H%x1f%ad%x1f%s",
+    `${fromRef}..${toRef}`,
+  ]);
+  if (result.exitCode !== 0) return [];
+  return parseCommitLogLines(result.stdout);
+}
+
+/**
+ * Read-only list of paths that differ between `fromRef` and `toRef`,
+ * using a three-dot (`...`) diff -- i.e. against their merge base, not
+ * `fromRef` directly -- so this reports exactly the product change `ce
+ * publish` is about to expose, unaffected by unrelated commits `fromRef`
+ * has that `toRef` doesn't. Never fetches, never throws (empty array on
+ * failure).
+ */
+export async function diffNameStatus(repoPath: string, fromRef: string, toRef: string): Promise<string[]> {
+  const result = await git(repoPath, ["diff", `${fromRef}...${toRef}`, "--name-only"]);
+  if (result.exitCode !== 0) return [];
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 /** True if `sha` resolves to a commit already present locally. Never fetches, never throws. */

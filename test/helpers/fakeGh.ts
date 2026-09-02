@@ -30,6 +30,25 @@ export function teardownFakeGh(): void {
   delete process.env.FAKE_GH_FAIL_AUTH;
   delete process.env.FAKE_GH_FAIL_RESOLVE;
   delete process.env.FAKE_GH_PR_JSON;
+  delete process.env.FAKE_GH_EXISTING_PR_URL;
+  delete process.env.FAKE_GH_FAIL_CREATE;
+  delete process.env.FAKE_GH_CREATE_PR_URL;
+  delete process.env.FAKE_GH_RECORD_FILE;
+}
+
+/** Configures `gh pr list --head <branch>` to report one already-open PR at this URL. */
+export function setFakeExistingPr(url: string): void {
+  process.env.FAKE_GH_EXISTING_PR_URL = url;
+}
+
+/** Configures the URL `gh pr create` reports on success. */
+export function setFakeCreatePrUrl(url: string): void {
+  process.env.FAKE_GH_CREATE_PR_URL = url;
+}
+
+/** Points `gh pr create`'s recorded invocation (repo/base/head/title/body) at this file, for a test to read back and assert against. */
+export function setFakeGhRecordFile(path: string): void {
+  process.env.FAKE_GH_RECORD_FILE = path;
 }
 
 /** Configures what `gh pr view --json ...` returns for the current test. */
