@@ -306,28 +306,159 @@ reports.
 ## 8. Discover and run verification commands
 
 Verification commands must be **discovered from the repository**, never
-assumed. Inspect, in roughly this order, whichever of these exist at the
-worktree root and choose the smallest targeted set that validates the
-change (typically a test run, a type/lint check if the language has one,
-and a build if applicable):
+assumed -- and discovery must never stop at the worktree root. A
+repository-root scope not defining some check (e.g. no root-level
+formatter) does **not** mean that check is unavailable or not
+applicable -- a changed nested app/package can have its own manifest,
+task runner, or CI configuration defining it, even when the root has
+nothing. Concluding "not applicable" without inspecting the scopes the
+change actually touches is exactly the mistake this step exists to
+prevent.
 
-- Package manifests: `package.json` (`scripts` block), `pyproject.toml` /
-  `Pipfile`, `Cargo.toml`, `go.mod`, `Gemfile`, etc.
-- Task runners / build files: `Makefile`, `Taskfile.yml`, `justfile`,
-  `Rakefile`
-- Project docs: `AGENTS.md`, `README`, `CONTRIBUTING`, or equivalent, for any
-  documented "how to test/lint/build this project" instructions
+Two distinct concepts, kept separate below -- conflating them is its
+own mistake (a component-level `README.md` must never make discovery
+stop one directory too early, above the app/package it actually
+belongs to):
 
-Do not assume npm, Docker, Prisma, or any other specific stack or tool --
-choose whatever the repository itself actually uses, and run each chosen
-command with its working directory set to `$CE_WORKTREE`. Record the exact
-command line used for each.
+- **Tooling/execution scope boundary**: a manifest, task runner, or
+  build/CI configuration that actually establishes a project/check
+  execution context (`package.json`, `pyproject.toml`, `Cargo.toml`,
+  a `Makefile`, a CI workflow, etc.). These -- and only these -- stop
+  the upward scope search and define the working directory a command
+  actually runs from.
+- **Instruction evidence**: `AGENTS.md`, `README.md`, `CONTRIBUTING.md`,
+  or similar repository guidance. These are read for whatever
+  test/lint/build guidance they document, at every level from the
+  changed file up through the resolved scope and the root -- but they
+  never define an execution scope or a command's working directory by
+  themselves, and never stop the tooling-scope search below.
 
-If no verification commands can be discovered, or a discovered command
-requires an environment/dependency that is not available (e.g. a database,
-external service, or credential), mark that check as `BLOCKED` and state the
-specific reason. Do not skip -- a `BLOCKED` result in the report is
-informative; a missing result is not.
+1. **Find every scope the change touches**, using tooling/execution
+   boundaries only. Starting from the changed-file list already
+   gathered in Step 3 (the three-dot diff against the same range Step 3
+   resolved -- `$CE_DIFF_BASE...$CE_DIFF_HEAD` for an explicit review
+   range, or `<merge-base>...HEAD` otherwise), find each changed file's
+   *nearest* owning scope: walk upward from the file's own directory,
+   stopping at the first directory (including possibly the file's own)
+   that contains any of the tooling markers below, or at `$CE_WORKTREE`
+   itself if none is found first:
+
+   ```bash
+   find_scope() {
+     local dir
+     dir=$(dirname "$1")
+     while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+       for marker in package.json pyproject.toml Pipfile Cargo.toml go.mod \
+                     Gemfile Makefile Taskfile.yml justfile Rakefile; do
+         [ -e "$CE_WORKTREE/$dir/$marker" ] && { echo "$dir"; return; }
+       done
+       [ -d "$CE_WORKTREE/$dir/.github/workflows" ] && { echo "$dir"; return; }
+       dir=$(dirname "$dir")
+     done
+     echo "."
+   }
+
+   git -C "$CE_WORKTREE" diff --name-only <the same diff range Step 3 resolved> \
+     | while read -r f; do find_scope "$f"; done \
+     | sort -u
+   ```
+
+   `README.md`/`AGENTS.md`/`CONTRIBUTING.md` are deliberately **not**
+   in this marker list -- a documentation file sitting in some
+   intermediate directory (e.g.
+   `apps/dashboard/src/components/README.md`) must never make a changed
+   file under it (e.g. `.../components/ContactDrawer.vue`) resolve to
+   that intermediate directory instead of the real tooling scope above
+   it (`apps/dashboard`, where `package.json` actually lives).
+
+   This prints the distinct set of nested scope directories the change
+   touches, relative to `$CE_WORKTREE` (no output at all means every
+   changed file's nearest scope is the root itself). **The relevant
+   scope set is this output plus `$CE_WORKTREE` itself, always** -- a
+   repository-wide check can still genuinely apply even once a more
+   specific nested scope is also found; finding a nested scope means it
+   must *additionally* be inspected, never that the root is skipped.
+
+2. **Gather instruction evidence along the way**, separately from step
+   1's scope boundaries. For each changed file, also collect every
+   `AGENTS.md`/`README.md`/`CONTRIBUTING.md` found at *any* directory
+   level from the file's own directory up through its resolved scope
+   and the root -- not just the scope directory itself:
+
+   ```bash
+   find_docs() {
+     local dir
+     dir=$(dirname "$1")
+     while :; do
+       for doc in AGENTS.md README.md CONTRIBUTING.md; do
+         if [ -e "$CE_WORKTREE/$dir/$doc" ]; then
+           if [ "$dir" = "." ]; then echo "$doc"; else echo "$dir/$doc"; fi
+         fi
+       done
+       [ "$dir" = "." ] && break
+       dir=$(dirname "$dir")
+     done
+   }
+   ```
+
+   Read whatever this finds for documented "how to test/lint/build
+   this" guidance. This is purely additive evidence for *what* command
+   a scope's tooling might expect -- it never changes *where* (which
+   scope/working directory) that command actually runs from; that is
+   decided by step 1 alone.
+
+3. **Inspect each relevant scope independently**, exactly as before,
+   just rooted at that scope's own directory instead of always at
+   `$CE_WORKTREE`. For each scope (root, and every nested one found
+   above), inspect, in roughly this order, whichever of these exist
+   **inside that scope's own directory**, and choose the smallest
+   targeted set that validates the change (typically a test run, a
+   type/lint/format check if the language/tooling has one, and a build
+   if applicable):
+
+   - Package manifests: `package.json` (`scripts` block), `pyproject.toml` /
+     `Pipfile`, `Cargo.toml`, `go.mod`, `Gemfile`, etc.
+   - Task runners / build files: `Makefile`, `Taskfile.yml`, `justfile`,
+     `Rakefile`
+   - CI workflows/configuration (e.g. `.github/workflows/*.yml`):
+     read-only, as evidence of which commands the repository itself
+     already trusts for this scope -- consulted to discover what to
+     run, never executed directly.
+   - Instruction evidence gathered in step 2 for this scope (and any
+     intermediate directory beneath it), for documented "how to
+     test/lint/build this project" guidance.
+
+   Do not assume npm, Docker, Prisma, or any other specific stack or
+   tool -- each scope may use a completely different package
+   manager/toolchain than the root or any other scope; choose whatever
+   *that scope's own evidence* actually shows, never carry an
+   assumption over from another scope. Run each chosen command with its
+   working directory set to that scope's own directory
+   (`$CE_WORKTREE/<scope>`, or `$CE_WORKTREE` itself for the root
+   scope) -- never wherever an instruction-evidence doc happens to live,
+   and never always `$CE_WORKTREE`, since a nested scope's own tooling
+   (e.g. an `npm` script relying on that package's own `node_modules`)
+   resolves relative to where it actually lives. Record the exact
+   command line used **and the scope directory that justified it** for
+   each.
+
+4. **Before declaring any validation category (e.g. "format check",
+   "lint", "typecheck", "test", "build") unavailable or not
+   applicable, confirm this holds at *every* relevant scope from step 1
+   above, not just the root.** A category is only truly
+   unavailable/not applicable once no scope's manifests, task runners,
+   CI configuration, or gathered instruction evidence define it. Still
+   do not run every discovered script in every scope regardless of
+   relevance, and do not invent a command no scope's own evidence
+   supports -- the same discipline as before, just applied per scope
+   instead of only at the root.
+
+If no verification commands can be discovered across any relevant
+scope, or a discovered command requires an environment/dependency that
+is not available (e.g. a database, external service, or credential),
+mark that check as `BLOCKED` and state the specific reason, including
+which scope(s) were inspected. Do not skip -- a `BLOCKED` result in the
+report is informative; a missing result is not.
 
 ### Environment-mutation safety
 
@@ -613,7 +744,7 @@ Or, if none applied: "N/A -- no lens applied."
 
 ## Commands Executed and Outcomes
 
-- `<discovered command>`: PASS / FAIL / BLOCKED -- <reason if not PASS>
+- `<discovered command>` (scope: `<scope directory relative to $CE_WORKTREE, or "." for the root>`): PASS / FAIL / BLOCKED -- <reason if not PASS>
 
 ## Gaps and Blockers
 
@@ -690,6 +821,22 @@ command either way, that is entirely `/archive`'s own gate to decide:
   on `ce cleanup`. Never copy such artifacts into the original repository.
 - Do not hardcode verification commands to any specific stack (npm, Docker,
   Prisma, or otherwise) -- discover them from the repository itself.
+- Never declare a validation category (format/lint/typecheck/test/build)
+  unavailable or not applicable after inspecting only the worktree
+  root -- always find every scope the changed files touch (Step 8.1)
+  first, and confirm the category is undefined at all of them before
+  reporting it unavailable.
+- A nested scope's tooling may use a completely different package
+  manager/toolchain than the root -- never assume one scope's stack
+  applies to another; discover each scope's commands from that scope's
+  own manifests/task runners/CI config/docs only.
+- `AGENTS.md`/`README.md`/`CONTRIBUTING.md` are instruction evidence,
+  never a tooling/execution scope boundary -- a doc file in some
+  intermediate directory must never stop scope discovery (Step 8.1)
+  early or define a command's working directory; only a manifest, task
+  runner, or CI/build configuration does either of those.
+- Never run every discovered script in every scope "just in case" --
+  the smallest targeted set per scope, exactly as at the root.
 - Mutating database schema/data, infrastructure, external services, or
   developer configuration always requires either a proven disposable
   environment (established by concrete repo evidence, never inferred
