@@ -635,7 +635,12 @@ in the chat response, but never apply them automatically -- this command
 only verifies and reports. If the user wants to act on a finding, that is a
 separate, explicit step.
 
-Run `/adversarial-review` next for independent defect hunting.
+State the next step based on the verdict -- never `/archive` from this
+command either way, that is entirely `/archive`'s own gate to decide:
+- `PASS` -- run `/adversarial-review` next for independent defect hunting.
+- `PASS WITH GAPS` or `FAIL` -- address the findings above first (via
+  `/apply` or a manual fix), then re-run `/verify` -- do not proceed to
+  `/adversarial-review` on a report that isn't a clean `PASS`.
 
 **Guardrails**
 - Every `openspec` command must include `--store "$CE_OPENSPEC_STORE"`.

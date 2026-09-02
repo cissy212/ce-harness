@@ -700,6 +700,21 @@ in the chat response, but never apply them automatically -- this command
 only reviews and reports. If the user wants to act on a finding, that is a
 separate, explicit step.
 
+State the next step based on the verdict -- never assert `/archive` is
+ready from this command's verdict alone; that is entirely `/archive`'s
+own gate to decide, since it also requires `/verify`'s most recent
+report to be a fresh, clean `PASS`:
+- `PASS WITH GAPS` or `FAIL` -- the findings above need addressing (via
+  `/apply` or a manual fix) before this change can be archived. Once
+  fixed, re-run `/verify` next -- not `/archive`, and not another
+  `/adversarial-review` first -- since the implementation will have
+  changed and any existing verify evidence would be stale.
+- `PASS` (adversarial) -- if `/verify`'s most recent report is also a
+  clean, fresh `PASS`, `/archive` is available next; if not, or you are
+  unsure, run `/verify` first. Either way, `/archive`'s own gate checks
+  this itself -- this command only ever suggests, never guarantees, that
+  archiving will succeed.
+
 **Guardrails**
 - Every `openspec` command must include `--store "$CE_OPENSPEC_STORE"`.
 - Never assume repo-local `openspec/` paths -- always resolve

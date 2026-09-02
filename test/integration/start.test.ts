@@ -2124,6 +2124,26 @@ describe("ce start (integration)", () => {
         /revise the `done` artifacts it affects instead of skipping them for being `done` already/,
       );
     });
+
+    it("states that realigning artifacts on an already-implemented change invalidates existing verify/adversarial-review evidence, and never suggests /archive", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      const guardrailsSection = content.slice(content.indexOf("**Guardrails**"));
+      expect(guardrailsSection).toMatch(
+        /Realigning `proposal\.md`\/`design\.md`\/`tasks\.md`\/specs on an already-implemented change always invalidates any existing `\/verify`\/`\/adversarial-review` evidence/,
+      );
+      expect(guardrailsSection).toMatch(
+        /never suggest `\/archive` as a consequence of this command; the next step after realigned tasks are implemented is always `\/verify`/,
+      );
+      // The Output section (what /propose actually tells the user to run
+      // next) never mentions /archive at all -- only the Guardrails
+      // bullet above names it, to explicitly forbid suggesting it.
+      const outputSection = content.slice(content.indexOf("**Output**"), content.indexOf("**Artifact Creation Guidelines**"));
+      expect(outputSection).not.toMatch(/\/archive/);
+      expect(outputSection).toMatch(/Run `\/apply` to start implementing/);
+    });
   });
 
   describe("/apply command template", () => {
@@ -2193,7 +2213,7 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/6\. \*\*Implement tasks \(loop until done or blocked\)\*\*/);
       expect(content).toMatch(/Mark task complete in the tasks file: `- \[ \]` → `- \[x\]`/);
       expect(content).toMatch(/If `state: "blocked"` \(missing artifacts\)/);
-      expect(content).toMatch(/If `state: "all_done"`: congratulate, suggest archive/);
+      expect(content).toMatch(/If `state: "all_done"`: congratulate, suggest `\/verify` next/);
       expect(content).toMatch(/Pause if:/);
       expect(content).toMatch(/Task is unclear/);
       expect(content).toMatch(/Error or blocker encountered/);
@@ -2329,6 +2349,71 @@ describe("ce start (integration)", () => {
       const guardrailsSection = content.slice(content.indexOf("**Guardrails**"), content.indexOf("**Fluid Workflow Integration**"));
       expect(guardrailsSection).toMatch(/Never implement against a known-stale agreed contract/);
       expect(guardrailsSection).toMatch(/recommend `\/enrich` then `\/propose` to realign the artifacts/);
+    });
+
+    describe("completion always points to /verify next, never /archive", () => {
+      it("the all_done state-handling instruction says /verify, never archive", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        expect(content).toMatch(
+          /If `state: "all_done"`: congratulate, suggest `\/verify` next -- never `\/archive` directly/,
+        );
+      });
+
+      it("step 7's completion summary says /verify, never archive", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        expect(content).toMatch(
+          /If all done: suggest `\/verify` next, never `\/archive`/,
+        );
+      });
+
+      it("the Output On Completion template says /verify, never offers to archive directly", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        const outputOnCompletion = content.slice(
+          content.indexOf("**Output On Completion**"),
+          content.indexOf("**Output On Pause"),
+        );
+        expect(outputOnCompletion).toMatch(/All tasks complete! Run `\/verify` next/);
+        expect(outputOnCompletion).toMatch(
+          /`\/archive` isn't available yet: it requires a fresh, clean `PASS` from\s*\nboth `\/verify` and `\/adversarial-review`/,
+        );
+      });
+
+      it("the Guardrails section states this applies for any reason implementation completed, including a post-realignment resume or an adversarial-review fix", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        const guardrailsSection = content.slice(content.indexOf("**Guardrails**"), content.indexOf("**Fluid Workflow Integration**"));
+        expect(guardrailsSection).toMatch(/Never suggest `\/archive` as the next step, for any reason/);
+        expect(guardrailsSection).toMatch(
+          /whether from the normal task list, after realigning artifacts, or after fixing an adversarial-review finding/,
+        );
+      });
+
+      it("no completion or state-handling path in this file ever tells the user to run /archive", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        // "/archive" as an actual suggested command never appears --
+        // only ever named to explicitly forbid suggesting it.
+        const archiveMentions = content.match(/`\/archive`/g) ?? [];
+        for (const mention of archiveMentions) {
+          const idx = content.indexOf(mention);
+          const surrounding = content.slice(Math.max(0, idx - 40), idx);
+          expect(surrounding).toMatch(/never|isn't available/i);
+        }
+        expect(archiveMentions.length).toBeGreaterThan(0);
+      });
     });
   });
 
@@ -3473,6 +3558,54 @@ describe("ce start (integration)", () => {
         );
       });
     });
+
+    describe("next-step guidance is conditional on the verdict, and never suggests /archive", () => {
+      const readVerify = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+      };
+
+      it("a clean PASS recommends /adversarial-review next", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`PASS` -- run `\/adversarial-review` next for independent defect hunting\./,
+        );
+      });
+
+      it("PASS WITH GAPS or FAIL recommends fixing findings and re-running /verify, never proceeding to /adversarial-review or /archive", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`PASS WITH GAPS` or `FAIL` -- address the findings above first \(via\s*`\/apply` or a manual fix\), then re-run `\/verify` -- do not proceed to\s*`\/adversarial-review` on a report that isn't a clean `PASS`\./,
+        );
+      });
+
+      it("never suggests /archive from this command, deferring entirely to /archive's own gate", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /never `\/archive` from this\s*command either way, that is entirely `\/archive`'s own gate to decide/,
+        );
+        // "/archive" as an actual suggested command never appears in
+        // Report back -- only ever named to explain it's out of scope.
+        const reportBack = content.slice(
+          content.indexOf("## 10. Report back"),
+          content.indexOf("**Guardrails**"),
+        );
+        const archiveMentions = reportBack.match(/`\/archive`/g) ?? [];
+        expect(archiveMentions.length).toBeGreaterThan(0);
+        for (const mention of archiveMentions) {
+          const idx = reportBack.indexOf(mention);
+          const surrounding = reportBack.slice(Math.max(0, idx - 30), idx);
+          expect(surrounding).toMatch(/never/i);
+        }
+      });
+    });
   });
 
   describe("/adversarial-review command template", () => {
@@ -4265,6 +4398,45 @@ describe("ce start (integration)", () => {
         expect(normalized).toMatch(
           /so never rename it, reformat it, or leave more\s*than one token on it\./,
         );
+      });
+    });
+
+    describe("next-step guidance is conditional on the verdict, and never asserts /archive is ready on its own", () => {
+      const readAdversarialReview = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8");
+      };
+
+      it("FAIL or PASS WITH GAPS recommends fixing findings then re-running /verify -- not /archive, and not another /adversarial-review first", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`PASS WITH GAPS` or `FAIL` -- the findings above need addressing \(via\s*`\/apply` or a manual fix\) before this change can be archived\. Once\s*fixed, re-run `\/verify` next -- not `\/archive`, and not another\s*`\/adversarial-review` first -- since the implementation will have\s*changed and any existing verify evidence would be stale\./,
+        );
+      });
+
+      it("a clean PASS recommends /archive only conditionally, on /verify's own report also being fresh and clean", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`PASS` \(adversarial\) -- if `\/verify`'s most recent report is also a\s*clean, fresh `PASS`, `\/archive` is available next; if not, or you are\s*unsure, run `\/verify` first\./,
+        );
+        expect(normalized).toMatch(
+          /this command only ever suggests, never guarantees, that\s*archiving will succeed/,
+        );
+      });
+
+      it('previously had no next-step guidance at all -- confirms the "Report back" section now states one explicitly', async () => {
+        const content = await readAdversarialReview();
+
+        const reportBack = content.slice(
+          content.indexOf("## 10. Report back"),
+          content.indexOf("**Guardrails**"),
+        );
+        expect(reportBack).toMatch(/State the next step based on the verdict/);
       });
     });
   });
