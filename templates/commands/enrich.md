@@ -20,10 +20,31 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
 ## 1. Select the change
 
-If a name is provided, use it. Otherwise:
-- Infer from conversation context if the user mentioned a change
-- Auto-select if only one active change exists
-- If ambiguous, run `openspec list --store "$CE_OPENSPEC_STORE" --json` to get available changes and use the **AskUserQuestion tool** to let the user select
+- If a name is provided, use it and skip straight to step 2.
+- Otherwise, **prefer this exact workspace's own already-associated
+  active change over any project-wide discovery** -- never re-ask or
+  re-select something the harness already knows:
+  ```bash
+  ce status "$CE_PROJECT/$CE_ISSUE"
+  ```
+  Read its `Active change:` line(s) -- narrowed to the change(s)
+  durably associated with *this exact workspace* (via its
+  `.ce-workspace.yml` ownership sidecar), never a change belonging to a
+  different preserved workspace even when the project has several
+  active at once (e.g. multiple workspaces for the same project, each
+  with its own change).
+  - **Exactly one line, with a real name** -- use it automatically. Do
+    not ask the user anything.
+  - **More than one line** (rare -- this workspace has several of its
+    own active changes) -- list them and use the **AskUserQuestion
+    tool** to let the user pick, rather than guessing.
+  - **`Active change:    (none)`** -- this workspace has no associated
+    active change recorded. Only now fall back to broader,
+    project-wide discovery, for backward compatibility with a change
+    that predates the ownership sidecar:
+    - Infer from conversation context if the user mentioned a change
+    - Auto-select if only one active change exists (`openspec list --store "$CE_OPENSPEC_STORE" --json`)
+    - If still ambiguous, use the **AskUserQuestion tool** to let the user select
 
 Always announce: "Using change: <name>" and how to override (e.g., `/enrich <other>`).
 
@@ -260,6 +281,12 @@ agreed contract, rather than a change only the conversation remembers.
 
 ## Never
 
+- Never select a change via project-wide discovery (`openspec list`)
+  before checking `ce status "$CE_PROJECT/$CE_ISSUE"` (step 1) for this
+  exact workspace's own already-associated active change -- and never
+  ask the user to pick when it reports exactly one. Project-wide
+  discovery is a backward-compatibility fallback only, for a change
+  that predates the ownership sidecar.
 - Never skip step 9 (recording provenance) -- write/refresh
   `.ce-provenance-enrich.yml` every time `enrich.md` is written, never
   only on first creation.

@@ -1930,6 +1930,41 @@ describe("ce start (integration)", () => {
       );
       expect(content).toMatch(/to realign `proposal\.md`\/`design\.md`\/`tasks\.md`/);
     });
+
+    describe("selecting the change: prefers this workspace's own active change over project-wide discovery", () => {
+      it("checks `ce status \"$CE_PROJECT/$CE_ISSUE\"` before falling back to project-wide openspec list discovery", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+        expect(content).toMatch(/ce status "\$CE_PROJECT\/\$CE_ISSUE"/);
+        const checkIdx = content.indexOf('ce status "$CE_PROJECT/$CE_ISSUE"');
+        const fallbackIdx = content.indexOf("Only now fall back to");
+        expect(checkIdx).toBeGreaterThan(-1);
+        expect(fallbackIdx).toBeGreaterThan(-1);
+        expect(checkIdx).toBeLessThan(fallbackIdx);
+      });
+
+      it("auto-uses a sole workspace-associated active change without asking, and only falls back to legacy discovery when ce status reports none", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+        expect(content).toMatch(/Exactly one line, with a real name\*\* -- use it automatically/);
+        expect(content).toMatch(/Do\s+not ask the user anything/);
+        expect(content).toMatch(/`Active change:\s+\(none\)`\*\* -- this workspace has no/);
+      });
+
+      it("states the guardrail explicitly: never use project-wide discovery before checking ce status for this workspace's own change", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+
+        expect(content).toMatch(
+          /Never select a change via project-wide discovery \(`openspec list`\)\s+before checking `ce status "\$CE_PROJECT\/\$CE_ISSUE"`/,
+        );
+      });
+    });
   });
 
   describe("/propose command template", () => {
@@ -1990,6 +2025,57 @@ describe("ce start (integration)", () => {
       expect(content).not.toMatch(/openspec store list --json/i);
     });
 
+    describe("resolving the change name (real #138 smoke bug: asked to re-describe/re-select an already-associated change)", () => {
+      it("checks this workspace's own active change via `ce status \"$CE_PROJECT/$CE_ISSUE\"` before ever asking the user", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+        expect(content).toMatch(/ce status "\$CE_PROJECT\/\$CE_ISSUE"/);
+        // The check must come textually before the AskUserQuestion prompt.
+        const checkIdx = content.indexOf('ce status "$CE_PROJECT/$CE_ISSUE"');
+        const askIdx = content.indexOf("What change do you want to work on?");
+        expect(checkIdx).toBeGreaterThan(-1);
+        expect(askIdx).toBeGreaterThan(-1);
+        expect(checkIdx).toBeLessThan(askIdx);
+      });
+
+      it("auto-uses a sole already-associated active change without asking, and only asks when ce status reports none", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+        expect(content).toMatch(
+          /Exactly one `Active change:` line, with a real name\*\* -- use\s+it automatically/,
+        );
+        expect(content).toMatch(/Do not ask the user\s+anything at this point/);
+        expect(content).toMatch(/`Active change:\s+\(none\)`\*\* -- there is genuinely no change/);
+      });
+
+      it("never re-ask about a name/change the harness already resolved automatically -- the 'already exists' guardrail is scoped to explicit user input only", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+        expect(content).toMatch(
+          /If the user \*explicitly\* typed a name[\s\S]{0,400}does \*\*not\*\* apply to step 1's auto-resolved case/,
+        );
+        expect(content).toMatch(
+          /that case is always "continue it," never re-asked/,
+        );
+      });
+
+      it("states the guardrail explicitly: never ask what to build without first checking ce status for an associated change", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+        expect(content).toMatch(
+          /Never ask the user what to build \(step 1\) without first checking `ce status "\$CE_PROJECT\/\$CE_ISSUE"`/,
+        );
+      });
+    });
+
     it("preserves the upstream artifact dependency loop and applyRequires handling", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
@@ -2007,12 +2093,12 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/Stop when all `applyRequires` artifacts are done/);
     });
 
-    it("preserves the upstream numbered Steps structure (1-4) unchanged in shape, plus the later-added provenance-recording and final-status steps (5-6)", async () => {
+    it("preserves the upstream numbered Steps structure (2-4) unchanged in shape, plus step 1's now-broader change-resolution logic and the later-added provenance-recording and final-status steps (5-6)", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
 
-      expect(content).toMatch(/1\. \*\*If no input provided, ask what they want to build\*\*/);
+      expect(content).toMatch(/1\. \*\*Resolve the change name: explicit input, else this workspace's own active change, else ask\*\*/);
       expect(content).toMatch(/2\. \*\*Create the change directory\*\*/);
       expect(content).toMatch(/3\. \*\*Get the artifact build order\*\*/);
       expect(content).toMatch(/4\. \*\*Create artifacts in sequence until apply-ready\*\*/);
@@ -2445,6 +2531,41 @@ describe("ce start (integration)", () => {
           expect(surrounding).toMatch(/never|isn't available/i);
         }
         expect(archiveMentions.length).toBeGreaterThan(0);
+      });
+    });
+
+    describe("selecting the change: prefers this workspace's own active change over project-wide discovery", () => {
+      it("checks `ce status \"$CE_PROJECT/$CE_ISSUE\"` before falling back to project-wide openspec list discovery", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        expect(content).toMatch(/ce status "\$CE_PROJECT\/\$CE_ISSUE"/);
+        const checkIdx = content.indexOf('ce status "$CE_PROJECT/$CE_ISSUE"');
+        const fallbackIdx = content.indexOf("Only now fall back to");
+        expect(checkIdx).toBeGreaterThan(-1);
+        expect(fallbackIdx).toBeGreaterThan(-1);
+        expect(checkIdx).toBeLessThan(fallbackIdx);
+      });
+
+      it("auto-uses a sole workspace-associated active change without asking, and only falls back to legacy discovery when ce status reports none", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        expect(content).toMatch(/Exactly one line, with a real name\*\* -- use it automatically/);
+        expect(content).toMatch(/Do\s+not ask the user anything/);
+        expect(content).toMatch(/`Active change:\s+\(none\)`\*\* -- this workspace has no/);
+      });
+
+      it("states the guardrail explicitly: never use project-wide discovery before checking ce status for this workspace's own change", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        expect(content).toMatch(
+          /Never select a change via project-wide discovery \(`openspec list`\) before checking `ce status "\$CE_PROJECT\/\$CE_ISSUE"`/,
+        );
       });
     });
   });

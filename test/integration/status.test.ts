@@ -699,6 +699,49 @@ describe("ce status (integration)", () => {
       expect(output).toMatch(/explore fresh \(as of 2026-09-01\)/);
       expect(output).toMatch(/propose stale \(repo changed since 2026-08-15\)/);
     });
+
+    it("real #138 smoke scenario: ce status \"$CE_PROJECT/$CE_ISSUE\" (the exact invocation /propose now uses) auto-resolves the workspace's own active change AND surfaces its legacy/unknown explore provenance, in one call, with no interaction needed", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const project = basenameOf(repoDir);
+
+      // Exactly what /propose (step 3) and /explore (step 8) already
+      // produce for a real change: an ownership-tagged change with an
+      // explore.md that predates provenance tracking (no sidecar at
+      // all) -- the exact #138 smoke state.
+      const changeDir = join(root, "openspec", "changes", "consolidate-drawer-base-component");
+      await mkdir(changeDir, { recursive: true });
+      await writeFile(
+        join(changeDir, ".ce-workspace.yml"),
+        `project: "${project}"\nissue: "issue-1"\n`,
+        "utf8",
+      );
+      await writeFile(join(changeDir, "explore.md"), "findings\n", "utf8");
+      await writeFile(join(changeDir, "enrich.md"), "**Status:** ready\n", "utf8");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      logSpy.mockClear();
+      // The exact command propose.md's step 1 now runs, using
+      // $CE_PROJECT/$CE_ISSUE (here: workspace.project/workspace.issue,
+      // the same raw values CE_PROJECT/CE_ISSUE are set to).
+      await statusCommand({ workspace: `${workspace.project}/${workspace.issue}` });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      // 1. The change name is resolved automatically -- no ambiguity,
+      //    nothing for an agent to ask the user about.
+      expect(output).toMatch(/Active change:\s+consolidate-drawer-base-component/);
+      // 2 & 3. Its explore provenance is unknown (legacy) and the exact
+      //    corrective action is named -- everything /propose's gate
+      //    needs to stop and direct the user to /explore, without a
+      //    second round-trip.
+      expect(output).toMatch(/Provenance:\s+explore unknown \(no provenance recorded -- legacy\) -- rerun \/explore/);
+    });
   });
 
   describe("workspace -> active change association", () => {
@@ -749,6 +792,46 @@ describe("ce status (integration)", () => {
       await statusCommand({ workspace: `${project}/issue-143` });
       output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+add-billing-export/);
+      expect(output).not.toMatch(/fix-contact-empty-state/);
+    });
+
+    it("three preserved workspaces (mirroring real #130/#143/#138), each with its own tagged active change: ce status for one never leaks another's -- exactly the command /enrich, /propose, and /apply now run", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      await startCommand({ repo: repoDir, issue: "issue-143" });
+      await startCommand({ repo: repoDir, issue: "issue-138" });
+      const project = basenameOf(repoDir);
+      const root = await trustedRootFor(project, "issue-130");
+      await tagChange(root, "fix-contact-empty-state", project, "issue-130");
+      await tagChange(root, "add-billing-export", project, "issue-143");
+      await tagChange(root, "consolidate-drawer-base-component", project, "issue-138");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      // The exact invocation the fixed templates now run:
+      // `ce status "$CE_PROJECT/$CE_ISSUE"`.
+      logSpy.mockClear();
+      await statusCommand({ workspace: `${project}/issue-138` });
+      let output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+consolidate-drawer-base-component/);
+      expect(output).not.toMatch(/fix-contact-empty-state/);
+      expect(output).not.toMatch(/add-billing-export/);
+
+      logSpy.mockClear();
+      await statusCommand({ workspace: `${project}/issue-130` });
+      output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+fix-contact-empty-state/);
+      expect(output).not.toMatch(/consolidate-drawer-base-component/);
+      expect(output).not.toMatch(/add-billing-export/);
+
+      logSpy.mockClear();
+      await statusCommand({ workspace: `${project}/issue-143` });
+      output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+add-billing-export/);
+      expect(output).not.toMatch(/consolidate-drawer-base-component/);
       expect(output).not.toMatch(/fix-contact-empty-state/);
     });
 

@@ -18,18 +18,44 @@ store. If `CE_OPENSPEC_STORE` is empty or unset, stop and tell the user to run
 `ce start` first -- there is no store to work with. Every `openspec` command
 below includes `--store "$CE_OPENSPEC_STORE"`.
 
-**Input**: The argument after `/propose` is the change name (kebab-case), OR a description of what the user wants to build.
+**Input**: The argument after `/propose` is the change name (kebab-case), OR a description of what the user wants to build. If omitted, this workspace's already-associated active change (if any) is resolved and used automatically -- see step 1.
 
 **Steps**
 
-1. **If no input provided, ask what they want to build**
+1. **Resolve the change name: explicit input, else this workspace's own active change, else ask**
 
-   Use the **AskUserQuestion tool** (open-ended, no preset options) to ask:
-   > "What change do you want to work on? Describe what you want to build or fix."
+   - If a name or description was given as input, derive/use a
+     kebab-case name from it (e.g., "add user authentication" →
+     `add-user-auth`) and continue to step 2.
+   - Otherwise, check whether this exact workspace already has an
+     active change associated with it -- never guess, and never ask the
+     user to re-describe or re-select something the harness already
+     knows:
+     ```bash
+     ce status "$CE_PROJECT/$CE_ISSUE"
+     ```
+     Read its `Active change:` line(s). `ce status` already narrows
+     these to the change(s) `/propose` itself durably associated with
+     *this exact workspace* (via the `.ce-workspace.yml` ownership
+     sidecar it writes in step 3 below), never a change belonging to a
+     different workspace even when the project has several active at
+     once.
+     - **Exactly one `Active change:` line, with a real name** -- use
+       it automatically. Continue to step 2 treating it as an existing
+       change (step 2's create-if-missing call already reuses an
+       existing change by that name unchanged). Do not ask the user
+       anything at this point.
+     - **`Active change:    (none)`** -- there is genuinely no change
+       for this workspace yet. Use the **AskUserQuestion tool**
+       (open-ended, no preset options) to ask:
+       > "What change do you want to work on? Describe what you want to build or fix."
+       From their description, derive a kebab-case name.
+     - **More than one `Active change:` line** (rare -- this workspace
+       has several of its own active changes already) -- list them and
+       use the **AskUserQuestion tool** to let the user pick, rather
+       than guessing.
 
-   From their description, derive a kebab-case name (e.g., "add user authentication" → `add-user-auth`).
-
-   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
+   **IMPORTANT**: Do NOT proceed without a resolved change name.
 
 2. **Create the change directory**
    ```bash
@@ -233,6 +259,7 @@ Next: /apply
   - These guide what you write, but should never appear in the output
 
 **Guardrails**
+- Never ask the user what to build (step 1) without first checking `ce status "$CE_PROJECT/$CE_ISSUE"` for an already-associated active change -- if it reports exactly one, use it automatically and never re-ask the user to describe or select something the harness already knows.
 - Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
 - Always read dependency artifacts before creating a new one
 - Always write/refresh `<changeRoot>/.ce-workspace.yml` right after resolving `changeRoot` in step 3, recording `$CE_PROJECT`/`$CE_ISSUE` -- it is never one of the schema artifacts, never a dependency, and never mentioned in this command's output
@@ -245,7 +272,7 @@ Next: /apply
 - Realigning `proposal.md`/`design.md`/`tasks.md`/specs on an already-implemented change always invalidates any existing `/verify`/`/adversarial-review` evidence for it -- never suggest `/archive` as a consequence of this command; the next step after realigned tasks are implemented is always `/verify` (see `/apply`'s own completion guidance)
 - Each task in `tasks.md` has one clear, independently verifiable success criterion; split a task that bundles independently completable responsibilities -- judge this semantically (separately checkable outcomes), never mechanically (never split solely because a sentence contains "and")
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
-- If a change with that name already exists, ask if user wants to continue it or create a new one
+- If the user *explicitly* typed a name (step 1's first bullet) that happens to already exist, ask whether they want to continue it or create a new one -- this does **not** apply to step 1's auto-resolved case (this workspace's own already-associated active change): that case is always "continue it," never re-asked
 - Verify each artifact file exists after writing before proceeding to next
 - Every `openspec` command must include `--store "$CE_OPENSPEC_STORE"`
 - Never create `openspec/`, `.opencode/`, or any other harness/config file or directory inside the target repository or its Git worktree -- all artifacts belong only in the external store at `$CE_OPENSPEC_STORE`
