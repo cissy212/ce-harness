@@ -374,11 +374,24 @@ export async function pushBranch(
  * worktree, not a case to silently paper over).
  */
 export async function computeWorktreeFingerprint(repoPath: string): Promise<string> {
-  const head = await git(repoPath, ["rev-parse", "HEAD"]);
+  // Deliberately bypasses the shared `git()` helper for these two calls:
+  // it (via execa's default `stripFinalNewline: true`) strips the
+  // trailing newline every git command's stdout naturally ends with,
+  // which every *other* caller in this file wants (they immediately
+  // `.trim()` anyway) -- but this function's whole purpose is to be
+  // byte-for-byte identical to the raw shell pipeline `/verify`'s,
+  // `/explore`'s, `/enrich`'s, and `/propose`'s own embedded bash
+  // snippets pipe directly into `sha256sum` (`git rev-parse HEAD | ...`,
+  // never through anything that strips a trailing newline). Losing that
+  // one byte here would silently diverge the two implementations'
+  // fingerprints for otherwise-identical worktree state -- exactly the
+  // kind of drift `test/unit/provenanceTracking.test.ts` and
+  // `test/unit/verificationFreshness.test.ts` cross-check for.
+  const head = await execa("git", ["rev-parse", "HEAD"], { cwd: repoPath, reject: false, stripFinalNewline: false });
   if (head.exitCode !== 0) {
     throw new CeError(`Could not resolve HEAD in "${repoPath}" to compute its fingerprint: ${head.stderr.trim()}`);
   }
-  const diff = await git(repoPath, ["diff", "HEAD"]);
+  const diff = await execa("git", ["diff", "HEAD"], { cwd: repoPath, reject: false, stripFinalNewline: false });
   if (diff.exitCode !== 0) {
     throw new CeError(
       `Could not compute the working-tree diff against HEAD in "${repoPath}" to compute its fingerprint: ${diff.stderr.trim()}`,

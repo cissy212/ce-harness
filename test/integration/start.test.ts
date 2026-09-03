@@ -2007,7 +2007,7 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/Stop when all `applyRequires` artifacts are done/);
     });
 
-    it("preserves the upstream numbered Steps structure (1-5) unchanged in shape", async () => {
+    it("preserves the upstream numbered Steps structure (1-4) unchanged in shape, plus the later-added provenance-recording and final-status steps (5-6)", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
@@ -2016,7 +2016,8 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/2\. \*\*Create the change directory\*\*/);
       expect(content).toMatch(/3\. \*\*Get the artifact build order\*\*/);
       expect(content).toMatch(/4\. \*\*Create artifacts in sequence until apply-ready\*\*/);
-      expect(content).toMatch(/5\. \*\*Show final status\*\*/);
+      expect(content).toMatch(/5\. \*\*Record provenance\*\*/);
+      expect(content).toMatch(/6\. \*\*Show final status\*\*/);
     });
 
     it("explicitly forbids product-code changes and repo-local openspec/ or harness artifacts", async () => {
@@ -2037,7 +2038,7 @@ describe("ce start (integration)", () => {
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
 
-      expect(content).toMatch(/check for `<changeRoot>\/enrich\.md`/);
+      expect(content).toMatch(/check for `<changeRoot>\/explore\.md` and `<changeRoot>\/enrich\.md`/);
       expect(content).toMatch(/`ready` -- continue to step 4\./);
       expect(content).toMatch(
         /Treat its Clarified Intent,\s*\n\s*Confirmed Acceptance Criteria, Assumptions, Constraints, Edge\s*\n\s*Cases\/Error Cases, Conflicts Identified, and Relevant Current\/Prior\s*\n\s*Context as requirement input/,
@@ -2064,7 +2065,7 @@ describe("ce start (integration)", () => {
       const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
 
       expect(content).toMatch(
-        /If it doesn't exist, proceed without\s*\n\s*it -- `\/propose` must keep working standalone, without a prior\s*\n\s*`\/enrich` run\./,
+        /If a file doesn't exist at all,\s*\n\s*proceed without it for that one -- `\/propose` must keep working\s*\n\s*standalone, without a prior `\/explore` or `\/enrich` run\./,
       );
       expect(content).not.toMatch(/enrich\.md.{0,80}\brequired\b/is);
     });
@@ -2084,7 +2085,7 @@ describe("ce start (integration)", () => {
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
 
-      expect(content).toMatch(/Use\s*\n\s*it for context, not as content to copy/);
+      expect(content).toMatch(/use\s+it for context, not as content to copy/);
     });
 
     it("carries no leading HTML comment or trailing provenance essay (provenance lives in THIRD_PARTY_NOTICES.md)", async () => {
@@ -2252,7 +2253,7 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/contextFiles/);
     });
 
-    it("preserves the upstream numbered Steps structure (1-7) unchanged in shape", async () => {
+    it("preserves the upstream numbered Steps structure (1-7) unchanged in shape, with step 4 now also gating on plan freshness before reading context files", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
@@ -2260,7 +2261,8 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/1\. \*\*Select the change\*\*/);
       expect(content).toMatch(/2\. \*\*Check status to understand the schema\*\*/);
       expect(content).toMatch(/3\. \*\*Get apply instructions\*\*/);
-      expect(content).toMatch(/4\. \*\*Read context files\*\*/);
+      expect(content).toMatch(/4\. \*\*Gate on the plan's freshness before reading anything, or implementing\*\*/);
+      expect(content).toMatch(/\*\*read context\s+files\*\*/);
       expect(content).toMatch(/5\. \*\*Show current progress\*\*/);
       expect(content).toMatch(/6\. \*\*Implement tasks \(loop until done or blocked\)\*\*/);
       expect(content).toMatch(/7\. \*\*On completion or pause, show status\*\*/);

@@ -60,28 +60,46 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    never read it, never treat it as a dependency, and never mention it
    in this command's output.
 
-   Also check for `<changeRoot>/explore.md` (resolve `changeRoot` from
-   this same JSON, never construct it by hand). If present, read it now
-   -- it carries `/explore`'s system/context findings for this change.
-   It is **not** one of the `artifacts` listed above and is never part
-   of `applyRequires`, so never treat it as a dependency to satisfy or a
-   file to write/modify -- it is read-only context, exactly like a
-   `dependencies` file, just outside OpenSpec's own artifact graph. Use
-   it for context, not as content to copy -- translate only what each
-   artifact needs, the same as `enrich.md` below. If it doesn't exist,
-   proceed without it -- `/propose` must work standalone, without a
-   prior `/explore` run.
+   Also check for `<changeRoot>/explore.md` and `<changeRoot>/enrich.md`
+   (resolve `changeRoot` from this same JSON, never construct it by
+   hand). Neither is one of the `artifacts` listed above, neither is
+   ever part of `applyRequires`, and this command never writes or
+   modifies either -- read-only context/requirement input, outside
+   OpenSpec's own artifact graph. If a file doesn't exist at all,
+   proceed without it for that one -- `/propose` must keep working
+   standalone, without a prior `/explore` or `/enrich` run.
 
-   Also check for `<changeRoot>/enrich.md`. If present, read it now --
-   it carries `/enrich`'s confirmed requirement understanding for this
-   change. Like `explore.md`, it is **not** one of the `artifacts`
-   listed above, is never part of `applyRequires`, and this command
-   never writes or modifies it -- read-only requirement input, outside
-   OpenSpec's own artifact graph. If it doesn't exist, proceed without
-   it -- `/propose` must keep working standalone, without a prior
-   `/enrich` run.
+   **Before reading either one, gate on its freshness -- stop at the
+   earliest invalid stage.** Using their provenance sidecars (written by
+   `/explore` and `/enrich` respectively):
+   ```bash
+   CURRENT_FINGERPRINT=$({
+     git -C "$CE_WORKTREE" rev-parse HEAD
+     git -C "$CE_WORKTREE" diff HEAD
+     git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+   } | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12)
+   cat "<changeRoot>/.ce-provenance-explore.yml" 2>/dev/null
+   cat "<changeRoot>/.ce-provenance-enrich.yml" 2>/dev/null
+   ```
+   - If `explore.md` exists and its sidecar is either missing (a legacy
+     `explore.md` that predates provenance tracking -- **never treat
+     this as fresh**) or its `fingerprint:` differs from
+     `$CURRENT_FINGERPRINT` (stale): **stop.** Do not read `explore.md`,
+     do not create or update any artifact. Tell the user `explore.md`'s
+     provenance is unknown/stale and **direct them to run `/explore`
+     again -- the earliest invalid stage -- then `/enrich` (if it had
+     already been run) and `/propose` again.**
+   - Otherwise, if `enrich.md` exists and its sidecar is either missing
+     or stale the same way: **stop.** Tell the user `enrich.md`'s
+     provenance is unknown/stale and **direct them to run `/enrich`
+     again, then `/propose` again.**
+   - Otherwise (each present file's provenance is fresh, or the file is
+     absent): read whichever of `explore.md`/`enrich.md` exist now, for
+     context -- use it for context, not as content to copy; translate
+     only what each artifact needs, never copy sections wholesale.
 
-   If `enrich.md` exists, check its `**Status:**` line:
+   If `enrich.md` exists (and passed the freshness gate above), check
+   its `**Status:**` line:
    - `needs-clarification` -- **stop here.** Do not create or write any
      artifact. Tell the user `/enrich` found unresolved questions on
      this change, list its Open Questions verbatim, and recommend
@@ -155,7 +173,31 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
       ```
       If validation fails, fix the artifacts (still only inside the store) and re-validate until it passes.
 
-5. **Show final status**
+5. **Record provenance**, once validation passes. `proposal.md`/
+   `design.md`/`tasks.md` are only as trustworthy as the worktree state
+   they were designed against -- record it now, the same way `/explore`
+   and `/enrich` record theirs, so a much later `/apply` run (this
+   durable store outlives any one workspace) can tell whether the plan
+   has gone stale:
+   ```bash
+   COMMIT=$(git -C "$CE_WORKTREE" rev-parse HEAD)
+   FINGERPRINT=$({
+     git -C "$CE_WORKTREE" rev-parse HEAD
+     git -C "$CE_WORKTREE" diff HEAD
+     git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+   } | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12)
+   RECORDED_AT=$(date -u +%Y-%m-%d)
+   printf 'commit: "%s"\nfingerprint: "%s"\nrecordedAt: "%s"\n' "$COMMIT" "$FINGERPRINT" "$RECORDED_AT" \
+     > "<changeRoot>/.ce-provenance-propose.yml"
+   ```
+   A small, ce-harness-owned sidecar -- never one of the `artifacts`
+   OpenSpec tracks, never part of `applyRequires`, and never mentioned
+   in this command's own output. Write/refresh it unconditionally,
+   including when this run only revised existing artifacts rather than
+   creating them fresh -- the recorded state must always reflect the
+   worktree as of the *most recent* `/propose` run.
+
+6. **Show final status**
    ```bash
    openspec status --change "<name>" --store "$CE_OPENSPEC_STORE"
    ```
@@ -196,6 +238,8 @@ Next: /apply
 - Always write/refresh `<changeRoot>/.ce-workspace.yml` right after resolving `changeRoot` in step 3, recording `$CE_PROJECT`/`$CE_ISSUE` -- it is never one of the schema artifacts, never a dependency, and never mentioned in this command's output
 - If `<changeRoot>/explore.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it
 - If `<changeRoot>/enrich.md` exists, read it for context before creating artifacts -- it is never one of the schema artifacts and this command never writes or modifies it. If its Status is `needs-clarification`, do not create any artifact; surface its Open Questions and stop instead
+- Check `explore.md`'s and `enrich.md`'s provenance sidecars before reading either (step 3) -- and never merely warn about a stale or unrecorded (legacy) result: **stop this command** at the earliest invalid one and direct the user to rerun it. A missing provenance sidecar is never treated as fresh.
+- Always write/refresh `<changeRoot>/.ce-provenance-propose.yml` after validation passes (step 5), including on a revision-only run -- never skip it just because artifacts already existed
 - Never copy `enrich.md`'s sections verbatim into `proposal.md`, `design.md`, or `tasks.md` -- translate only the requirement facts each artifact needs
 - If `enrich.md` documents a requirement change caught after implementation was already underway, revise the `done` artifacts it affects instead of skipping them for being `done` already; in `tasks.md`, preserve already-completed tasks that remain valid and touch only what the change affects -- never regenerate it wholesale
 - Realigning `proposal.md`/`design.md`/`tasks.md`/specs on an already-implemented change always invalidates any existing `/verify`/`/adversarial-review` evidence for it -- never suggest `/archive` as a consequence of this command; the next step after realigned tasks are implemented is always `/verify` (see `/apply`'s own completion guidance)

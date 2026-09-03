@@ -20,6 +20,7 @@ import {
   resolveActiveChangesForWorkspace,
   summarizeChangeArtifacts,
 } from "../core/activeChange.js";
+import { checkStaleness, formatProvenanceSummary, type ProvenanceStage } from "../core/provenance.js";
 import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
 import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
 import { filterHarnessManagedChanges } from "../core/worktreeArtifacts.js";
@@ -259,6 +260,34 @@ export async function statusCommand(options: StatusOptions = {}): Promise<void> 
       const summary = await summarizeChangeArtifacts(changeRoot);
       console.log(`Active change:    ${name}`);
       console.log(`  Artifacts:      ${formatArtifactChecklist(summary)}`);
+
+      // Provenance: whether each planning artifact still reflects the
+      // worktree's current state, for whichever of them are actually
+      // present. A stage with no recorded provenance (predates this
+      // mechanism) is shown as "unknown" -- exactly as prominently as
+      // "stale", never silently omitted -- since /enrich, /propose, and
+      // /apply all now hard-gate on that same distinction. The whole
+      // line is only omitted when no present stage has any provenance
+      // concept to report on at all (impossible today, since presence
+      // is exactly what gates whether a stage is checked -- kept as a
+      // defensive fallback, not a real code path).
+      const stagePresence: [ProvenanceStage, boolean][] = [
+        ["explore", summary.explore.present],
+        ["enrich", summary.enrich.present],
+        ["propose", summary.proposal.present],
+      ];
+      const provenanceEntries = await Promise.all(
+        stagePresence
+          .filter(([, present]) => present)
+          .map(async ([stage]) => ({
+            stage,
+            result: await checkStaleness(changeRoot, stage, workspace.worktreePath),
+          })),
+      );
+      const provenanceLine = formatProvenanceSummary(provenanceEntries);
+      if (provenanceLine) {
+        console.log(`  Provenance:     ${provenanceLine}`);
+      }
     }
     console.log(
       `View artifacts:   ce open --change${activeChanges.length > 1 ? " <name>" : ""}`,

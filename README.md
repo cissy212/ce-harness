@@ -632,6 +632,25 @@ default. Either way it reports:
   specific workspace when more than one exists for the project, falling
   back to every active change in the store for changes created before
   that association existed
+- **Provenance**, for whichever planning artifacts exist (`explore.md`,
+  `enrich.md`, and `/propose`'s `proposal.md`/`design.md`/`tasks.md`
+  together) — `fresh` if the worktree hasn't materially changed since
+  that stage last ran; `stale` (with the date it was recorded) or
+  `unknown` (no provenance recorded — a legacy artifact from before this
+  mechanism existed) otherwise, either way naming the command to rerun.
+  `ce status` itself is purely informational, but `/enrich`, `/propose`,
+  and `/apply` each **gate** on this before trusting a dependency they
+  read: the durable store outlives any one workspace, so a much later
+  run reusing it could otherwise silently implement against a plan
+  written against a codebase snapshot that no longer resembles the
+  current one. `/explore`, `/enrich`, and `/propose` each record their
+  own worktree fingerprint when they run (the same mechanism
+  `/verify`/`/adversarial-review`/`/archive` already use); the template
+  that would read a dependency checks it *before* reading it, and stops
+  — never merely warns — if it's stale or has no recorded provenance at
+  all, directing the user to rerun the invalid stage (and, for
+  `/propose`, whichever earlier stage is invalid first). A legacy
+  artifact with no sidecar is never treated as fresh.
 
 #### `ce cleanup [workspace] [--force]`
 

@@ -122,7 +122,35 @@ repository. A short, well-scoped `explore.md` is the goal -- a much
 longer file for a small issue is a sign the exploration wandered, not
 that more detail is better.
 
-## 8. Report back
+## 8. Record provenance
+
+`explore.md`'s findings are only as trustworthy as the worktree state
+they were drawn from -- and this durable store outlives any one
+workspace, so a much later `/enrich`/`/propose` run (reusing the same
+store, potentially long after this one) needs a way to tell whether the
+repository has materially changed since this file was written. Record
+that state now, the same worktree fingerprint `/verify` and
+`/adversarial-review` already compute (never infer the date from memory
+-- see below):
+
+```bash
+COMMIT=$(git -C "$CE_WORKTREE" rev-parse HEAD)
+FINGERPRINT=$({
+  git -C "$CE_WORKTREE" rev-parse HEAD
+  git -C "$CE_WORKTREE" diff HEAD
+  git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+} | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12)
+RECORDED_AT=$(date -u +%Y-%m-%d)
+printf 'commit: "%s"\nfingerprint: "%s"\nrecordedAt: "%s"\n' "$COMMIT" "$FINGERPRINT" "$RECORDED_AT" \
+  > "<changeRoot>/.ce-provenance-explore.yml"
+```
+
+This is a small sidecar file (not one of the `artifacts` OpenSpec
+tracks, and never part of `applyRequires`) -- never mentioned in this
+command's own output. Write/refresh it unconditionally after writing
+`explore.md`, even on a re-run.
+
+## 9. Report back
 
 Reply in the conversation (not only in the file) with a concise summary
 of:
@@ -138,6 +166,9 @@ directly) is the next step.
 
 ## Never
 
+- Never skip step 8 (recording provenance) -- write/refresh
+  `.ce-provenance-explore.yml` every time `explore.md` is written,
+  never only on first creation.
 - Never draft or write `proposal.md`, `design.md`, `tasks.md`, or any
   other OpenSpec-schema-tracked artifact -- creating and writing those
   is `/propose`'s responsibility, not this command's.

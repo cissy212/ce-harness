@@ -47,8 +47,35 @@ code is still valid once the requirement has moved.
 
 ## 4. Gather context
 
-- Read `<changeRoot>/explore.md` if present (read-only; this command
-  never modifies it) -- it carries `/explore`'s system/context findings.
+- **Before reading `<changeRoot>/explore.md`, gate on its freshness.**
+  If it exists, compute the worktree's current fingerprint and compare
+  it against its provenance sidecar
+  (`<changeRoot>/.ce-provenance-explore.yml`, written by `/explore`):
+  ```bash
+  CURRENT_FINGERPRINT=$({
+    git -C "$CE_WORKTREE" rev-parse HEAD
+    git -C "$CE_WORKTREE" diff HEAD
+    git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+  } | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12)
+  cat "<changeRoot>/.ce-provenance-explore.yml" 2>/dev/null
+  ```
+  - **No sidecar at all** (a legacy `explore.md` that predates
+    provenance tracking) -- **never treat this as fresh.** Stop this
+    command entirely: do not read `explore.md` for context, do not
+    write or update `enrich.md`. Tell the user `explore.md` has no
+    recorded provenance and may no longer reflect the current
+    repository, and **direct them to run `/explore` again, then
+    `/enrich` again.**
+  - **Sidecar exists but its `fingerprint:` differs from
+    `$CURRENT_FINGERPRINT`** (stale) -- same as above: stop, tell the
+    user `explore.md`'s provenance is stale (the repository has changed
+    since its recorded `recordedAt` date), and direct them to run
+    `/explore` again, then `/enrich` again.
+  - **Sidecar exists and matches** (fresh) -- read `explore.md` for
+    context (it carries `/explore`'s system/context findings; read-only,
+    this command never modifies it) and continue normally.
+  If `explore.md` doesn't exist at all, there is nothing to gate on --
+  proceed without it, exactly as before.
 - Read current OpenSpec context for this store:
   ```bash
   openspec context --store "$CE_OPENSPEC_STORE"
@@ -186,7 +213,30 @@ conflict, or edge case above, never a re-summary of the whole
 exploration. Prefer short bullet points over prose. A clean, well-scoped
 task should produce a short `enrich.md`, not an exhaustive account.
 
-## 9. Report back
+## 9. Record provenance
+
+Record the same worktree state `explore.md`'s own provenance sidecar
+uses (see `/explore` step 8), so a much later `/propose` run can tell
+whether `enrich.md` itself has gone stale:
+
+```bash
+COMMIT=$(git -C "$CE_WORKTREE" rev-parse HEAD)
+FINGERPRINT=$({
+  git -C "$CE_WORKTREE" rev-parse HEAD
+  git -C "$CE_WORKTREE" diff HEAD
+  git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+} | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12)
+RECORDED_AT=$(date -u +%Y-%m-%d)
+printf 'commit: "%s"\nfingerprint: "%s"\nrecordedAt: "%s"\n' "$COMMIT" "$FINGERPRINT" "$RECORDED_AT" \
+  > "<changeRoot>/.ce-provenance-enrich.yml"
+```
+
+A small, ce-harness-owned sidecar -- never one of the `artifacts`
+OpenSpec tracks, never part of `applyRequires`, and never mentioned in
+this command's own output. Write/refresh it unconditionally after
+writing `enrich.md`, including on a re-run.
+
+## 10. Report back
 
 Reply in the conversation (not only in the file) with a concise summary:
 
@@ -210,6 +260,14 @@ agreed contract, rather than a change only the conversation remembers.
 
 ## Never
 
+- Never skip step 9 (recording provenance) -- write/refresh
+  `.ce-provenance-enrich.yml` every time `enrich.md` is written, never
+  only on first creation.
+- Never skip checking `explore.md`'s provenance in step 4 when
+  `explore.md` exists -- and never merely warn about a stale or
+  unrecorded (legacy) result: **stop this command** and direct the user
+  to run `/explore` again first. A missing provenance sidecar is never
+  treated as fresh.
 - Never design the technical implementation, or write `design.md` or
   `tasks.md` -- that is `/propose`'s job, not this command's.
 - Never modify `proposal.md`, `design.md`, or `tasks.md`.

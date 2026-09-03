@@ -561,6 +561,146 @@ describe("ce status (integration)", () => {
     });
   });
 
+  describe("Provenance (planning-artifact staleness against the current worktree)", () => {
+    async function trustedRoot(): Promise<string> {
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace);
+      return trusted!.root;
+    }
+
+    it("omits the Provenance line entirely when no planning artifact exists yet", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).not.toMatch(/Provenance:/);
+    });
+
+    it("shows the Provenance line as \"unknown\" (never omitted, never treated as fresh) for a change whose artifacts exist but predate provenance tracking (no sidecar)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      await mkdir(join(root, "openspec", "changes", "contacts-email-notes"), { recursive: true });
+      await writeFile(
+        join(root, "openspec", "changes", "contacts-email-notes", "explore.md"),
+        "findings\n",
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+contacts-email-notes/);
+      expect(output).toMatch(/Provenance:\s+explore unknown \(no provenance recorded -- legacy\) -- rerun \/explore/);
+    });
+
+    it('reports "fresh" for a stage whose recorded fingerprint matches the current worktree', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { computeWorktreeFingerprint } = await import("../../src/core/git.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const changeDir = join(root, "openspec", "changes", "contacts-email-notes");
+      await mkdir(changeDir, { recursive: true });
+      await writeFile(join(changeDir, "explore.md"), "findings\n", "utf8");
+
+      const fingerprint = await computeWorktreeFingerprint(workspace.worktreePath);
+      await writeFile(
+        join(changeDir, ".ce-provenance-explore.yml"),
+        `commit: "abc123"\nfingerprint: "${fingerprint}"\nrecordedAt: "2026-09-01"\n`,
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Provenance:\s+explore fresh \(as of 2026-09-01\)/);
+    });
+
+    it('reports "stale" once the worktree changes after a stage was recorded', async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const changeDir = join(root, "openspec", "changes", "contacts-email-notes");
+      await mkdir(changeDir, { recursive: true });
+      await writeFile(join(changeDir, "explore.md"), "findings\n", "utf8");
+      await writeFile(
+        join(changeDir, ".ce-provenance-explore.yml"),
+        'commit: "abc123"\nfingerprint: "000000000000"\nrecordedAt: "2026-08-20"\n',
+        "utf8",
+      );
+
+      // Worktree has moved on since that (fabricated, deliberately
+      // non-matching) fingerprint was recorded.
+      await writeFile(join(workspace.worktreePath, "new-file.txt"), "x\n", "utf8");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Provenance:\s+explore stale \(repo changed since 2026-08-20\)/);
+    });
+
+    it("reports each present stage independently on the same Provenance line", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { computeWorktreeFingerprint } = await import("../../src/core/git.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const changeDir = join(root, "openspec", "changes", "contacts-email-notes");
+      await mkdir(changeDir, { recursive: true });
+      await writeFile(join(changeDir, "explore.md"), "findings\n", "utf8");
+      await writeFile(join(changeDir, "proposal.md"), "why\n", "utf8");
+
+      const fingerprint = await computeWorktreeFingerprint(workspace.worktreePath);
+      await writeFile(
+        join(changeDir, ".ce-provenance-explore.yml"),
+        `commit: "a"\nfingerprint: "${fingerprint}"\nrecordedAt: "2026-09-01"\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(changeDir, ".ce-provenance-propose.yml"),
+        'commit: "b"\nfingerprint: "000000000000"\nrecordedAt: "2026-08-15"\n',
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/explore fresh \(as of 2026-09-01\)/);
+      expect(output).toMatch(/propose stale \(repo changed since 2026-08-15\)/);
+    });
+  });
+
   describe("workspace -> active change association", () => {
     async function trustedRootFor(project: string, sanitizedIssue: string): Promise<string> {
       const { readWorkspace, resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");

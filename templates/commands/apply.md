@@ -48,10 +48,30 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    - If `state: "all_done"`: congratulate, suggest `/verify` next -- never `/archive` directly; implementation only just completed, so there is no fresh verification evidence yet for `/archive`'s own gate to accept
    - Otherwise: proceed to implementation
 
-4. **Read context files**
+4. **Gate on the plan's freshness before reading anything, or implementing**
 
-   Read every file path listed under `contextFiles` from the apply instructions output.
-   The files depend on the schema being used:
+   Using `<changeRoot>/.ce-provenance-propose.yml` (written by
+   `/propose`, covering `proposal.md`/`design.md`/`tasks.md` together),
+   compare the plan's recorded state against the worktree's current one:
+   ```bash
+   CURRENT_FINGERPRINT=$({
+     git -C "$CE_WORKTREE" rev-parse HEAD
+     git -C "$CE_WORKTREE" diff HEAD
+     git -C "$CE_WORKTREE" ls-files --others --exclude-standard -z | (cd "$CE_WORKTREE" && xargs -0 cat) 2>/dev/null
+   } | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-12)
+   cat "<changeRoot>/.ce-provenance-propose.yml" 2>/dev/null
+   ```
+   If there is no sidecar at all (a legacy plan that predates provenance
+   tracking -- **never treat this as fresh**) or its `fingerprint:`
+   differs from `$CURRENT_FINGERPRINT` (stale): **stop.** Do not read
+   the context files below and do not implement any task. Tell the user
+   the plan's provenance is unknown/stale (the repository has changed
+   since `/propose` last ran, or was never recorded) and **direct them
+   to run `/propose` again before resuming `/apply`.**
+
+   Only once the sidecar exists and matches (fresh), **read context
+   files**: read every file path listed under `contextFiles` from the
+   apply instructions output. The files depend on the schema being used:
    - **spec-driven**: proposal, specs, design, tasks
    - Other schemas: follow the contextFiles from CLI output
 
@@ -162,6 +182,7 @@ What would you like to do?
 **Guardrails**
 - Keep going through tasks until done or blocked
 - Always read context files before starting (from the apply instructions output)
+- Always check `.ce-provenance-propose.yml`'s freshness in step 4, before reading any context file or implementing -- and never merely warn on a stale or unrecorded (legacy) result: **stop this command** and direct the user to rerun `/propose` first. A missing provenance sidecar is never treated as fresh.
 - If task is ambiguous, pause and ask before implementing
 - If a task obviously bundles multiple independently completable responsibilities (more than one separately checkable success criterion), pause instead of silently implementing it as one lump -- judge this semantically, never by mechanically splitting on "and" -- and recommend re-running `/propose` to split it
 - Never implement against a known-stale agreed contract: if the human changes or adds to the requirement/scope (not an implementation detail, a spec-conforming bug fix, or a non-material clarification), stop before coding the changed/new part and recommend `/enrich` then `/propose` to realign the artifacts before resuming `/apply`
