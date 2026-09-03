@@ -278,11 +278,22 @@ example `fix-login-bug` or `issue-42`).
   unavailable (offline, no such remote), the locally-cached remote
   default from a prior clone/fetch; (3) only if there is no remote at
   all (a local-only repository) does it fall back to the `main`/`master`
-  convention names, as a last resort. If a remote clearly names a branch
-  that isn't available locally, `ce start` fails with an actionable error
-  rather than silently substituting a different one — ce-harness never
-  fetches automatically. The resolved branch name and its exact commit
-  are recorded in `workspace.yml` and shown by `ce status`.
+  convention names, as a last resort. Once a remote names a branch (step
+  1 or 2), `ce start` **fetches it fresh from the remote** and always
+  seeds the new workspace from `origin/<branch>` — a deliberate, narrow
+  exception to "ce-harness never fetches automatically" (every other ref
+  a command accepts — `--from`, `--base`/`--head` — must already exist
+  locally and is never fetched). This exists specifically so a new
+  workspace is always established from the base branch's *current*
+  remote state, never a same-named local branch that hasn't been fetched
+  in a while and could be silently stale — with no signal anything was
+  wrong. If that fetch itself fails (offline, unreachable remote), `ce
+  start` fails with an actionable error rather than silently falling
+  back to whatever local state happens to exist; use `--from <ref>` to
+  work from an existing local ref instead, which stays fully
+  offline-capable. The resolved branch name and its exact (freshly
+  fetched) commit are recorded in `workspace.yml` and shown by `ce
+  status`.
 - **Bootstrap detection.** A successful worktree isn't necessarily a
   development-ready one — declared dependencies (`node_modules/`,
   `vendor/`, etc.) are never shared across worktrees, since they're
@@ -1333,13 +1344,25 @@ a `main` or `master` branch in the target repository (or check out the
 branch you want under one of those names), or add a remote with a
 default branch, and try again.
 
-### `ce start` fails with "... reports ... as its default branch, but ... does not exist locally"
+### `ce start` fails with "Could not fetch ... to establish the current remote base"
 
-`ce start` detected your remote's actual default branch (e.g. `develop`),
-but it isn't available in your local clone yet — ce-harness never fetches
-automatically, to avoid silently pulling in history you haven't reviewed.
-Fetch it yourself (the error message includes the exact command, e.g.
-`git -C <repo> fetch origin develop`), then run `ce start` again.
+`ce start`'s default (auto-detected) base-branch flow always fetches the
+repository's detected default branch (e.g. `origin/develop`) fresh before
+seeding the new workspace from it — a new workspace must start from the
+remote's *current* state, never a same-named local branch that might not
+have been fetched in a while. This error means that fetch itself
+failed — typically no network access, or the remote is unreachable.
+Either restore connectivity and try again, or, if you intend to work from
+an existing local ref instead, use `ce start ... --from <ref>` (never
+fetched, works fully offline against whatever already exists locally).
+
+### `ce start` fails with "... reports ... as its default branch, but ... is still not resolvable after fetching it"
+
+Rare: `ce start` fetched the remote's reported default branch
+successfully, but it still didn't resolve locally afterward (e.g. a race
+where the branch was renamed or deleted on the remote between detection
+and fetch). Confirm the branch genuinely exists on the remote, then run
+`ce start` again.
 
 ### `ce start` fails with "... does not include the '{issue}' placeholder"
 

@@ -169,12 +169,12 @@ describe("detectBaseBranch (repository-agnostic base-branch detection)", () => {
     await expect(detectBaseBranch(repoDir)).resolves.toBeNull();
   });
 
-  it('a repository whose remote defaults to "develop" (never "main") resolves to "develop"', async () => {
+  it('a repository whose remote defaults to "develop" (never "main") resolves to "develop", via the freshly-fetched origin/develop', async () => {
     remoteDir = await createBareRemote("develop");
     repoDir = await cloneRepo(remoteDir);
 
     expect(await queryRemoteDefaultBranch(repoDir)).toBe("develop");
-    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "develop", ref: "develop" });
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "develop", ref: "origin/develop" });
 
     // No "main" branch exists anywhere in this repository -- confirms
     // the result is not coincidentally reachable via the old hardcoded
@@ -183,12 +183,41 @@ describe("detectBaseBranch (repository-agnostic base-branch detection)", () => {
     expect(branches).not.toMatch(/\bmain\b/);
   });
 
-  it('a repository whose remote defaults to "main" continues to resolve to "main" unchanged', async () => {
+  it('a repository whose remote defaults to "main" continues to resolve to "main" unchanged, via the freshly-fetched origin/main', async () => {
     remoteDir = await createBareRemote("main");
     repoDir = await cloneRepo(remoteDir);
 
     expect(await queryRemoteDefaultBranch(repoDir)).toBe("main");
-    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "main", ref: "main" });
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "main", ref: "origin/main" });
+  });
+
+  it("resolves to the CURRENT remote commit, not a stale local base branch that was never re-fetched (the reported bug)", async () => {
+    remoteDir = await createBareRemote("main");
+    repoDir = await cloneRepo(remoteDir);
+    const staleCommit = await resolveCommit(repoDir, "main");
+
+    // Someone else pushes new work to origin/main -- repoDir's own local
+    // "main" (and its cached origin/main remote-tracking ref) are both
+    // now stale; nothing in repoDir has fetched since the clone.
+    const upstream = await cloneRepo(remoteDir, "ce-harness-upstream-");
+    await writeFile(join(upstream, "new-file.txt"), "x\n", "utf8");
+    await execa("git", ["-C", upstream, "add", "."]);
+    await execa("git", ["-C", upstream, "commit", "-m", "advance remote main"]);
+    await execa("git", ["-C", upstream, "push", "origin", "main"]);
+    await rm(upstream, { recursive: true, force: true });
+
+    // Sanity: repoDir's own view is still stale, confirming this test
+    // actually exercises staleness rather than a no-op.
+    expect(await resolveCommit(repoDir, "main")).toBe(staleCommit);
+
+    const detected = await detectBaseBranch(repoDir);
+    const resolvedCommit = await resolveCommit(repoDir, detected!.ref);
+
+    expect(resolvedCommit).not.toBe(staleCommit);
+    // Also confirms the local "main" branch itself was never touched --
+    // ce start's default flow reads from origin/main, it doesn't rewrite
+    // or fast-forward any local branch.
+    expect(await resolveCommit(repoDir, "main")).toBe(staleCommit);
   });
 
   it("prefers the live remote query over a stale locally-cached default branch", async () => {
@@ -213,15 +242,35 @@ describe("detectBaseBranch (repository-agnostic base-branch detection)", () => {
     await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "main", ref: "origin/main" });
   });
 
-  it("throws a clear, actionable error when the remote's default branch is not resolvable locally, rather than silently falling back", async () => {
+  it("no longer stops at 'not resolvable locally' -- it fetches the detected branch itself and succeeds once the remote actually has it", async () => {
     remoteDir = await createBareRemote("develop");
     repoDir = await cloneRepo(remoteDir);
 
-    // Simulate the remote's default branch changing after the clone,
-    // with the user never having fetched the new branch at all -- no
-    // local branch and no remote-tracking ref for it exist anywhere.
+    // The remote's default branch changes after the clone, to a branch
+    // the local clone has never fetched -- neither a local branch nor a
+    // remote-tracking ref for it exists yet.
     await execa("git", ["-C", remoteDir, "branch", "main"]);
     await execa("git", ["-C", remoteDir, "symbolic-ref", "HEAD", "refs/heads/main"]);
+    const branchesBefore = (await execa("git", ["-C", repoDir, "branch", "--list"])).stdout;
+    expect(branchesBefore).not.toMatch(/\bmain\b/);
+
+    // detectBaseBranch fetches "main" itself now -- since the remote
+    // genuinely has it, this succeeds rather than throwing.
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "main", ref: "origin/main" });
+  });
+
+  it("throws a clear, actionable error when the remote can't be reached to fetch the detected base branch", async () => {
+    remoteDir = await createBareRemote("develop");
+    repoDir = await cloneRepo(remoteDir);
+    // repoDir's cached origin/HEAD says "develop" from the clone.
+    expect(await readCachedRemoteDefaultBranch(repoDir)).toBe("develop");
+
+    // Simulate an unreachable remote (deleted, offline, network down) --
+    // point origin at a path that no longer exists.
+    const goneRemote = remoteDir;
+    remoteDir = undefined;
+    await rm(goneRemote, { recursive: true, force: true });
+    await execa("git", ["-C", repoDir, "remote", "set-url", "origin", join(goneRemote, "does-not-exist")]);
 
     await expect(detectBaseBranch(repoDir)).rejects.toThrow(CeError);
     try {
@@ -229,10 +278,9 @@ describe("detectBaseBranch (repository-agnostic base-branch detection)", () => {
       expect.fail("expected detectBaseBranch to throw");
     } catch (error) {
       const ceError = error as InstanceType<typeof CeError>;
-      expect(ceError.message).toMatch(/reports "main" as its default branch/);
-      expect(ceError.message).toMatch(/does not exist locally/);
-      expect(ceError.recovery).toMatch(/never fetches automatically/i);
-      expect(ceError.recovery).toMatch(/fetch origin main/);
+      expect(ceError.message).toMatch(/Could not fetch "origin\/develop"/);
+      expect(ceError.message).toMatch(/establish the current remote base/);
+      expect(ceError.recovery).toMatch(/--from/);
     }
   });
 
@@ -288,7 +336,7 @@ describe("detectBaseBranch (repository-agnostic base-branch detection)", () => {
     expect(branches).toMatch(/\bmain\b/);
     expect(branches).toMatch(/\bdevelop\b/);
 
-    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "develop", ref: "develop" });
+    await expect(detectBaseBranch(repoDir)).resolves.toEqual({ name: "develop", ref: "origin/develop" });
   });
 });
 

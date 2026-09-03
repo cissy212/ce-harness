@@ -114,29 +114,10 @@ export async function readCachedRemoteDefaultBranch(
   return match ? match[1] : null;
 }
 
-/**
- * Resolves the exact local ref to seed a worktree from, for a candidate
- * base-branch name: prefers a local branch of that name, then falls
- * back to `<remote>/<branch>` (a remote-tracking ref, present after any
- * prior fetch even without a local branch checked out). Returns null if
- * neither resolves locally -- ce-harness never fetches automatically to
- * make one exist; callers surface a clear error instead.
- */
-async function resolveLocalRefForBranch(
-  repoPath: string,
-  branch: string,
-  remote: string,
-): Promise<string | null> {
-  if (await commitExists(repoPath, branch)) return branch;
-  const remoteRef = `${remote}/${branch}`;
-  if (await commitExists(repoPath, remoteRef)) return remoteRef;
-  return null;
-}
-
 export interface DetectedBaseBranch {
   /** Clean branch name (e.g. "develop", "main"), for display/metadata. */
   name: string;
-  /** The exact local ref to seed the worktree from (e.g. "develop" or "origin/develop"). */
+  /** The exact ref to seed the worktree from (e.g. "develop" or "origin/develop"). */
   ref: string;
 }
 
@@ -154,19 +135,29 @@ export interface DetectedBaseBranch {
  *    hardcoded, and only as an absolute last resort with zero
  *    repository-provided signal.
  *
- * If the remote clearly names a branch (step 1 or 2) but it cannot be
- * resolved locally, this throws rather than silently substituting a
- * different branch -- ce-harness never fetches automatically, and
- * guessing here would risk exactly the wrong-history problem this
- * function exists to prevent.
+ * Once step 1 or 2 names a branch, this **fetches it from `remote`**
+ * (see `fetchRemoteBranch`) and always resolves to `<remote>/<branch>`
+ * -- a deliberate, narrow exception to "ce-harness never fetches
+ * automatically" (every other ref this command's callers accept --
+ * `--from`, `--base`/`--head` -- must already exist locally and is
+ * never fetched). A new workspace must be established from the base
+ * branch's *current* remote state, not from a same-named local branch
+ * that may not have been fetched in a while: a caller's local `main`
+ * silently lagging behind `origin/main` would otherwise let a new
+ * workspace start from stale history with no signal that anything was
+ * wrong. If the fetch itself fails (offline, unreachable remote), this
+ * throws rather than silently falling back to whatever stale local
+ * state happens to exist -- the same "guessing here would risk exactly
+ * the wrong-history problem this function exists to prevent" reasoning
+ * as ever, just now covering staleness as well as wrong-name guesses.
  *
  * Extensibility: this is a strict priority chain, each step tried only
  * if the previous one yielded nothing. A future explicit,
  * project-specific override (e.g. a config value read from the target
  * repository) only ever needs to be added as a new step *before* step 1
  * -- returning early with `{ name, ref }` when present -- with no change
- * required to the steps below it, `resolveLocalRefForBranch`, or any
- * caller (which only ever consumes the `{ name, ref }` shape).
+ * required to the steps below it or any caller (which only ever
+ * consumes the `{ name, ref }` shape).
  */
 export async function detectBaseBranch(
   repoPath: string,
@@ -177,11 +168,26 @@ export async function detectBaseBranch(
     (await readCachedRemoteDefaultBranch(repoPath, remote));
 
   if (intended) {
-    const ref = await resolveLocalRefForBranch(repoPath, intended, remote);
-    if (ref) return { name: intended, ref };
+    try {
+      await fetchRemoteBranch(repoPath, remote, intended);
+    } catch (error) {
+      throw new CeError(
+        `Could not fetch "${remote}/${intended}" (the repository's detected default branch) to establish the current remote base: ${(error as Error).message}`,
+        `ce start's default flow requires reaching "${remote}" to confirm the current base -- an unreachable remote is not safe to silently fall back from. If you intend to work from an existing local ref instead, use \`ce start ... --from <ref>\`.`,
+      );
+    }
+
+    const remoteRef = `${remote}/${intended}`;
+    if (await commitExists(repoPath, remoteRef)) {
+      return { name: intended, ref: remoteRef };
+    }
+    // Not expected once the fetch above succeeded -- kept as a
+    // defensive, clearly-explained failure rather than silently falling
+    // back to a local branch that might not reflect current remote
+    // state at all.
     throw new CeError(
-      `The repository's remote ("${remote}") reports "${intended}" as its default branch, but "${intended}" does not exist locally (neither as a branch nor as "${remote}/${intended}") in "${repoPath}".`,
-      `ce-harness never fetches automatically. Fetch it first (e.g. \`git -C "${repoPath}" fetch ${remote} ${intended}\`), then run \`ce start\` again.`,
+      `The repository's remote ("${remote}") reports "${intended}" as its default branch, but "${remoteRef}" is still not resolvable after fetching it.`,
+      `Confirm "${intended}" genuinely exists on "${remote}" in "${repoPath}", then run \`ce start\` again.`,
     );
   }
 
@@ -235,10 +241,14 @@ export async function resolveMergeBase(
 
 /**
  * Fetches `refspec` from `remote` into `repoPath`. The low-level fetch
- * primitive -- `ce review` (via `fetchPrCommits`) and `ce publish` (via
- * `fetchRemoteBranch` below) are its only two callers; `ce start` never
- * fetches, requiring refs to already exist locally. Callers are expected
- * to pass an explicit destination (e.g.
+ * primitive -- `ce review` (via `fetchPrCommits`), `ce publish` (via
+ * `fetchRemoteBranch` below), and `ce start`'s default (auto-detected)
+ * base-branch flow (via `detectBaseBranch`, also through
+ * `fetchRemoteBranch`) are its only callers. Every *explicit* ref a
+ * caller can name -- `ce start --from`, `--base`/`--head` -- must still
+ * already exist locally and is never fetched; only these specific,
+ * narrowly-scoped paths fetch, and only exactly what they need. Callers
+ * are expected to pass an explicit destination (e.g.
  * `+refs/pull/123/head:refs/ce-harness/reviews/pr-123/head`) so the
  * fetched commit is durably reachable via a real ref rather than the
  * ephemeral `FETCH_HEAD`.
@@ -257,9 +267,11 @@ export async function fetchRefspec(repoPath: string, remote: string, refspec: st
  * Fetches `branch` from `remote` into the normal remote-tracking ref
  * `refs/remotes/<remote>/<branch>` -- unlike `fetchPrCommits`'s
  * namespaced destinations, this is a plain, ordinary branch fetch (what
- * `git fetch <remote> <branch>` always does), used by `ce publish` to
+ * `git fetch <remote> <branch>` always does). Used by `ce publish` to
  * learn the base branch's current tip before comparing it against a
- * workspace's internal branch. Still never touches `refs/heads/*` (no
+ * workspace's internal branch, and by `detectBaseBranch` to establish a
+ * new workspace from the base branch's current remote state rather than
+ * a possibly-stale local one. Still never touches `refs/heads/*` (no
  * local branch is created or moved).
  */
 export async function fetchRemoteBranch(repoPath: string, remote: string, branch: string): Promise<void> {

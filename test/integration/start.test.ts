@@ -334,28 +334,58 @@ describe("ce start (integration)", () => {
       expect(workspace.diffBase).toBe(baseSha);
     });
 
-    it("fails with an actionable error, before creating any persistent resource, when the remote's default branch is not resolvable locally", async () => {
+    it("fetches and succeeds using the newly-detected remote default branch, even when it was never locally fetched before this run", async () => {
       const remoteDir = await createBareRemote("develop");
       const cloneDir = await cloneRepo(remoteDir);
       try {
-        // The remote's default branch changes after the clone, and the
-        // user never fetches the new branch -- ce-harness must refuse
-        // rather than silently falling back to some other branch.
+        // The remote's default branch changes after the clone -- neither
+        // a local "main" branch nor an origin/main remote-tracking ref
+        // exists in cloneDir yet.
         await execa("git", ["-C", remoteDir, "branch", "main"]);
         await execa("git", ["-C", remoteDir, "symbolic-ref", "HEAD", "refs/heads/main"]);
+        const branchesBefore = (await execa("git", ["-C", cloneDir, "branch", "--list"])).stdout;
+        expect(branchesBefore).not.toMatch(/\bmain\b/);
+
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { readWorkspace } = await import("../../src/core/workspace.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        await startCommand({ repo: cloneDir, issue: "issue-1" });
+
+        const workspace = await readWorkspace(basenameOf(cloneDir), "issue-1");
+        expect(workspace.baseBranch).toBe("main");
+      } finally {
+        await rm(remoteDir, { recursive: true, force: true });
+        await rm(cloneDir, { recursive: true, force: true });
+      }
+    });
+
+    it("fails with an actionable error, before creating any persistent resource, when the remote can't be reached to fetch the detected base branch", async () => {
+      let remoteDir: string | undefined = await createBareRemote("develop");
+      const cloneDir = await cloneRepo(remoteDir);
+      try {
+        // Simulate an unreachable remote (deleted, offline, network
+        // down) -- point origin at a path that no longer exists. The
+        // cached refs/remotes/origin/HEAD symref (from the clone) still
+        // names "develop", so detection itself succeeds; it's the fetch
+        // that must fail.
+        const goneRemote = remoteDir;
+        remoteDir = undefined;
+        await rm(goneRemote, { recursive: true, force: true });
+        await execa("git", ["-C", cloneDir, "remote", "set-url", "origin", join(goneRemote, "does-not-exist")]);
 
         const { startCommand } = await import("../../src/commands/start.js");
         const { readActivePointer } = await import("../../src/core/workspace.js");
 
         await expect(startCommand({ repo: cloneDir, issue: "issue-1" })).rejects.toThrow(
-          /reports "main" as its default branch/,
+          /Could not fetch "origin\/develop"/,
         );
 
         expect(await readActivePointer()).toBeNull();
         expect(existsSync(join(harnessHomeDir, "worktrees"))).toBe(false);
         expect(existsSync(join(harnessHomeDir, "workspaces"))).toBe(false);
       } finally {
-        await rm(remoteDir, { recursive: true, force: true });
+        if (remoteDir) await rm(remoteDir, { recursive: true, force: true });
         await rm(cloneDir, { recursive: true, force: true });
       }
     });
