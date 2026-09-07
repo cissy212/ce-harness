@@ -64,11 +64,34 @@ describe("dist/cli.js build artifact", () => {
     expect(result.stdout).toMatch(/--change \[name\]/);
   });
 
-  it('`ce --help`\'s own description no longer describes the old repo-path-hash storage model', async () => {
+  it('`ce --help`\'s own description no longer describes the old repo-path-hash storage model, and stays concise -- Project Identity detail now lives in command-specific help, not the top-level overview', async () => {
+    const topLevel = await execa("node", [cliPath, "--help"]);
+
+    expect(topLevel.exitCode).toBe(0);
+    expect(topLevel.stdout).not.toMatch(/<repo-hash>/);
+    expect(topLevel.stdout).not.toMatch(/Project Identity/i);
+
+    const startHelp = await execa("node", [cliPath, "start", "--help"]);
+    expect(startHelp.stdout).toMatch(/Project Identity/i);
+  });
+
+  it("`ce --help` groups commands into human-oriented sections, and keeps `ce status --all` discoverable", async () => {
     const result = await execa("node", [cliPath, "--help"]);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).not.toMatch(/<repo-hash>/);
-    expect(result.stdout).toMatch(/Project Identity/i);
+    expect(result.stdout).toMatch(/Feature workflow:/);
+    expect(result.stdout).toMatch(/PR review:/);
+    expect(result.stdout).toMatch(/Project knowledge:/);
+    expect(result.stdout).toMatch(/Maintenance:/);
+    expect(result.stdout).toMatch(/--all/);
+  });
+
+  it("`ce <command> --help` still shows that command's full description, unaffected by the concise top-level view", async () => {
+    const result = await execa("node", [cliPath, "status", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/Project Identity evidence/);
+    expect(result.stdout).toMatch(/--verbose/);
+    expect(result.stdout).toMatch(/--all/);
   });
 });

@@ -18,6 +18,17 @@ import { formatError } from "./core/errors.js";
  * cli.ts itself) so that nothing here -- including commander and its
  * transitive dependencies -- is ever imported, parsed, or evaluated on
  * an unsupported Node version.
+ *
+ * Commands are grouped in `ce --help`'s output (Feature workflow / PR
+ * review / Project knowledge / Maintenance) via `commandsGroup` --
+ * confusingly, that only sets a *default* group for commands registered
+ * after the call, so this file's registration order doubles as the
+ * order those sections appear in; keep it that way rather than
+ * reordering incidentally. Each command's one-line `.summary()` is what
+ * shows up in that top-level list; its full `.description()` is
+ * untouched and still shown in full by `ce <command> --help` -- only
+ * the top-level view was ever too verbose, not the command-specific
+ * help.
  */
 export async function runCli(): Promise<void> {
   const program = new Command();
@@ -26,33 +37,24 @@ export async function runCli(): Promise<void> {
     .name("ce")
     .description(
       [
-        "Personal, local-only developer harness for working on Git repositories.",
+        "Personal, local-only developer harness: runs a coding agent (Claude Code by",
+        "default, or OpenCode) through a structured explore -> enrich -> propose ->",
+        "apply -> verify -> adversarial-review -> archive -> publish workflow for",
+        "features and tasks, and reviews existing pull requests the same way.",
         "",
-        "Each `ce start` creates an isolated Git worktree plus a workspace directory",
-        "under ~/.ce-harness, and provisions a durable OpenSpec store for this",
-        "project, keyed by a stable, ce-harness-minted Project Identity rather than",
-        "a hash of the repository's current path -- so a rename, a fresh clone, or a",
-        "different local path for the same repository all still recognize the same",
-        "project. Durable means the store lives outside every workspace/worktree",
-        "ce-harness ever deletes: it survives `ce cleanup`, and every later",
-        "workspace for the same project reuses the same store (its synced main",
-        "specs and archived changes included) instead of starting from empty. Run",
-        "`ce status` to see the active OpenSpec change and which of its artifacts",
-        "(explore/enrich/proposal/design/tasks/specs/reports) exist, and `ce open",
-        "--change` to open them directly -- neither requires knowing this store's",
-        "internal path. The target repository and the temporary code worktree are",
-        "never modified with OpenSpec files. A workspace created before durable",
-        "storage existed keeps its old, workspace-scoped store unless explicitly",
-        "moved with `ce migrate-openspec`.",
-        "",
-        "Prerequisite: the `openspec` executable must be installed and on PATH",
-        "(e.g. `npm install -g @fission-ai/openspec`).",
+        "See README.md to get started, or docs/ (docs/cli-reference.md,",
+        "docs/workflow-guide.md, docs/concepts.md, docs/troubleshooting.md) for the",
+        "full reference. Run `ce <command> --help` for that command's own options.",
       ].join("\n"),
     )
     .version("1.0.0");
 
+  // --- Feature workflow ----------------------------------------------
+  program.commandsGroup("Feature workflow:");
+
   program
     .command("start")
+    .summary("Start a feature/task workspace and launch the coding-agent runner")
     .description(
       [
         "Create an isolated Git worktree and workspace for an issue, without",
@@ -138,156 +140,8 @@ export async function runCli(): Promise<void> {
     );
 
   program
-    .command("review")
-    .description(
-      [
-        "Start an Existing PR review workspace directly from a GitHub PR",
-        "number: resolves the PR's exact base/head commits via the `gh`",
-        "CLI, fetches only what's needed to make them available locally",
-        "(never switching branches, never touching the original repository's",
-        "working tree), and reuses the same review-workspace flow `ce start",
-        "--base --head` uses. Defaults the issue identifier to",
-        "`review-pr-<number>`. Requires the `gh` CLI installed and",
-        "authenticated; `ce start` itself remains entirely GitHub-independent.",
-      ].join(" "),
-    )
-    .argument("<repo>", "path to the target Git repository")
-    .argument("<pr-number>", "GitHub pull request number")
-    .option(
-      "--runner <runner>",
-      'coding-agent runner to launch: "claude" or "opencode"',
-      "claude",
-    )
-    .action(async (repo: string, prNumber: string, options: { runner?: string }) => {
-      await run(() => reviewCommand({ repo, prNumber, runner: options.runner }));
-    });
-
-  program
-    .command("resume")
-    .description(
-      "Re-enter a workspace by relaunching the same runner (opencode or claude) `ce start` " +
-        "used, with the same environment -- creates nothing, registers nothing, and never " +
-        "modifies workspace.yml. With no argument, re-enters the current default workspace; " +
-        "with [workspace] (as <project>/<issue>, e.g. market-audit-tool/130 -- see `ce " +
-        "status`), re-enters that one instead and makes it the new default, since resuming " +
-        "means \"work on this now\". Many workspaces can be preserved at once; this never " +
-        "deletes or otherwise touches any of the others. Use this instead of reconstructing " +
-        "the launch command by hand after the runner exits.",
-    )
-    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
-    .action(async (workspace: string | undefined) => {
-      await run(() => resumeCommand({ workspace }));
-    });
-
-  program
-    .command("refresh")
-    .description(
-      "Refresh the active workspace's harness-managed runner configuration " +
-        "(e.g. Claude Code's .claude/commands/*.md) against the harness's current " +
-        "template library -- the supported way to bring an already-existing " +
-        "workspace's generated files up to date, without deleting or recreating " +
-        "the workspace, worktree, or branch. A file whose on-disk content cannot " +
-        "be proven to still be ce-harness's own (e.g. hand-edited) is always left " +
-        "untouched. Idempotent -- safe to run any number of times.",
-    )
-    .action(async () => {
-      await run(() => refreshCommand());
-    });
-
-  program
-    .command("open")
-    .description(
-      "Open a workspace's worktree directly in an editor (VS Code today) -- no need to " +
-        "remember or copy the path `ce start`/`ce status` printed. With no argument, opens " +
-        "the current default workspace; with [workspace] (as <project>/<issue> -- see `ce " +
-        "status`), opens that one instead, without changing which workspace is the default " +
-        "-- purely a read, like `ce status`. With --change, opens the resolved workspace's " +
-        "active OpenSpec change's artifacts (explore.md, enrich.md, proposal.md, design.md, " +
-        "tasks.md, specs/, reports/ -- whichever exist) instead of the worktree, without " +
-        "needing to know the durable store's internal path. With --path, opens one exact " +
-        "file or directory inside the workspace's OpenSpec store instead -- e.g. the exact " +
-        "report /verify or /adversarial-review just wrote -- rejected if it isn't inside " +
-        "the store root; cannot be combined with --change. Creates nothing, registers " +
-        "nothing, and never modifies workspace.yml or which workspace is the default.",
-    )
-    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
-    .option(
-      "--change [name]",
-      "open the OpenSpec change's artifacts instead of the worktree -- the sole active " +
-        "change if no name is given (see `ce status`), or a specific one by name when " +
-        "more than one is active",
-    )
-    .option(
-      "--path <path>",
-      "open one exact file or directory inside this workspace's OpenSpec store directly " +
-        "(e.g. a report /verify or /adversarial-review just wrote) -- rejected if it isn't " +
-        "inside the store root; mutually exclusive with --change",
-    )
-    .action(
-      async (workspace: string | undefined, options: { change?: string | true; path?: string }) => {
-        await run(() => openCommand({ workspace, change: options.change, path: options.path }));
-      },
-    );
-
-  program
-    .command("migrate-openspec")
-    .description(
-      [
-        "Explicitly, safely move the active workspace's OpenSpec store onto the",
-        "current, durable, Project-Identity-keyed store (see `ce start`'s",
-        "description) so it survives `ce cleanup` and is recognized again across",
-        "future clones/renames of this repository. Covers both a legacy,",
-        "per-workspace store and a durable store still on the older,",
-        "path-hash-keyed shape. Never runs automatically -- an existing workspace",
-        "never changes storage behavior just because the CLI was upgraded. The old",
-        "store's files are never deleted; remove them yourself once you've",
-        "confirmed the migrated data looks correct. Refuses (rather than",
-        "overwriting or merging) if the durable destination already has",
-        "conflicting content, or if Project Identity resolution is ambiguous (see",
-        "--project-id/--new-project). Idempotent: a workspace already on the",
-        "current scheme is reported as a no-op.",
-      ].join(" "),
-    )
-    .option(
-      "--project-id <id>",
-      "attach to an already-known project id instead of letting ce-harness detect or mint one " +
-        "automatically; the id must already exist -- this never invents one",
-    )
-    .option(
-      "--new-project",
-      "mint a brand-new Project Identity even if ce-harness recognizes (or partially recognizes) " +
-        "this repository as an existing project; mutually exclusive with --project-id",
-    )
-    .action(async (options: { projectId?: string; newProject?: boolean }) => {
-      await run(() =>
-        migrateOpenSpecCommand({ projectId: options.projectId, newProject: options.newProject }),
-      );
-    });
-
-  program
-    .command("status")
-    .description(
-      "Show a concise, human-oriented summary of a ce-harness workspace: what you're working " +
-        "on, its current workflow progress, anything that needs attention, and the next " +
-        "suggested command. With no argument, shows the current default workspace, plus an " +
-        "\"Other workspaces\" list of every other one preserved on disk; with [workspace] " +
-        "(as <project>/<issue>), shows that one instead, without changing the default " +
-        "(read-only). --verbose shows the full low-level detail this command used to show " +
-        "unconditionally (internal paths, OpenSpec store id/root, Project Identity evidence, " +
-        "config/lens directories, etc.) -- see `ce open --change` for the OpenSpec change's " +
-        "artifacts either way. --all shows a compact, cross-project overview of everything " +
-        "ce-harness has durably retained instead (every known project, not just currently " +
-        "preserved workspaces); mutually exclusive with [workspace].",
-    )
-    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
-    .option("--verbose", "show full low-level detail instead of the concise default")
-    .option("--all", "show a compact, cross-project overview of everything ce-harness has durably retained")
-    .action(async (workspace: string | undefined, options: { verbose?: boolean; all?: boolean }) => {
-      await run(() => statusCommand({ workspace, verbose: options.verbose, all: options.all }));
-    });
-
-  program
     .command("publish")
+    .summary("Ship a completed, archived change as a GitHub pull request")
     .description(
       [
         "Ship a completed, archived workspace as a normal GitHub pull request --",
@@ -343,8 +197,100 @@ export async function runCli(): Promise<void> {
       },
     );
 
+  // --- PR review -------------------------------------------------------
+  program.commandsGroup("PR review:");
+
+  program
+    .command("review")
+    .summary("Start a PR-review workspace from a GitHub PR number")
+    .description(
+      [
+        "Start an Existing PR review workspace directly from a GitHub PR",
+        "number: resolves the PR's exact base/head commits via the `gh`",
+        "CLI, fetches only what's needed to make them available locally",
+        "(never switching branches, never touching the original repository's",
+        "working tree), and reuses the same review-workspace flow `ce start",
+        "--base --head` uses. Defaults the issue identifier to",
+        "`review-pr-<number>`. Requires the `gh` CLI installed and",
+        "authenticated; `ce start` itself remains entirely GitHub-independent.",
+      ].join(" "),
+    )
+    .argument("<repo>", "path to the target Git repository")
+    .argument("<pr-number>", "GitHub pull request number")
+    .option(
+      "--runner <runner>",
+      'coding-agent runner to launch: "claude" or "opencode"',
+      "claude",
+    )
+    .action(async (repo: string, prNumber: string, options: { runner?: string }) => {
+      await run(() => reviewCommand({ repo, prNumber, runner: options.runner }));
+    });
+
+  // --- Project knowledge -----------------------------------------------
+  program.commandsGroup("Project knowledge:");
+
+  program
+    .command("status")
+    .summary("Show progress and next steps for a workspace, or --all for everything retained")
+    .description(
+      "Show a concise, human-oriented summary of a ce-harness workspace: what you're working " +
+        "on, its current workflow progress, anything that needs attention, and the next " +
+        "suggested command. With no argument, shows the current default workspace, plus an " +
+        "\"Other workspaces\" list of every other one preserved on disk; with [workspace] " +
+        "(as <project>/<issue>), shows that one instead, without changing the default " +
+        "(read-only). --verbose shows the full low-level detail this command used to show " +
+        "unconditionally (internal paths, OpenSpec store id/root, Project Identity evidence, " +
+        "config/lens directories, etc.) -- see `ce open --change` for the OpenSpec change's " +
+        "artifacts either way. --all shows a compact, cross-project overview of everything " +
+        "ce-harness has durably retained instead (every known project, not just currently " +
+        "preserved workspaces); mutually exclusive with [workspace].",
+    )
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
+    .option("--verbose", "show full low-level detail instead of the concise default")
+    .option("--all", "show a compact, cross-project overview of everything ce-harness has durably retained")
+    .action(async (workspace: string | undefined, options: { verbose?: boolean; all?: boolean }) => {
+      await run(() => statusCommand({ workspace, verbose: options.verbose, all: options.all }));
+    });
+
+  program
+    .command("open")
+    .summary("Open a workspace's worktree, active change, or one exact file, in your editor")
+    .description(
+      "Open a workspace's worktree directly in an editor (VS Code today) -- no need to " +
+        "remember or copy the path `ce start`/`ce status` printed. With no argument, opens " +
+        "the current default workspace; with [workspace] (as <project>/<issue> -- see `ce " +
+        "status`), opens that one instead, without changing which workspace is the default " +
+        "-- purely a read, like `ce status`. With --change, opens the resolved workspace's " +
+        "active OpenSpec change's artifacts (explore.md, enrich.md, proposal.md, design.md, " +
+        "tasks.md, specs/, reports/ -- whichever exist) instead of the worktree, without " +
+        "needing to know the durable store's internal path. With --path, opens one exact " +
+        "file or directory inside the workspace's OpenSpec store instead -- e.g. the exact " +
+        "report /verify or /adversarial-review just wrote -- rejected if it isn't inside " +
+        "the store root; cannot be combined with --change. Creates nothing, registers " +
+        "nothing, and never modifies workspace.yml or which workspace is the default.",
+    )
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
+    .option(
+      "--change [name]",
+      "open the OpenSpec change's artifacts instead of the worktree -- the sole active " +
+        "change if no name is given (see `ce status`), or a specific one by name when " +
+        "more than one is active",
+    )
+    .option(
+      "--path <path>",
+      "open one exact file or directory inside this workspace's OpenSpec store directly " +
+        "(e.g. a report /verify or /adversarial-review just wrote) -- rejected if it isn't " +
+        "inside the store root; mutually exclusive with --change",
+    )
+    .action(
+      async (workspace: string | undefined, options: { change?: string | true; path?: string }) => {
+        await run(() => openCommand({ workspace, change: options.change, path: options.path }));
+      },
+    );
+
   program
     .command("retrieve")
+    .summary("Search prior project knowledge relevant to a task (used by /enrich)")
     .description(
       [
         "Search the active workspace's durable OpenSpec store and repository Git",
@@ -395,8 +341,82 @@ export async function runCli(): Promise<void> {
       },
     );
 
+  // --- Maintenance -------------------------------------------------------
+  program.commandsGroup("Maintenance:");
+
+  program
+    .command("resume")
+    .summary("Re-enter a workspace, relaunching its coding-agent runner")
+    .description(
+      "Re-enter a workspace by relaunching the same runner (opencode or claude) `ce start` " +
+        "used, with the same environment -- creates nothing, registers nothing, and never " +
+        "modifies workspace.yml. With no argument, re-enters the current default workspace; " +
+        "with [workspace] (as <project>/<issue>, e.g. market-audit-tool/130 -- see `ce " +
+        "status`), re-enters that one instead and makes it the new default, since resuming " +
+        "means \"work on this now\". Many workspaces can be preserved at once; this never " +
+        "deletes or otherwise touches any of the others. Use this instead of reconstructing " +
+        "the launch command by hand after the runner exits.",
+    )
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
+    .action(async (workspace: string | undefined) => {
+      await run(() => resumeCommand({ workspace }));
+    });
+
+  program
+    .command("refresh")
+    .summary("Update a workspace's generated runner config to the latest templates")
+    .description(
+      "Refresh the active workspace's harness-managed runner configuration " +
+        "(e.g. Claude Code's .claude/commands/*.md) against the harness's current " +
+        "template library -- the supported way to bring an already-existing " +
+        "workspace's generated files up to date, without deleting or recreating " +
+        "the workspace, worktree, or branch. A file whose on-disk content cannot " +
+        "be proven to still be ce-harness's own (e.g. hand-edited) is always left " +
+        "untouched. Idempotent -- safe to run any number of times.",
+    )
+    .action(async () => {
+      await run(() => refreshCommand());
+    });
+
+  program
+    .command("migrate-openspec")
+    .summary("Move a workspace onto the current, durable OpenSpec store")
+    .description(
+      [
+        "Explicitly, safely move the active workspace's OpenSpec store onto the",
+        "current, durable, Project-Identity-keyed store (see `ce start`'s",
+        "description) so it survives `ce cleanup` and is recognized again across",
+        "future clones/renames of this repository. Covers both a legacy,",
+        "per-workspace store and a durable store still on the older,",
+        "path-hash-keyed shape. Never runs automatically -- an existing workspace",
+        "never changes storage behavior just because the CLI was upgraded. The old",
+        "store's files are never deleted; remove them yourself once you've",
+        "confirmed the migrated data looks correct. Refuses (rather than",
+        "overwriting or merging) if the durable destination already has",
+        "conflicting content, or if Project Identity resolution is ambiguous (see",
+        "--project-id/--new-project). Idempotent: a workspace already on the",
+        "current scheme is reported as a no-op.",
+      ].join(" "),
+    )
+    .option(
+      "--project-id <id>",
+      "attach to an already-known project id instead of letting ce-harness detect or mint one " +
+        "automatically; the id must already exist -- this never invents one",
+    )
+    .option(
+      "--new-project",
+      "mint a brand-new Project Identity even if ce-harness recognizes (or partially recognizes) " +
+        "this repository as an existing project; mutually exclusive with --project-id",
+    )
+    .action(async (options: { projectId?: string; newProject?: boolean }) => {
+      await run(() =>
+        migrateOpenSpecCommand({ projectId: options.projectId, newProject: options.newProject }),
+      );
+    });
+
   program
     .command("cleanup")
+    .summary("Remove a workspace's worktree, branch, and workspace directory")
     .description(
       "Remove a workspace's worktree, branch, and workspace directory. With no argument, " +
         "removes the current default workspace; with [workspace] (as <project>/<issue> -- " +
