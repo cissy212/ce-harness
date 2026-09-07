@@ -2,6 +2,7 @@
   "name": "ce-harness",
   "version": "1.0.0",
   "description": "Personal, local-only developer harness CLI",
+  "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.12.0"

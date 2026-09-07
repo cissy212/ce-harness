@@ -887,5 +887,3 @@ command either way, that is entirely `/archive`'s own gate to decide:
 
 This command does not implement retrospective, intensity levels, export,
 or archive gating -- those remain out of scope for this version.
-
-_See `THIRD_PARTY_NOTICES.md` for this command's provenance and licensing._

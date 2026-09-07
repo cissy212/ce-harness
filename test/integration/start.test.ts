@@ -3277,7 +3277,7 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/only verifies and reports/i);
     });
 
-    it("carries no leading HTML comment or trailing provenance essay (provenance lives in THIRD_PARTY_NOTICES.md)", async () => {
+    it("carries no leading HTML comment, trailing provenance essay, or THIRD_PARTY_NOTICES.md pointer -- this is the author's own original work, confirmed to have no third-party source (see THIRD_PARTY_NOTICES.md's 'Provenance correction')", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
@@ -3286,7 +3286,7 @@ describe("ce start (integration)", () => {
       expect(content).not.toMatch(/_Provenance:/);
       expect(content).not.toMatch(/market-audit-tool/i);
       expect(content).not.toMatch(/verify-against-spec/i);
-      expect(content).toMatch(/THIRD_PARTY_NOTICES\.md/);
+      expect(content).not.toMatch(/THIRD_PARTY_NOTICES\.md/);
     });
 
     it("never places verify.md inside the target repository or worktree", async () => {

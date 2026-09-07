@@ -25,6 +25,12 @@ installation section in order. Every command below can be copy-pasted
 as-is (commands containing a placeholder like `<repository-url>` are
 called out explicitly).
 
+ce-harness's own code and documentation are licensed under the
+[ISC License](LICENSE). Several bundled workflow templates under
+`templates/` are adapted from other projects under their own licenses —
+see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full,
+per-file provenance.
+
 **Contents**
 - [Installation](#installation)
 - [User Guide](#user-guide)
@@ -55,16 +61,29 @@ You need all four of the following installed before you start:
 - **git** — to clone this repository and for ce-harness to manage worktrees.
 - **Node.js and npm** — to install and build ce-harness. See the exact
   supported version in the next section.
-- **The OpenCode CLI** — the tool ce-harness launches inside each worktree.
+- **The [Claude Code](https://claude.com/claude-code) CLI (`claude`), installed
+  and authenticated** — the coding-agent runner `ce start`/`ce review`
+  launch by default (no `--runner` flag needed; using your own
+  authenticated CLI session, never the Anthropic API, and no API key is
+  ever read or required). See
+  [Choosing a coding-agent runner](#choosing-a-coding-agent-runner) for
+  what it needs to be logged in to, and how to switch to the other
+  supported runner instead.
 - **The OpenSpec CLI** — the tool ce-harness uses to manage specs for each
-  change.
+  change. Always required, regardless of which coding-agent runner you use.
 
-Optionally, if you want to use `ce review` (see
-[Reviewing a GitHub pull request](#reviewing-a-github-pull-request)):
+Optionally:
 
+- **The OpenCode CLI** — only needed if you plan to use `--runner
+  opencode` instead of the default. Skip this if you're staying with
+  the default Claude Code runner.
 - **The [`gh` CLI](https://cli.github.com)**, installed and authenticated
-  (`gh auth login`). Every other command, including `ce start --base
-  --head`, has no GitHub dependency at all.
+  (`gh auth login`) — needed for `ce review` (see
+  [Reviewing a GitHub pull request](#reviewing-a-github-pull-request))
+  and for `ce publish --confirm` (see [`ce
+  publish`](#ce-publish-workspace---change-name)). Every other command,
+  including `ce start --base --head` and `ce publish` without
+  `--confirm`, has no GitHub dependency at all.
 
 The next sections install each of these one at a time.
 
@@ -130,24 +149,32 @@ npm install
 
 This downloads ce-harness's own dependencies (`commander`, `execa`,
 `yaml`, `zod`) into a local `node_modules` folder. It does not install
-OpenCode or OpenSpec — those are separate tools, installed in the next
-two steps.
+Claude Code, OpenSpec, or OpenCode — those are separate tools, installed
+in the next steps.
 
-### 5. Install the OpenCode CLI
+### 5. Install the Claude Code CLI
+
+This is the coding-agent runner `ce start`/`ce review` launch by default,
+so install and log in to it now unless you already have. Follow the
+installation instructions at [claude.com/claude-code](https://claude.com/claude-code)
+for your platform, then authenticate:
 
 ```bash
-npm install -g opencode-ai
+claude
 ```
 
-Confirm it installed correctly and check its version:
+Follow its own login flow if prompted. Once authenticated, confirm it's
+on your `PATH`:
 
 ```bash
-opencode --version
+claude --version
 ```
 
-This should print a version number (for example `1.18.13`) with no
-errors. If it prints "command not found" instead, see "Troubleshooting"
-below.
+This should print a version number with no errors. If it prints "command
+not found" instead, see "Troubleshooting" below. (If you plan to use
+`--runner opencode` instead and never the default, you can skip this
+step and install the OpenCode CLI in step 7 instead — see [Choosing a
+coding-agent runner](#choosing-a-coding-agent-runner).)
 
 ### 6. Install the OpenSpec CLI
 
@@ -165,7 +192,26 @@ This should print a version number (for example `1.6.0`) with no
 errors. If it prints "command not found" instead, see "Troubleshooting"
 below.
 
-### 7. Build ce-harness
+### 7. (Optional) Install the OpenCode CLI
+
+Only needed if you plan to use `--runner opencode` instead of the
+default Claude Code runner — skip this step otherwise.
+
+```bash
+npm install -g opencode-ai
+```
+
+Confirm it installed correctly and check its version:
+
+```bash
+opencode --version
+```
+
+This should print a version number (for example `1.18.13`) with no
+errors. If it prints "command not found" instead, see "Troubleshooting"
+below.
+
+### 8. Build ce-harness
 
 ```bash
 npm run build
@@ -176,7 +222,7 @@ This compiles ce-harness's TypeScript source into a runnable
 not need to run `chmod` or any other permission command yourself. The
 command should finish with no error output.
 
-### 8. Link the `ce` command globally
+### 9. Link the `ce` command globally
 
 ```bash
 npm link
@@ -186,7 +232,7 @@ This makes the `ce` command available everywhere on your system,
 pointing at the `dist/cli.js` you just built. `npm link` may print
 information about the packages it audited — that is normal.
 
-### 9. Verify the installation
+### 10. Verify the installation
 
 Confirm your shell can find the `ce` command:
 
@@ -209,7 +255,7 @@ the `start`, `resume`, `status`, and `cleanup` commands. If you see a
 "permission denied" error or any other error instead of the usage text,
 see "Troubleshooting" below.
 
-### 10. First `ce` command to run
+### 11. First `ce` command to run
 
 `ce status` is the safest first command to run — it never modifies
 anything and works whether or not you've started any ce-harness
@@ -237,7 +283,9 @@ ce start /path/to/your/repository your-issue-name
 ```
 
 This creates an isolated worktree and workspace for that issue and
-launches OpenCode inside it. Replace `/path/to/your/repository` with the
+launches Claude Code inside it (the default runner — see [Choosing a
+coding-agent runner](#choosing-a-coding-agent-runner) to use OpenCode
+instead). Replace `/path/to/your/repository` with the
 real path to a Git repository on your machine, and `your-issue-name`
 with a short, filesystem-safe name for what you're working on (for
 example `fix-login-bug` or `issue-42`).
@@ -300,8 +348,8 @@ example `fix-login-bug` or `issue-42`).
   untracked. Immediately after creating the worktree, `ce start`
   inspects it (read-only — it never installs anything or runs any
   repository script) for common, repository-agnostic conventions and
-  prints exactly what's missing and the command to fix it, before
-  OpenCode launches. It always suggests the minimum necessary action,
+  prints exactly what's missing and the command to fix it, before the
+  coding-agent runner launches. It always suggests the minimum necessary action,
   never defaulting to a full dependency install: if dependencies are
   genuinely never installed (`package.json`/`composer.json` present, no
   `node_modules/`/`vendor/`), it suggests installing them; but if
@@ -486,7 +534,7 @@ final "Opened iTerm2 tab" line only appears on macOS with iTerm2
 available — see [Desktop experience](#desktop-experience-macos--iterm2)
 for what happens otherwise, including how the tab's title is chosen.)
 
-Opening that worktree in your editor later — after OpenCode has already
+Opening that worktree in your editor later — after the runner has already
 launched, or in a second terminal — is a single command too, no need to
 copy the path shown above:
 
@@ -495,7 +543,10 @@ ce open
 ```
 
 From there, work through the
-[workflow inside OpenCode](#the-workflow-inside-opencode): `/explore` or
+[workflow inside OpenCode](#the-workflow-inside-opencode) (the walkthrough
+uses OpenCode's terminology, but every command works identically in
+Claude Code — see [Choosing a coding-agent
+runner](#choosing-a-coding-agent-runner)): `/explore` or
 `/propose` to plan, `/apply` to implement, `/verify` and
 `/adversarial-review` to check the work, `/archive` to finish.
 
@@ -510,7 +561,7 @@ project's durable OpenSpec store is left registered and untouched — it
 lives outside the workspace directory entirely, so cleanup structurally
 cannot reach it, and the next `ce start` for this repository reuses it.
 Use `ce status` any time in between to see what's currently active. If
-OpenCode ever exits before you're done
+the runner ever exits before you're done
 (closed the terminal, crashed, etc.), `ce resume` gets you straight back
 into the same workspace — see [Resuming a session](#resuming-a-session).
 
@@ -937,10 +988,10 @@ repository path and the PR number:
 ```bash
 ce review /path/to/repo 119
 
-# OpenCode opens
+# the runner opens (Claude Code by default)
 /adversarial-review
 
-# if OpenCode closes
+# if it closes
 ce resume
 
 # when finished
@@ -955,7 +1006,7 @@ working tree, and never assumes the PR's head branch exists on
 `origin` — same-repo and fork PRs both work), and starts the same
 Existing PR review workspace described below, with the issue
 identifier defaulted to `review-pr-<number>` so you never have to name
-it yourself. Before OpenCode launches, it prints a concise summary:
+it yourself. Before the runner launches, it prints a concise summary:
 
 ```
 GitHub PR #119
@@ -986,7 +1037,7 @@ yet. Pass `--from <ref>` to start from that ref instead, while keeping
 everything else about a normal Implementation workspace unchanged:
 
 ```bash
-ce start /path/to/your/repository scv-ai-dev-deployment --from feature/scv-ai-jano-auth
+ce start /path/to/your/repository add-billing-export --from feature/billing-export-prep
 ```
 
 - `<ref>` can be a local branch, an `origin/<branch>` remote-tracking
@@ -1059,7 +1110,7 @@ verdict rules — is identical to the Implementation-workspace flow.
 
 ### Resuming a session
 
-If OpenCode exits (you closed the terminal, it crashed, etc.), the
+If the runner exits (you closed the terminal, it crashed, etc.), the
 workspace is still there, exactly as `ce start` left it — get back into
 it with:
 
@@ -1071,26 +1122,35 @@ ce resume
 this exact command, rather than refusing outright — see [Many preserved
 workspaces, one default](#core-concepts) above.)
 
-This relaunches OpenCode with exactly the same environment `ce start`
-used the first time, in the same worktree. It requires an active
-workspace and never creates, registers, or initializes anything — no new
-worktree, no new workspace, no OpenSpec store, no CodeGraph index — and
-it never modifies `workspace.yml`. If there's no active workspace, or the
-recorded worktree/workspace is missing or its metadata doesn't check out,
-it explains exactly what's wrong and points you at `ce cleanup --force`
-rather than guessing or repairing anything silently.
+This relaunches the same runner the workspace was started with (Claude
+Code or OpenCode — see [Choosing a coding-agent
+runner](#choosing-a-coding-agent-runner)) with exactly the same
+environment `ce start` used the first time, in the same worktree. It
+requires an active workspace and never creates, registers, or
+initializes anything — no new worktree, no new workspace, no OpenSpec
+store, no CodeGraph index — and it never modifies `workspace.yml`. If
+there's no active workspace, or the recorded worktree/workspace is
+missing or its metadata doesn't check out, it explains exactly what's
+wrong and points you at `ce cleanup --force` rather than guessing or
+repairing anything silently.
 
 Reconstructing the launch command by hand is no longer the normal path —
 keep it only as a fallback for debugging (e.g. if `ce resume` itself
-can't launch OpenCode, it prints the exact manual command, in the form
-`cd "<worktree-path>" && CE_WORKSPACE="..." CE_WORKTREE="..." ... opencode`,
-which you can copy-paste directly).
+can't launch the runner, it prints the exact manual command, in the form
+`cd "<worktree-path>" && CE_WORKSPACE="..." CE_WORKTREE="..." ... claude`
+(or `... opencode` for an OpenCode workspace), which you can copy-paste
+directly).
 
 ### The workflow inside OpenCode
 
-Once OpenCode is launched inside the worktree, these slash commands are
-available (in `opencode/commands/` inside the workspace's OpenCode
-config, wired up automatically):
+The commands below are the same canonical workflow for either runner —
+materialized from the same `templates/` source (see [Choosing a
+coding-agent runner](#choosing-a-coding-agent-runner)) — this section
+just uses OpenCode's terminology and directory layout to describe it
+concretely; substitute Claude Code's `.claude/commands/` if that's what
+you're using instead. Once the runner is launched inside the worktree,
+these slash commands are available (in `opencode/commands/` inside the
+workspace's OpenCode config, wired up automatically):
 
 | Command | What it does |
 |---|---|
@@ -1152,6 +1212,18 @@ They're discovered from `$CE_LENSES_DIR` (a plain directory of `.md`
 files inside the workspace — never a runner-specific path), so a
 different runner adapter could point its own discovery mechanism at the
 same files without ce-harness duplicating anything.
+
+**CodeGraph** (referenced elsewhere in this document as "semantic code
+navigation") is an entirely optional, separate tool for faster codebase
+exploration during a review. ce-harness never installs it and never
+requires it: at `ce start`, it's auto-detected (a `codegraph` binary on
+`PATH`, overridable with `CE_CODEGRAPH_BIN`) and wired up opportunistically
+when present, with no configuration of your own needed either way — if
+it's not installed, every command falls back to ordinary Grep/Read with
+no loss of functionality. When used, its index lives at
+`<worktree>/.codegraph/` (see [Directory layout
+reference](#directory-layout-reference)) and is never something you need
+to install to follow this guide.
 
 ### Environment-mutation safety
 
@@ -1225,9 +1297,10 @@ ce-harness also ships two [Agent Skills](https://agentskills.io)
 
 ### Environment variables reference
 
-Injected automatically when `ce start` or `ce resume` launches OpenCode —
-read by the workflow commands, lenses, and skills, and useful if you ever
-need to relaunch manually for debugging (see
+Injected automatically when `ce start` or `ce resume` launches the
+coding-agent runner (Claude Code or OpenCode) — read by the workflow
+commands, lenses, and skills, and useful if you ever need to relaunch
+manually for debugging (see
 [Resuming a session](#resuming-a-session)):
 
 | Variable | Meaning |
@@ -1243,10 +1316,13 @@ need to relaunch manually for debugging (see
 
 A few more exist purely to override ce-harness's own defaults (mainly
 useful for development/testing, not day-to-day use): `CE_HARNESS_HOME`
-(defaults to `~/.ce-harness`), `CE_OPENCODE_BIN` / `CE_OPENSPEC_BIN`
-(defaults to `opencode` / `openspec` on `PATH`), and `CE_TEMPLATES_ROOT`
-(defaults to ce-harness's own bundled `templates/` directory). Two more
-are genuinely useful day to day: `CE_EDITOR_BIN` (defaults to `code` on
+(defaults to `~/.ce-harness`), `CE_CLAUDE_BIN` / `CE_OPENCODE_BIN` /
+`CE_OPENSPEC_BIN` / `CE_GH_BIN` / `CE_DOCKER_BIN` / `CE_OSASCRIPT_BIN` /
+`CE_CODEGRAPH_BIN` (default to `claude` / `opencode` / `openspec` / `gh` /
+`docker` / `osascript` / `codegraph` on `PATH`, respectively), and
+`CE_TEMPLATES_ROOT` (defaults to ce-harness's own bundled `templates/`
+directory). Two more are genuinely useful day to day: `CE_EDITOR_BIN`
+(defaults to `code` on
 `PATH`) overrides which editor CLI `ce open` invokes — set it in your own
 shell profile if you use a `code`-compatible fork instead of vanilla VS
 Code — and `CE_TERMINAL_LAYOUT` (`auto` / `iterm2` / `none`) overrides
@@ -1320,11 +1396,11 @@ this situation most often means you have more than one Node installation
 and `npm link` used a different one than your shell's default `node`.
 Run `which node` and `npm config get prefix` together, and make sure
 they refer to the same Node installation; if not, switch to a single
-Node version manager (nvm is recommended) and re-run steps 4, 7, and 8.
+Node version manager (nvm is recommended) and re-run steps 4, 8, and 9.
 
 ### `ce --help` fails with a permission error
 
-If you built with `npm run build` from this repository (step 7), this
+If you built with `npm run build` from this repository (step 8), this
 should not happen — the build step marks `dist/cli.js` executable
 automatically. If you still see a permission error, confirm the file's
 permissions directly:
@@ -1337,10 +1413,20 @@ The permissions column should look like `-rwxr-xr-x` (note the `x`
 letters). If it does not, re-run `npm run build` and check again before
 doing anything else.
 
+### `claude: command not found`
+
+The Claude Code CLI (step 5) either failed to install or isn't on your
+`PATH`. Follow the installation instructions at
+[claude.com/claude-code](https://claude.com/claude-code) again and watch
+for errors, then re-run `claude --version`. If you're deliberately using
+`--runner opencode` and never the default, you don't need `claude`
+installed at all — see [Choosing a coding-agent
+runner](#choosing-a-coding-agent-runner).
+
 ### `opencode: command not found` or `openspec: command not found`
 
-One of the two CLIs from steps 5–6 either failed to install or isn't on
-your `PATH`. Re-run the relevant install command and watch for errors:
+One of these two CLIs either failed to install or isn't on your `PATH`.
+Re-run the relevant install command and watch for errors:
 
 ```bash
 npm install -g opencode-ai
@@ -1351,7 +1437,8 @@ Then re-run `opencode --version` and `openspec --version`. If the
 install command itself reports a permissions error, you likely have npm
 configured to install global packages into a system directory your user
 account can't write to — using nvm (which owns its own, user-writable
-install directory) avoids this entirely.
+install directory) avoids this entirely. (`opencode` is only needed at
+all if you use `--runner opencode` — see step 7.)
 
 ### `ce start` fails with "The 'openspec' executable is not installed or could not be run"
 
@@ -1359,6 +1446,20 @@ This means `openspec` (step 6) is not on the `PATH` that `ce` itself
 sees when it runs, even if it works when you type `openspec` directly.
 Confirm with `command -v openspec` in the same terminal you're running
 `ce` from, and reinstall if needed.
+
+### `ce start`/`ce review` fails to launch Claude Code, or the right-hand iTerm2 pane shows "command not found: claude"
+
+This means the `claude` CLI (step 5) isn't installed, isn't authenticated,
+or isn't on the `PATH` `ce` itself sees. Outside of macOS+iTerm2, `ce
+start` reports this itself as "Failed to launch Claude Code: ...". On
+macOS with iTerm2, the two-pane tab still opens (the left shell pane is
+unaffected) and `ce start` prints its normal success output regardless —
+check the right pane directly, since a shell command failing there isn't
+something `ce start` can observe. Either way, confirm with `command -v
+claude` and `claude --version` in the same terminal you're running `ce`
+from, then re-run `ce resume`. If you'd rather not install Claude Code
+at all, use `--runner opencode` instead (see [Choosing a coding-agent
+runner](#choosing-a-coding-agent-runner)).
 
 ### `ce start` fails with "Repository ... has uncommitted or untracked changes"
 

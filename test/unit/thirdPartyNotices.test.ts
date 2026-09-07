@@ -27,10 +27,7 @@ describe("THIRD_PARTY_NOTICES.md", () => {
       "templates/commands/apply.md",
       "templates/commands/archive.md",
       "templates/skills/openspec-sync-specs/SKILL.md",
-      "templates/commands/verify.md",
       "templates/commands/adversarial-review.md",
-      "templates/lenses/backend-developer.md",
-      "templates/lenses/pipeline-data-engineer.md",
     ];
 
     for (const entry of expectedEntries) {
@@ -38,64 +35,54 @@ describe("THIRD_PARTY_NOTICES.md", () => {
     }
   });
 
+  it("has no entry for files confirmed as the author's own original work (verify.md, backend-developer.md, pipeline-data-engineer.md)", async () => {
+    const content = await readFile(noticesPath, "utf8");
+
+    const headings = content.match(/^## .+$/gm) ?? [];
+    expect(headings).not.toContain("## templates/commands/verify.md");
+    expect(headings).not.toContain("## templates/lenses/backend-developer.md");
+    expect(headings).not.toContain("## templates/lenses/pipeline-data-engineer.md");
+  });
+
   it("confirms MIT for the OpenSpec-derived entries", async () => {
     const content = await readFile(noticesPath, "utf8");
 
-    const openSpecSection = content.split("## templates/commands/verify.md")[0];
+    const openSpecSection = content.split("## templates/commands/adversarial-review.md")[0];
     expect(openSpecSection).toMatch(/propose\.md[\s\S]*?License: MIT \(confirmed\)/);
     expect(openSpecSection).toMatch(/apply\.md[\s\S]*?License: MIT \(confirmed\)/);
     expect(openSpecSection).toMatch(/archive\.md[\s\S]*?License: MIT \(confirmed\)/);
     expect(openSpecSection).toMatch(/openspec-sync-specs[\s\S]*?License: MIT \(confirmed\)/);
   });
 
-  it("never claims MAT content is redistributable, and marks it for human review", async () => {
+  it("never claims MAT as a copyright source anywhere, and records the provenance correction", async () => {
     const content = await readFile(noticesPath, "utf8");
 
-    // Every MAT-sourced per-file entry must carry the unresolved-license
-    // label (excluding the "Publication review required" section itself,
-    // which discusses MAT but is not a per-file entry).
-    const matEntries = content
-      .split(/^## /m)
-      .filter((section) => section.startsWith("templates/") && /market-audit-tool/i.test(section));
-    expect(matEntries.length).toBeGreaterThanOrEqual(4);
-    for (const section of matEntries) {
-      expect(section).toMatch(
-        /Internal methodological reference -- redistribution permission not confirmed/,
-      );
-      expect(section).not.toMatch(/License: MIT/);
+    // No per-file entry may list MAT as an upstream project or source.
+    const perFileSections = content.split(/^## /m).filter((section) => section.startsWith("templates/"));
+    for (const section of perFileSections) {
+      expect(section).not.toMatch(/Upstream project.*MAT/i);
+      expect(section).not.toMatch(/market-audit-tool/i);
     }
 
-    // Must not claim MIT (or any other open license) for MAT itself anywhere.
-    expect(content).not.toMatch(/MAT[\s\S]{0,80}License: MIT/);
+    // The historical correction is recorded, explaining why.
+    expect(content).toMatch(/## Provenance correction/);
+    const correction = content.split("## Provenance correction")[1]?.split("---")[0] ?? "";
+    expect(correction).toMatch(/MAT is not, and never was, a copyright source/i);
+    expect(correction).toMatch(/no material from MAT\/SCV was ever copied/i);
+    expect(correction).toMatch(
+      /No file in this project currently requires permission or a clean-room\s*rewrite before publication\./,
+    );
   });
 
-  it("has a prominent 'Publication review required' section listing the affected files and remediation paths", async () => {
-    const content = await readFile(noticesPath, "utf8");
-
-    expect(content).toMatch(/## Publication review required/);
-    const section = content.split("## Publication review required")[1]?.split("---")[0] ?? "";
-
-    for (const file of [
-      "templates/commands/verify.md",
-      "templates/commands/adversarial-review.md",
-      "templates/lenses/backend-developer.md",
-      "templates/lenses/pipeline-data-engineer.md",
-    ]) {
-      expect(section).toContain(file);
-    }
-
-    expect(section).toMatch(/written permission/i);
-    expect(section).toMatch(/clean-room rewrite/i);
-    expect(section).toMatch(/not permission for public redistribution/i);
-  });
-
-  it("confirms MIT for lidr-specboot's contribution to adversarial-review.md, separately from MAT's", async () => {
+  it("confirms MIT for lidr-specboot's (expanded) contribution to adversarial-review.md", async () => {
     const content = await readFile(noticesPath, "utf8");
     const section = content.split("## templates/commands/adversarial-review.md")[1] ?? "";
 
-    expect(section).toMatch(/lidr-specboot content -- MIT \(confirmed/);
-    expect(section).toMatch(
-      /MAT content -- \*\*Internal methodological reference -- redistribution permission not confirmed\.\*\*/,
-    );
+    expect(section).toMatch(/Upstream project: lidr-specboot \(public, MIT\)/);
+    expect(section).toMatch(/License: MIT \(confirmed, Copyright \(c\) 2026 LIDR\.co\)/);
+    // The expanded verbatim/near-verbatim content this entry now documents.
+    expect(section).toMatch(/Act as an independent adversarial reviewer/);
+    expect(section).toMatch(/PASS \(adversarial\)/);
+    expect(section).toMatch(/Adversarial pass \(refute, do not rubber-stamp\)/);
   });
 });

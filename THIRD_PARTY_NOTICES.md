@@ -5,41 +5,39 @@ methodologically inspired by other projects. It replaces per-file
 history/provenance prose that previously lived inside the executable
 templates themselves (removed to reduce token cost on every load).
 
-## Publication review required
+## Provenance correction (2026-09-07)
 
-**Before ce-harness is published publicly, the files listed below must
-not contain copied or closely adapted expression from MAT
-(market-audit-tool) unless explicit permission is obtained from its
-rights holder.**
+An earlier version of this file listed `templates/commands/verify.md`,
+`templates/lenses/backend-developer.md`, `templates/lenses/pipeline-data-engineer.md`,
+and part of `templates/commands/adversarial-review.md` as adapted from
+MAT (market-audit-tool), a private/internal repository, and flagged all
+four as requiring permission or a clean-room rewrite before public
+publication.
 
-MAT is a private/internal repository with no confirmed license. Its
-entries in this file record where its methodology and phrasing were used
-as an internal reference during development. **A notice in this file is
-not permission for public redistribution** and must not be treated as
-one.
+That premise was wrong. ce-harness's author wrote this content
+themselves, in a personal draft branch of MAT -- MAT was the workspace
+the drafting happened in, not a pre-existing third-party source that was
+copied from. MAT is not, and never was, a copyright source for any
+ce-harness content, and no material from MAT/SCV was ever copied into
+this project. The entries below have been corrected accordingly:
 
-Files requiring one of the two remediations below before public
-publication:
+- `templates/commands/verify.md`, `templates/lenses/backend-developer.md`,
+  and `templates/lenses/pipeline-data-engineer.md` are the author's own
+  original work. A direct comparison against `lidr-specboot` (the one
+  concretely identifiable methodology reference in this project's
+  history -- see below) found no matching content in any of the three;
+  their entries have been removed. No permission or rewrite is needed
+  for these files.
+- `templates/commands/adversarial-review.md` does contain genuine
+  third-party expression -- from `lidr-specboot`, not MAT -- and it is
+  larger than this file previously recorded (it previously listed only
+  two verbatim sentences). Its entry below has been corrected and
+  expanded to describe the actual extent of that content. It was
+  already, and remains, fully covered by `lidr-specboot`'s confirmed MIT
+  license; no permission or rewrite is needed for it either.
 
-- `templates/commands/verify.md`
-- `templates/commands/adversarial-review.md` (the MAT-derived portions
-  only -- the lidr-specboot-derived portions are separately licensed MIT
-  and are not affected)
-- `templates/lenses/backend-developer.md`
-- `templates/lenses/pipeline-data-engineer.md`
-
-Required remediation, before public publication, for each file above:
-
-- **(a)** obtain written permission from MAT's rights holder to
-  redistribute the adapted expression under a stated license, or
-- **(b)** perform an independent clean-room rewrite of the file, based
-  only on generic software-engineering ideas and publicly available,
-  appropriately licensed sources, with no reference to MAT's text during
-  the rewrite.
-
-This rename/cleanup task is not that clean-room rewrite and does not
-weaken or alter the methodology in these files; it only relocates their
-provenance documentation out of the executable templates.
+No file in this project currently requires permission or a clean-room
+rewrite before publication.
 
 ---
 
@@ -71,37 +69,24 @@ provenance documentation out of the executable templates.
 - License: MIT (confirmed)
 - Relationship: Adapted -- sync workflow, delta-spec discovery, and per-capability merging preserved unchanged; `CE_OPENSPEC_STORE` made mandatory, main-spec path explicitly store-rooted, guardrail added.
 
-## templates/commands/verify.md
-- Upstream project: MAT (market-audit-tool) -- private/internal repository
-- Source: `ai-specs/skills/verify-against-spec/SKILL.md` and `.opencode/commands/verify.md`
-- Source revision: commit `457411e` (2026-07-24)
-- License: **Internal methodological reference -- redistribution permission not confirmed.** No LICENSE file in the source repository. See "Publication review required" above.
-- Relationship: Adapted -- change-resolution flow, requirement/scenario verification loop, VERIFIED/PARTIALLY VERIFIED/NOT VERIFIED/BLOCKED categories, and checked-task audit preserved; generalized to be repository-agnostic and external-store-aware; MAT-specific specialist-agent mapping, PIPELINE.md reads, Docker assumption, and hardcoded npm commands removed. The `Overall Verdict` now leads with a `**Verdict:**` sentinel line (exactly `PASS`/`PASS WITH GAPS`/`FAIL`, nothing else) plus a recorded worktree commit SHA (human reference), a worktree fingerprint (HEAD plus any uncommitted tracked/untracked implementation changes -- a commit alone would miss uncommitted work), and an artifacts hash (proposal/design/tasks/specs, not just tasks.md), so `/archive` can grep it deterministically and detect stale evidence. The "run `/adversarial-review` next" recommendation is now conditional on a clean `PASS` verdict -- a `FAIL`/`PASS WITH GAPS` report instead recommends fixing the findings and re-running `/verify`, never proceeding forward to `/adversarial-review` or `/archive` on a report that isn't clean. The report's `YYYY-MM-DD` filename date and `**Date:**` field must now both come from running `date -u +%Y-%m-%d`, never inferred from the model's own memory or training data -- a real usage bug where an agent guessed the wrong calendar date. Verification-command discovery (step 8) no longer stops at the worktree root: it now finds every scope the changed files touch (walking each changed file's directory upward to its nearest package manifest/task-runner/CI-config) and inspects each one independently before declaring a validation category unavailable -- a real usage bug where a nested app's own `format:check` was missed because only root-level tooling was inspected. Tooling/execution scope boundaries (manifests, task runners, CI/build configuration) are now kept strictly separate from instruction evidence (`AGENTS.md`/`README.md`/`CONTRIBUTING.md`, gathered independently at every directory level along the same path) -- a documentation file in an intermediate directory can no longer stop scope discovery early or define a command's working directory by itself. The "Report back" step now also gives a ready-to-run `ce open --path "<report path>"` command alongside the printed report path (backed by a new `--path` option on `ce open`, validated to resolve inside the workspace's trusted OpenSpec store) -- the same fix applied to `/adversarial-review`, for the same real usage bug: a printed filesystem path alone was not an actionable handoff.
-
 ## templates/commands/adversarial-review.md
-- Upstream projects: lidr-specboot (public, MIT) and MAT (market-audit-tool, private/internal)
-- Sources: lidr-specboot `ai-specs/skills/adversarial-review/SKILL.md`; MAT `ai-specs/skills/adversarial-review/SKILL.md` and `.opencode/commands/adversarial-review.md`
-- Source revisions: lidr-specboot commit `4efb044` (2026-05-12); MAT commit `9afcb15` (2026-07-28)
-- License: lidr-specboot content -- MIT (confirmed, Copyright (c) 2026 LIDR.co). MAT content -- **Internal methodological reference -- redistribution permission not confirmed.** No LICENSE file in the source repository. See "Publication review required" above.
-- Relationship: Adapted -- adversarial mindset and framing verbatim-quoted from lidr-specboot in two sentences ("This skill is intended for the verification window...", "Do not prescribe which agent, model, or IDE to use..."); adversarial-pass steps, Area/Confidence taxonomies, and evidence-discipline requirements from MAT's refined skill; generalized to be repository-agnostic and external-store-aware; MAT's report-path/archive-gate coupling and pr-review/bug-investigation references removed. The `Overall Verdict` now leads with a `**Verdict:**` sentinel line (exactly `PASS`/`PASS WITH GAPS`/`FAIL`, nothing else) plus a recorded worktree commit SHA (human reference), a worktree fingerprint (HEAD plus any uncommitted tracked/untracked implementation changes), and an artifacts hash (proposal/design/tasks/specs, not just tasks.md) -- all Implementation workspaces only -- so `/archive` can grep it deterministically and detect stale evidence -- a ce-harness-native, minimal reintroduction of an archive-gate coupling, not the MAT-specific one removed above. This command's own "Report back" step now states a next step explicitly (it previously stated none): a `FAIL`/`PASS WITH GAPS` verdict recommends fixing the findings and re-running `/verify`, never `/archive`; a clean `PASS` verdict recommends `/archive` only conditionally, on `/verify`'s own most recent report also being a fresh, clean `PASS` -- `/archive`'s own gate remains the sole authority on whether archiving actually succeeds. The report's `YYYY-MM-DD` filename date and `**Date:**` field must now both come from running `date -u +%Y-%m-%d`, never inferred from the model's own memory or training data -- the same fix applied to `/verify`, for the same real usage bug. The "Report back" step now also gives a ready-to-run `ce open --path "<report path>"` command alongside the printed report path (backed by a new `--path` option on `ce open`, validated to resolve inside the workspace's trusted OpenSpec store) -- a real usage bug where the printed filesystem path alone was not an actionable handoff (not inside the worktree, not a URL, and unclickable from a terminal).
-
-## templates/lenses/backend-developer.md
-- Upstream project: MAT (market-audit-tool) -- private/internal repository
-- Source: `ai-specs/agents/backend-developer.md`
-- Source revision: commit `a81f15b` (2026-07-24)
-- License: **Internal methodological reference -- redistribution permission not confirmed.** No LICENSE file in the source repository. See "Publication review required" above.
-- Relationship: Adapted -- read-before-reasoning, scope/risk classification, engineering principles, abstraction discipline, and query/transaction reasoning preserved in substance; runner-specific metadata, MAT paths/examples, and MAT's plan/review output formats removed; rewritten as a portable reasoning lens.
-
-## templates/lenses/pipeline-data-engineer.md
-- Upstream project: MAT (market-audit-tool) -- private/internal repository
-- Source: `ai-specs/agents/pipeline-data-engineer.md`
-- Source revision: commit `cfff04d` (2026-07-24)
-- License: **Internal methodological reference -- redistribution permission not confirmed.** No LICENSE file in the source repository. See "Publication review required" above.
-- Relationship: Adapted -- idempotency/work-selection/concurrency/checkpoint/observability principles and execution patterns preserved in substance; every MAT-specific example genericized; runner-specific metadata and MAT's plan/review output formats removed.
+- Upstream project: lidr-specboot (public, MIT)
+- Source: `ai-specs/skills/adversarial-review/SKILL.md`
+- Source revision: commit `4efb044` (2026-05-12) -- reconfirmed unchanged at this commit on 2026-09-07
+- License: MIT (confirmed, Copyright (c) 2026 LIDR.co)
+- Relationship: Adapted. Verbatim or near-verbatim content from lidr-specboot, beyond what an earlier version of this entry recorded (previously listed as only two sentences -- corrected here to the actual, larger extent found on re-review):
+  - The opening sentence, verbatim: "Act as an independent adversarial reviewer: assume gaps, flaws, or unsafe behavior may exist until you have argued against them with evidence."
+  - Two sentences on when/how this command applies, verbatim (as previously recorded): "This skill is intended for the verification window of spec-driven development (after implementation, before archiving), when the human runs a different agent or session than the one that implemented the change." and "Do not prescribe which agent, model, or IDE to use. That is the human's choice."
+  - Four of the five "Mindset" bullets, verbatim or near-verbatim: the cross-boundary/composition-risk bullet, the "treat the diff as incomplete context" bullet, and the "calibrate depth to risk" bullet (all verbatim); the "hunt/challenge incorrect assumptions about data shape, timing, ordering, authz, idempotency, and error handling" bullet (near-verbatim, one verb swapped).
+  - The "Adversarial pass (refute, do not rubber-stamp)" section heading, verbatim, and its four enumerated items (near-verbatim): the "could still fail" list (wrong input, partial failure, double-submit, stale cache, wrong role, race, empty state, oversized payload); the "negative and abuse cases" bullet; the "do they prove the criterion, or only the happy path?" question; and "record mismatches...as first-class findings."
+  - The `PASS (adversarial)` / `PASS WITH GAPS` / `FAIL` verdict vocabulary, verbatim, including the unusual "(adversarial)" qualifier on `PASS`.
+  - The "do not praise implementation to balance criticism unless a strength directly mitigates a documented risk" guardrail -- now this command's "Risk-Mitigating Observations" section instruction.
+  All of the above is covered by lidr-specboot's confirmed MIT license.
+  Everything else in this command is the author's own original elaboration, substantially exceeding lidr-specboot's ~115-line skill in scope: dual workspace-type handling (Implementation vs. Existing PR review, including the divergent baseline/report-destination/provenance-gate logic for each); a four-independent-axis finding classification (Severity, Confidence, Merge impact, and Area) replacing lidr-specboot's single Blocker/Major/Minor/Question axis; the mandatory, lens-independent "Baseline Review Coverage" pass (Step 6); ce-harness's own runner-agnostic reasoning-lens selection and application (Step 7); the two-table split between "Findings Affecting This Change" and "Pre-Existing or Adjacent Issues" (lidr-specboot has one undifferentiated findings table); a `**Verdict:**` sentinel line so `/archive` can grep it deterministically; a recorded worktree commit SHA, worktree fingerprint, and artifacts hash so `/archive` can detect stale review evidence; a challenge pass against any existing `/verify` report (Step 4); conditional next-step guidance based on the verdict; the `date -u +%Y-%m-%d` discipline for the report's date; and the `ce open --path "<report path>"` handoff in the "Report back" step, so a printed filesystem path into the external store is never the only way offered to reach the report.
 
 ## templates/skills/composition-patterns/SKILL.md and templates/skills/composition-patterns/rules/*.md
 - Upstream project: `vercel-labs/agent-skills` (public, discovered via skills.sh)
 - Source: `skills/composition-patterns/SKILL.md` and `skills/composition-patterns/rules/*.md` (8 rule files)
 - Upstream version: `1.0.0` (per the skill's own `metadata.json`)
-- License: MIT, as declared in the skill's own `SKILL.md` frontmatter (`license: MIT`). Note: the upstream repository has no repository-wide `LICENSE` file; this is a per-skill self-declared grant, not a repo-wide one. Treated as a legitimate, intentional MIT grant because the repository is published by Vercel specifically for one-command redistribution via the skills.sh/`npx skills` ecosystem, whose entire premise is installing this content into third-party projects -- unlike MAT's entries above, there is affirmative evidence of intent to allow redistribution.
+- License: MIT, as declared in the skill's own `SKILL.md` frontmatter (`license: MIT`). Note: the upstream repository has no repository-wide `LICENSE` file; this is a per-skill self-declared grant, not a repo-wide one. Treated as a legitimate, intentional MIT grant because the repository is published by Vercel specifically for one-command redistribution via the skills.sh/`npx skills` ecosystem, whose entire premise is installing this content into third-party projects.
 - Relationship: Vendored near-verbatim. Content is pure React/TypeScript reference knowledge (composition patterns, boolean-prop avoidance, compound components, context-based state decoupling, React 19 API changes) with no runner-specific tool coupling, no CLI invocations, and no OpenSpec/ce-harness-specific paths to adapt. Only the upstream repository's own authoring/build artifacts were dropped as not needed at runtime: `AGENTS.md` (a compiled duplicate of the `rules/*.md` files), `README.md`, `metadata.json`, and `rules/_sections.md`/`rules/_template.md` (upstream's own SKILL.md-generation scaffolding). `SKILL.md`'s frontmatter and body are otherwise unchanged; a trailing `_See THIRD_PARTY_NOTICES.md..._` line was appended to match ce-harness's existing skill-provenance convention.
