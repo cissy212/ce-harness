@@ -5,20 +5,21 @@ import { describe, expect, it } from "vitest";
 import { templatesRoot } from "../../src/core/templates.js";
 
 /**
- * README.md's lens table is documentation, not the source of truth --
- * the lens files' own frontmatter `description` is what actually drives
- * the lens-matching algorithm in /verify and /adversarial-review (see
- * README's own "Reasoning lenses" section). This test catches the
- * README table silently drifting away from what a lens's frontmatter
- * actually claims, without requiring fragile full-sentence equality:
- * README is allowed to phrase things as a shorter table cell, but every
- * topic the canonical frontmatter names must still be reflected in it.
+ * docs/workflow-guide.md's lens table is documentation, not the source
+ * of truth -- the lens files' own frontmatter `description` is what
+ * actually drives the lens-matching algorithm in /verify and
+ * /adversarial-review (see that doc's own "Reasoning lenses" section).
+ * This test catches the table silently drifting away from what a lens's
+ * frontmatter actually claims, without requiring fragile full-sentence
+ * equality: the doc is allowed to phrase things as a shorter table cell,
+ * but every topic the canonical frontmatter names must still be
+ * reflected in it.
  *
- * If a real gap is found, the fix is always to adjust README (never the
+ * If a real gap is found, the fix is always to adjust the doc (never the
  * lens file, which stays canonical).
  */
 
-const readmePath = join(fileURLToPath(new URL("../..", import.meta.url)), "README.md");
+const readmePath = join(fileURLToPath(new URL("../..", import.meta.url)), "docs", "workflow-guide.md");
 
 interface LensSpec {
   file: string;
@@ -105,16 +106,16 @@ async function readReadmeLensRow(lensName: string): Promise<string> {
   const rowPattern = new RegExp("\\|\\s*`" + lensName + "`\\s*\\|\\s*(.+?)\\s*\\|", "s");
   const match = content.match(rowPattern);
   if (!match) {
-    throw new Error(`README.md: no lens table row found for \`${lensName}\``);
+    throw new Error(`docs/workflow-guide.md: no lens table row found for \`${lensName}\``);
   }
-  // Strip backticks so `any`/`unknown` in README compares equally against
+  // Strip backticks so `any`/`unknown` in the doc compares equally against
   // the frontmatter's plain any/unknown wording.
   return match[1].replace(/`/g, "");
 }
 
-describe("README lens catalogue vs. lens frontmatter (canonical) consistency", () => {
+describe("docs/workflow-guide.md lens catalogue vs. lens frontmatter (canonical) consistency", () => {
   for (const lens of LENSES) {
-    it(`${lens.lensName}: every topic named in the lens frontmatter appears in README's table row`, async () => {
+    it(`${lens.lensName}: every topic named in the lens frontmatter appears in the doc's table row`, async () => {
       const description = await readLensDescription(lens.file);
       const topics = splitTopics(lens.extractTopicClause(description));
       expect(topics.length).toBeGreaterThan(0);
@@ -125,15 +126,15 @@ describe("README lens catalogue vs. lens frontmatter (canonical) consistency", (
       for (const topic of topics) {
         expect(
           normalizedRow,
-          `README's "${lens.lensName}" row is missing the topic "${topic}" that its frontmatter description names.\n` +
+          `docs/workflow-guide.md's "${lens.lensName}" row is missing the topic "${topic}" that its frontmatter description names.\n` +
             `Frontmatter description: ${JSON.stringify(description)}\n` +
-            `README row: ${JSON.stringify(readmeRow)}`,
+            `Doc row: ${JSON.stringify(readmeRow)}`,
         ).toContain(topic.toLowerCase());
       }
     });
   }
 
-  it("README's lens table lists exactly the six shipped lenses, in some order", async () => {
+  it("docs/workflow-guide.md's lens table lists exactly the six shipped lenses, in some order", async () => {
     const content = await readFile(readmePath, "utf8");
     for (const lens of LENSES) {
       expect(content).toMatch(new RegExp("\\|\\s*`" + lens.lensName + "`\\s*\\|"));
