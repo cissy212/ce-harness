@@ -3759,6 +3759,50 @@ describe("ce start (integration)", () => {
         }
       });
     });
+
+    describe("real UX blocker (E2E), same fix applied here: the report-back handoff gives an actionable ce open --path command, not just a bare filesystem path", () => {
+      const readVerify = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+      };
+
+      it("Step 10 instructs printing a ready-to-run `ce open --path \"<report path>\"` command, substituting the literal Step-9-resolved path", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        const reportBack = content.slice(
+          content.indexOf("## 10. Report back"),
+          content.indexOf("**Guardrails**"),
+        );
+        expect(reportBack).toContain('ce open --path "<the exact report path resolved in Step 9>"');
+        expect(normalized).toMatch(
+          /Substitute the literal, already-resolved absolute path from Step 9 --\s*never a placeholder, and never the store's root or the change's whole\s*directory/,
+        );
+      });
+
+      it("keeps the printed report path as a reference, but states it must never be the only way offered to reach the report", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/tell the user its exact path \(inside the/);
+        expect(normalized).toMatch(
+          /remains useful as a\s*reference \(e\.g\. to paste elsewhere\), but must never be the only way\s*offered to reach the/,
+        );
+      });
+
+      it("a guardrail requires the ce open --path command on every report, not just the printed path, and never a directory or --change in its place", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Never end Step 10 with only the report's printed filesystem path --\s*always also give the user a ready-to-run `ce open --path "<report\s*path>"` command for that exact file/,
+        );
+        expect(normalized).toMatch(
+          /Never substitute a directory, the\s*store root, or `ce open --change` for this -- the command must open\s*the exact report file just written\./,
+        );
+      });
+    });
   });
 
   describe("/adversarial-review command template", () => {
@@ -4590,6 +4634,59 @@ describe("ce start (integration)", () => {
           content.indexOf("**Guardrails**"),
         );
         expect(reportBack).toMatch(/State the next step based on the verdict/);
+      });
+    });
+
+    describe("real UX blocker (E2E): the report-back handoff gives an actionable ce open --path command, not just a bare filesystem path", () => {
+      const readAdversarialReview = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8");
+      };
+
+      it("Step 10 instructs printing a ready-to-run `ce open --path \"<report path>\"` command, substituting the literal Step-9-resolved path", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        const reportBack = content.slice(
+          content.indexOf("## 10. Report back"),
+          content.indexOf("**Guardrails**"),
+        );
+        expect(reportBack).toContain('ce open --path "<the exact report path resolved in Step 9>"');
+        expect(normalized).toMatch(
+          /Substitute the literal, already-resolved absolute path from Step 9 --\s*never a placeholder, and never the store's root or a change's whole\s*directory/,
+        );
+      });
+
+      it("explains this works for both workspace types, since ce open --path resolves against the store, not the worktree, and requires no editor-specific knowledge in this command", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /This\s*works identically for both workspace types \(`ce open --path` resolves\s*against the trusted OpenSpec store, not the worktree\), requires no\s*runner- or editor-specific knowledge in this command/,
+        );
+      });
+
+      it("keeps the printed report path as a reference, but states it must never be the only way offered to reach the report", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/tell the user its exact path \(inside the/);
+        expect(normalized).toMatch(
+          /remains useful as a\s*reference \(e\.g\. to paste elsewhere\), but must never be the only way\s*offered to reach the report\./,
+        );
+      });
+
+      it("a guardrail requires the ce open --path command on every report, not just the printed path, and never a directory or --change in its place", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Never end Step 10 with only the report's printed filesystem path --\s*always also give the user a ready-to-run `ce open --path "<report\s*path>"` command for that exact file/,
+        );
+        expect(normalized).toMatch(
+          /Never substitute a directory, the\s*store root, or `ce open --change` for this -- the command must open\s*the exact report file just written\./,
+        );
       });
     });
   });

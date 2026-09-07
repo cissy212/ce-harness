@@ -597,6 +597,19 @@ explicitly. Override the editor CLI with `CE_EDITOR_BIN` (any
 today with no code change, since they accept the same `<binary> <path>`
 invocation).
 
+`ce open --path <path>` opens one exact file or directory inside this
+workspace's OpenSpec store directly — e.g. the exact report `/verify` or
+`/adversarial-review` just wrote — without needing to know or navigate
+the store's internal path yourself. `<path>` must resolve inside the
+workspace's trusted OpenSpec store root; anything else is rejected.
+Mutually exclusive with `--change`, which opens a whole change's artifact
+directory by name instead of one exact path. `/adversarial-review`
+prints a ready-to-run `ce open --path "<report path>"` command as part of
+its own final report-back output for exactly this reason — a bare
+filesystem path into the external store isn't itself an actionable
+handoff (it isn't inside the worktree, isn't a URL, and doesn't
+Cmd/Ctrl-click open from a terminal).
+
 #### `ce status [workspace]`
 
 Read-only; safe to run any time, including with no default workspace set

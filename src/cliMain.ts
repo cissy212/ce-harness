@@ -204,7 +204,10 @@ export async function runCli(): Promise<void> {
         "-- purely a read, like `ce status`. With --change, opens the resolved workspace's " +
         "active OpenSpec change's artifacts (explore.md, enrich.md, proposal.md, design.md, " +
         "tasks.md, specs/, reports/ -- whichever exist) instead of the worktree, without " +
-        "needing to know the durable store's internal path. Creates nothing, registers " +
+        "needing to know the durable store's internal path. With --path, opens one exact " +
+        "file or directory inside the workspace's OpenSpec store instead -- e.g. the exact " +
+        "report /verify or /adversarial-review just wrote -- rejected if it isn't inside " +
+        "the store root; cannot be combined with --change. Creates nothing, registers " +
         "nothing, and never modifies workspace.yml or which workspace is the default.",
     )
     .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
@@ -214,9 +217,17 @@ export async function runCli(): Promise<void> {
         "change if no name is given (see `ce status`), or a specific one by name when " +
         "more than one is active",
     )
-    .action(async (workspace: string | undefined, options: { change?: string | true }) => {
-      await run(() => openCommand({ workspace, change: options.change }));
-    });
+    .option(
+      "--path <path>",
+      "open one exact file or directory inside this workspace's OpenSpec store directly " +
+        "(e.g. a report /verify or /adversarial-review just wrote) -- rejected if it isn't " +
+        "inside the store root; mutually exclusive with --change",
+    )
+    .action(
+      async (workspace: string | undefined, options: { change?: string | true; path?: string }) => {
+        await run(() => openCommand({ workspace, change: options.change, path: options.path }));
+      },
+    );
 
   program
     .command("migrate-openspec")

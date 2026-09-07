@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import { CeError } from "../core/errors.js";
 import { parseWorkspaceSelector } from "../core/sanitize.js";
 import {
@@ -29,17 +30,29 @@ export interface OpenCommandOptions {
    * <name>`): open that exact active change's artifacts by name.
    */
   change?: string | true;
+  /**
+   * Open an exact file or directory inside this workspace's trusted
+   * OpenSpec store directly -- e.g. the exact report `/verify` or
+   * `/adversarial-review` just wrote -- so the user never has to know or
+   * navigate the durable store's internal path themselves. Rejected if
+   * it doesn't resolve inside the store root, or if it doesn't exist.
+   * Mutually exclusive with `change`: `--change` opens a whole change's
+   * artifact directory by name, `--path` opens one exact path.
+   */
+  path?: string;
 }
 
 /**
- * `ce open`: opens either a workspace's worktree, or (with `--change`)
- * its OpenSpec change directory -- `explore.md`, `enrich.md`,
- * `proposal.md`, `design.md`, `tasks.md`, `specs/`, `reports/`,
- * whichever of them exist -- directly in an editor, so the user never
- * has to learn the durable store's internal path (Project Identity, the
- * store root, etc. -- see `ce status`) just to see what
- * `/explore`/`/enrich`/`/propose` produced. Which workspace: the one
- * given by `options.workspace` (`<project>/<issue>`), or the current
+ * `ce open`: opens either a workspace's worktree, (with `--change`) its
+ * OpenSpec change directory -- `explore.md`, `enrich.md`, `proposal.md`,
+ * `design.md`, `tasks.md`, `specs/`, `reports/`, whichever of them exist
+ * -- or (with `--path`) one exact file or directory inside the trusted
+ * store, directly in an editor, so the user never has to learn the
+ * durable store's internal path (Project Identity, the store root, etc.
+ * -- see `ce status`) just to see what `/explore`/`/enrich`/`/propose`
+ * produced, or to open the exact report `/verify`/`/adversarial-review`
+ * just wrote. Which workspace: the one given by `options.workspace`
+ * (`<project>/<issue>`), or the current
  * default if omitted. Purely a convenience over information ce-harness
  * already has -- creates nothing, registers nothing, and never modifies
  * `workspace.yml` or the active-default pointer, regardless of whether
@@ -81,6 +94,47 @@ export async function openCommand(options: OpenCommandOptions = {}): Promise<voi
       `Cannot open workspace for project "${pointer.project}", issue "${pointer.sanitizedIssue}" -- its metadata could not be read: ${detail}`,
       `Run \`ce cleanup --force ${pointer.project}/${pointer.sanitizedIssue}\` to discard this workspace, then \`ce start\` again.`,
     );
+  }
+
+  if (options.path !== undefined) {
+    if (options.change !== undefined) {
+      throw new CeError(
+        "--path and --change cannot be combined.",
+        "Use `ce open --path <path>` to open one exact file/directory, or `ce open --change [name]` to open a change's whole artifact directory.",
+      );
+    }
+
+    const trusted = resolveTrustedOpenSpec(workspace);
+    if (!trusted) {
+      throw new CeError(
+        "This workspace has no trusted OpenSpec store to open a path from.",
+        "Run `ce status` for details, or `ce start`/`ce migrate-openspec` to provision one.",
+      );
+    }
+
+    const resolvedPath = resolve(options.path);
+    const rel = relative(trusted.root, resolvedPath);
+    const isInsideStore = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    if (!isInsideStore) {
+      throw new CeError(
+        `"${resolvedPath}" is not inside this workspace's OpenSpec store.`,
+        `The store root is "${trusted.root}" -- --path only opens files/directories inside it.`,
+      );
+    }
+
+    if (!existsSync(resolvedPath)) {
+      throw new CeError(`"${resolvedPath}" does not exist.`, "Check the path and try again.");
+    }
+
+    console.log(`Opening "${resolvedPath}" in ${DEFAULT_EDITOR.label}...`);
+    const result = await openInEditor(resolvedPath);
+    if (!result.opened) {
+      throw new CeError(
+        `Failed to open "${resolvedPath}" in ${DEFAULT_EDITOR.label}: ${result.message}`,
+        `Open it manually with:\n  ${formatOpenCommand(resolvedPath)}`,
+      );
+    }
+    return;
   }
 
   if (options.change === undefined) {

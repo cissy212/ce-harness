@@ -776,8 +776,28 @@ than one token on it.
 
 ## 10. Report back (no automatic fixes)
 
-After writing the report, tell the user its path (inside the external
-store) and the overall verdict. You may **suggest** fixes for any findings
+After writing the report, tell the user its exact path (inside the
+external store) and the overall verdict -- **and give them a single,
+ready-to-run command to open that exact report directly**, since a bare
+filesystem path into the external store is not itself an actionable
+handoff (it isn't inside the worktree, isn't a URL, and Cmd/Ctrl-clicking
+it from a terminal does not open it):
+
+```
+ce open --path "<the exact report path resolved in Step 9>"
+```
+
+Substitute the literal, already-resolved absolute path from Step 9 --
+never a placeholder, and never the store's root or the change's whole
+directory -- so the command opens precisely the file just written. This
+requires no runner- or editor-specific knowledge in this command (it
+delegates to whichever editor `ce open` is already configured for), and
+never requires the user to know or copy the store's internal path
+themselves. The printed report path remains useful as a reference (e.g.
+to paste elsewhere), but must never be the only way offered to reach the
+report.
+
+You may **suggest** fixes for any findings
 in the chat response, but never apply them automatically -- this command
 only verifies and reports. If the user wants to act on a finding, that is a
 separate, explicit step.
@@ -790,6 +810,12 @@ command either way, that is entirely `/archive`'s own gate to decide:
   `/adversarial-review` on a report that isn't a clean `PASS`.
 
 **Guardrails**
+- Never end Step 10 with only the report's printed filesystem path --
+  always also give the user a ready-to-run `ce open --path "<report
+  path>"` command for that exact file, since a bare external-store path
+  is not itself an actionable handoff. Never substitute a directory, the
+  store root, or `ce open --change` for this -- the command must open
+  the exact report file just written.
 - Never write the report's date (filename or `**Date:**` field) from memory or assumption -- always run `date -u +%Y-%m-%d` and use its exact output.
 - Every `openspec` command must include `--store "$CE_OPENSPEC_STORE"`.
 - Never assume repo-local `openspec/` paths -- always resolve `changeRoot`

@@ -387,6 +387,140 @@ describe("ce open (integration)", () => {
     });
   });
 
+  describe("--path (opens an exact file/directory inside the OpenSpec store)", () => {
+    async function trustedRoot(): Promise<string> {
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace);
+      return trusted!.root;
+    }
+
+    it("opens the exact report file an Implementation workspace's /adversarial-review just wrote -- not just the containing change directory", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const reportsDir = join(root, "openspec", "changes", "contacts-email-notes", "reports");
+      await mkdir(reportsDir, { recursive: true });
+      const reportPath = join(reportsDir, "2026-09-07-adversarial-review.md");
+      await writeFile(reportPath, "# Adversarial Review\n", "utf8");
+
+      await openCommand({ path: reportPath });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([reportPath]);
+    });
+
+    it("opens the exact report file an Existing PR review workspace's /adversarial-review just wrote, at the store root's reviews/ directory (no changeRoot exists in this workspace type)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const reviewsDir = join(root, "reviews");
+      await mkdir(reviewsDir, { recursive: true });
+      const reportPath = join(reviewsDir, "2026-09-07-adversarial-review.md");
+      await writeFile(reportPath, "# Adversarial Review\n", "utf8");
+
+      await openCommand({ path: reportPath });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([reportPath]);
+    });
+
+    it("refuses a path outside this workspace's OpenSpec store, with an actionable message naming the store root", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const outsidePath = join(harnessHomeDir, "not-the-store", "secret.md");
+      await mkdir(join(harnessHomeDir, "not-the-store"), { recursive: true });
+      await writeFile(outsidePath, "nope", "utf8");
+
+      try {
+        await openCommand({ path: outsidePath });
+        expect.fail("expected openCommand to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CeError);
+        const ceError = error as InstanceType<typeof CeError>;
+        expect(ceError.message).toMatch(/is not inside this workspace's OpenSpec store/);
+        expect(ceError.recovery).toContain(root);
+      }
+      expect(existsSync(fakeEditor.outputFile)).toBe(false);
+    });
+
+    it("refuses a path that does not exist", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const missingPath = join(root, "reviews", "does-not-exist.md");
+
+      await expect(openCommand({ path: missingPath })).rejects.toThrow(CeError);
+      await expect(openCommand({ path: missingPath })).rejects.toThrow(/does not exist/);
+    });
+
+    it("refuses when both --path and --change are given, without opening anything", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const reportPath = join(root, "reviews", "2026-09-07-adversarial-review.md");
+      await mkdir(join(root, "reviews"), { recursive: true });
+      await writeFile(reportPath, "# Adversarial Review\n", "utf8");
+
+      await expect(openCommand({ path: reportPath, change: true })).rejects.toThrow(CeError);
+      await expect(openCommand({ path: reportPath, change: true })).rejects.toThrow(
+        /--path and --change cannot be combined/,
+      );
+      expect(existsSync(fakeEditor.outputFile)).toBe(false);
+    });
+
+    it("never creates, registers, or modifies anything -- purely opens the existing file", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const reportPath = join(root, "reviews", "2026-09-07-adversarial-review.md");
+      await mkdir(join(root, "reviews"), { recursive: true });
+      await writeFile(reportPath, "# Adversarial Review\n", "utf8");
+
+      const workspaceFile = join(
+        harnessHomeDir,
+        "workspaces",
+        basenameOf(repoDir),
+        "issue-1",
+        "workspace.yml",
+      );
+      const contentBefore = await readFile(workspaceFile, "utf8");
+      const registryBefore = await readFile(fakeOpenSpec.registryFile, "utf8");
+
+      await openCommand({ path: reportPath });
+
+      const contentAfter = await readFile(workspaceFile, "utf8");
+      const registryAfter = await readFile(fakeOpenSpec.registryFile, "utf8");
+      expect(contentAfter).toBe(contentBefore);
+      expect(registryAfter).toBe(registryBefore);
+    });
+  });
+
   describe("workspace -> active change association", () => {
     async function trustedRootFor(project: string, sanitizedIssue: string): Promise<string> {
       const { readWorkspace, resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
