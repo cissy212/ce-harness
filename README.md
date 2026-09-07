@@ -43,7 +43,7 @@ per-file provenance.
   - [Starting an Implementation workspace from a specific ref](#starting-an-implementation-workspace-from-a-specific-ref)
   - [Reviewing an existing pull request or commit range](#reviewing-an-existing-pull-request-or-commit-range)
   - [Resuming a session](#resuming-a-session)
-  - [The workflow inside OpenCode](#the-workflow-inside-opencode)
+  - [The canonical workflow commands](#the-canonical-workflow-commands)
   - [Reasoning lenses](#reasoning-lenses)
   - [Environment-mutation safety](#environment-mutation-safety)
   - [Docker safety](#docker-safety)
@@ -232,6 +232,14 @@ This makes the `ce` command available everywhere on your system,
 pointing at the `dist/cli.js` you just built. `npm link` may print
 information about the packages it audited — that is normal.
 
+**If you already have ce-harness linked from a different checkout on
+this machine** (e.g. an older clone, or a separate clone you're
+evaluating side by side with this one), this `npm link` **repoints the
+global `ce` command to this checkout instead** — it does not create a
+second, independent `ce`. Only one checkout can be the one `ce` resolves
+to at a time; whichever one you last ran `npm link` in wins. This is
+ordinary `npm link` behavior, not specific to ce-harness.
+
 ### 10. Verify the installation
 
 Confirm your shell can find the `ce` command:
@@ -272,6 +280,19 @@ No active workspace.
 ```
 
 That confirms ce-harness itself is fully working.
+
+**If you've used ce-harness before on this machine — from any checkout,
+not just this one — `ce status` may instead immediately show an existing
+active workspace, or `ce cleanup --force`/`ce migrate-openspec` may see
+projects you don't recognize from this specific clone.** This is
+expected, not a sign anything went wrong: `~/.ce-harness` (worktrees,
+workspaces, the durable OpenSpec store, and which workspace is active)
+is persistent state shared by every ce-harness checkout/installation on
+this machine, not something scoped to whichever checkout happens to be
+linked as `ce` right now. Linking a new or different checkout with `npm
+link` changes which copy of the `ce` code runs; it does not reset or
+isolate `~/.ce-harness`. A genuinely clean, from-scratch state would mean
+also removing `~/.ce-harness` itself, which is never done automatically.
 
 When you're ready to use ce-harness for real, point `ce start` at any
 Git repository you already have a local, clean (no uncommitted changes)
@@ -543,9 +564,9 @@ ce open
 ```
 
 From there, work through the
-[workflow inside OpenCode](#the-workflow-inside-opencode) (the walkthrough
-uses OpenCode's terminology, but every command works identically in
-Claude Code — see [Choosing a coding-agent
+[canonical workflow commands](#the-canonical-workflow-commands) (that
+section uses OpenCode's terminology, but every command works identically
+in Claude Code — see [Choosing a coding-agent
 runner](#choosing-a-coding-agent-runner)): `/explore` or
 `/propose` to plan, `/apply` to implement, `/verify` and
 `/adversarial-review` to check the work, `/archive` to finish.
@@ -789,7 +810,7 @@ ce migrate-openspec
 
 The deterministic half of shipping a completed, archived change as a
 normal GitHub pull request — see `/publish` (in
-[The workflow inside OpenCode](#the-workflow-inside-opencode)) for the
+[The canonical workflow commands](#the-canonical-workflow-commands)) for the
 full, agent-driven flow (reading the archived change's artifacts and
 real verification evidence to write the PR title/body, showing the full
 plan, and requiring explicit confirmation). This CLI command is the
@@ -872,8 +893,8 @@ Both runners see the same canonical workflow: `/explore`, `/propose`,
 `/apply`, `/verify`, `/adversarial-review`, `/archive`, `/workspace`,
 and the `openspec-sync-specs` skill are materialized from the same
 `templates/` source for either runner — see
-[The workflow inside OpenCode](#the-workflow-inside-opencode) (the
-walkthrough uses OpenCode's terminology, but the commands and skills
+[The canonical workflow commands](#the-canonical-workflow-commands) (that
+section uses OpenCode's terminology, but the commands and skills
 themselves are identical for Claude Code). The only difference is where
 each runner's config is materialized:
 
@@ -1141,7 +1162,7 @@ can't launch the runner, it prints the exact manual command, in the form
 (or `... opencode` for an OpenCode workspace), which you can copy-paste
 directly).
 
-### The workflow inside OpenCode
+### The canonical workflow commands
 
 The commands below are the same canonical workflow for either runner —
 materialized from the same `templates/` source (see [Choosing a
