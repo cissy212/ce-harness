@@ -573,9 +573,15 @@ async function renderAllOverview(): Promise<void> {
     }
 
     if (project.archivedCount > 0) {
-      console.log(
-        `  Archived:       ${project.archivedCount} change(s) -- most recent: ${project.recentArchived.join(", ")}`,
-      );
+      console.log(`  Archived:       ${project.archivedCount} change(s)`);
+      for (const entry of project.recentArchived) {
+        // The original issue/workspace identifier, when its
+        // `.ce-workspace.yml` ownership sidecar survived into the
+        // archive -- never guessed or inferred from the change's own
+        // name. A pre-ownership-sidecar archived change just shows its
+        // name, cleanly, with no fabricated identifier.
+        console.log(entry.issue ? `    ${entry.issue}  ${entry.name}` : `    ${entry.name}`);
+      }
     } else {
       console.log(`  Archived:       (none)`);
     }

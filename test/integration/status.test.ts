@@ -1441,7 +1441,80 @@ describe("ce status --verbose (integration)", () => {
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/ce-harness knows about 1 project\(s\)/);
       expect(output).toMatch(/Workspaces:\s+\(none currently preserved\)/);
-      expect(output).toMatch(/Archived:\s+1 change\(s\) -- most recent: old-change/);
+      expect(output).toMatch(/Archived:\s+1 change\(s\)/);
+      expect(output).toMatch(/^\s+old-change\s*$/m);
+    });
+
+    it("shows the original issue identifier alongside an archived change, from its persisted .ce-workspace.yml ownership sidecar -- never inferred from the change's own name", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "138" });
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace)!;
+      const archiveDir = join(trusted.root, "openspec", "changes", "archive", "2026-05-01-consolidate-drawer-base-component");
+      await mkdir(archiveDir, { recursive: true });
+      // The exact sidecar `/propose` writes and `/archive` carries along
+      // unchanged into `archive/` -- see core/activeChange.ts's
+      // CHANGE_OWNERSHIP_FILENAME.
+      await writeFile(
+        join(archiveDir, ".ce-workspace.yml"),
+        `project: ${workspace.project}\nissue: "138"\n`,
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand({ all: true });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/^\s+138\s+consolidate-drawer-base-component\s*$/m);
+    });
+
+    it("shows multiple archived changes each with their own issue identifier, most recent first, and a change with no ownership sidecar shows its name alone -- never a guessed identifier", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace)!;
+      const archiveRoot = join(trusted.root, "openspec", "changes", "archive");
+
+      const dir130 = join(archiveRoot, "2026-08-01-contacts-email-notes");
+      await mkdir(dir130, { recursive: true });
+      await writeFile(join(dir130, ".ce-workspace.yml"), `project: ${workspace.project}\nissue: "130"\n`, "utf8");
+
+      const dir143 = join(archiveRoot, "2026-08-15-document-dashboard-patterns");
+      await mkdir(dir143, { recursive: true });
+      await writeFile(join(dir143, ".ce-workspace.yml"), `project: ${workspace.project}\nissue: "143"\n`, "utf8");
+
+      // Predates the ownership-sidecar mechanism -- no identifier to show.
+      await mkdir(join(archiveRoot, "2026-08-20-legacy-cleanup"), { recursive: true });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand({ all: true });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Archived:\s+3 change\(s\)/);
+      const lines = output.split("\n").map((l) => l.trim());
+      const legacyIndex = lines.indexOf("legacy-cleanup");
+      const line143 = lines.indexOf("143  document-dashboard-patterns");
+      const line130 = lines.indexOf("130  contacts-email-notes");
+      expect(legacyIndex).toBeGreaterThanOrEqual(0);
+      expect(line143).toBeGreaterThanOrEqual(0);
+      expect(line130).toBeGreaterThanOrEqual(0);
+      // Most-recently-archived first: legacy-cleanup (08-20), then 143 (08-15), then 130 (08-01).
+      expect(legacyIndex).toBeLessThan(line143);
+      expect(line143).toBeLessThan(line130);
     });
 
     it("shows multiple projects, sorted", async () => {

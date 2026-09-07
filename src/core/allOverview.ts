@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import {
   activeChangeRoot,
+  archivedChangeRoot,
   listActiveChanges,
   listArchivedChanges,
+  readChangeOwnership,
   readTaskProgress,
   summarizeChangeArtifacts,
 } from "./activeChange.js";
@@ -52,6 +54,19 @@ export interface WorkspaceOverview {
   isDefault: boolean;
 }
 
+export interface ArchivedChangeOverview {
+  name: string;
+  /**
+   * The original issue/workspace identifier this change was archived
+   * under (`workspace.issue`, from the `.ce-workspace.yml` ownership
+   * sidecar `/propose` writes and `/archive` carries along into
+   * `archive/` unchanged -- see activeChange.ts's `readChangeOwnership`).
+   * `null` -- never guessed or inferred from the change's own name --
+   * for a change archived before that sidecar existed.
+   */
+  issue: string | null;
+}
+
 export interface ProjectOverview {
   /** `null` covers the fallback grouping below -- a real project entry always has one. */
   projectId: string;
@@ -60,8 +75,8 @@ export interface ProjectOverview {
   workspaces: WorkspaceOverview[];
   activeChanges: ActiveChangeOverview[];
   archivedCount: number;
-  /** Up to 3 most-recently-archived change names, most recent first. */
-  recentArchived: string[];
+  /** Up to 3 most-recently-archived changes, most recent first, with their original issue identifier when known. */
+  recentArchived: ArchivedChangeOverview[];
   reviewCount: number;
 }
 
@@ -78,10 +93,13 @@ export interface AllOverview {
   unresolved: UnresolvedWorkspace[];
 }
 
+/** How many most-recently-archived changes `--all` shows per project -- kept small so this stays a compact overview, not a full archive listing. */
+const RECENT_ARCHIVED_LIMIT = 3;
+
 async function summarizeProjectChanges(durableRoot: string): Promise<{
   activeChanges: ActiveChangeOverview[];
   archivedCount: number;
-  recentArchived: string[];
+  recentArchived: ArchivedChangeOverview[];
   reviewCount: number;
 }> {
   const [activeNames, archived, reviews] = await Promise.all([
@@ -101,10 +119,21 @@ async function summarizeProjectChanges(durableRoot: string): Promise<{
     }),
   );
 
+  // Only the entries actually shown need their ownership sidecar read --
+  // reading it for every archived change would scale badly for a project
+  // with a long history, working against the "fast, compact overview"
+  // goal for something whose whole point is staying lightweight.
+  const recentArchived = await Promise.all(
+    archived.slice(0, RECENT_ARCHIVED_LIMIT).map(async (entry) => {
+      const ownership = await readChangeOwnership(archivedChangeRoot(durableRoot, entry.archiveDirName));
+      return { name: entry.name, issue: ownership?.issue ?? null };
+    }),
+  );
+
   return {
     activeChanges,
     archivedCount: archived.length,
-    recentArchived: archived.slice(0, 3).map((a) => a.name),
+    recentArchived,
     reviewCount: reviews.length,
   };
 }

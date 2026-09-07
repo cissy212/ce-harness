@@ -335,9 +335,17 @@ Identity](concepts.md#project-identity) uses — so a project with zero
 current workspaces but a durable store full of archived changes still
 appears): its preserved workspaces (marking the default), active
 changes with a compact progress line each, an archived-change count
-with a few of the most recent names, and a count of logged PR reviews.
-Preserved workspaces with no resolvable durable project (legacy, or
-never OpenSpec-enabled) are listed separately, never silently dropped.
+with a few of the most recent ones, and a count of logged PR reviews.
+Each recent archived change is shown with its original issue/workspace
+identifier alongside its name (e.g. `138  consolidate-drawer-base-
+component`) whenever that's still available from the change's own
+`.ce-workspace.yml` ownership sidecar (the same one `/propose`/`/archive`
+already write and carry along — see [Many preserved workspaces, one
+default](concepts.md#core-concepts)) — never inferred or guessed from
+the change's own name; a change archived before that sidecar existed
+just shows its name alone. Preserved workspaces with no resolvable
+durable project (legacy, or never OpenSpec-enabled) are listed
+separately, never silently dropped.
 Mutually exclusive with `[workspace]`. Never shells out to the
 `openspec` binary (unlike the default/`--verbose` single-workspace
 view's health check), so it stays fast regardless of how many projects

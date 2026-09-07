@@ -162,6 +162,11 @@ export interface ArchivedChangeInfo {
 
 const ARCHIVE_DIR_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}-/;
 
+/** Resolves `<durableRoot>/openspec/changes/archive/<archiveDirName>` -- the same archived-change layout every reader of `listArchivedChanges`'s output assumes. Never constructed anywhere else by hand. */
+export function archivedChangeRoot(durableRoot: string, archiveDirName: string): string {
+  return join(durableRoot, "openspec", "changes", "archive", archiveDirName);
+}
+
 /**
  * Lists this durable store's archived changes, most-recently-archived
  * first (the archive dir name's date prefix sorts chronologically, so a
@@ -211,7 +216,7 @@ export async function resolveArchivedChangeForWorkspace(
 ): Promise<{ name: string; changeRoot: string } | null> {
   const archived = await listArchivedChanges(durableRoot);
   for (const entry of archived) {
-    const changeRoot = join(durableRoot, "openspec", "changes", "archive", entry.archiveDirName);
+    const changeRoot = archivedChangeRoot(durableRoot, entry.archiveDirName);
     const ownership = await readChangeOwnership(changeRoot);
     if (ownership && ownership.project === project && ownership.issue === issue) {
       return { name: entry.name, changeRoot };
