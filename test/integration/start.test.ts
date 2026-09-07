@@ -314,7 +314,7 @@ describe("ce start (integration)", () => {
       await startCommand({ repo: repoDir, issue: "issue-1" });
       logSpy.mockClear();
 
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Base branch:\s+main/);

@@ -96,7 +96,7 @@ describe("CodeGraph (semantic code navigation) integration", () => {
       });
 
       const { statusCommand } = await import("../../src/commands/status.js");
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       expect(logs.some((line) => line.includes("Worktree changes: clean"))).toBe(true);
       expect(logs.some((line) => line.includes("CodeGraph:") && line.includes("available"))).toBe(
@@ -119,7 +119,7 @@ describe("CodeGraph (semantic code navigation) integration", () => {
       });
 
       const { statusCommand } = await import("../../src/commands/status.js");
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       // Exactly one real change (the .codegraph/* entries must not be counted).
       expect(logs.some((line) => line.includes("Worktree changes: 1 changed file(s)"))).toBe(true);
@@ -281,7 +281,7 @@ describe("CodeGraph (semantic code navigation) integration", () => {
         logs.push(line);
       });
       const { statusCommand } = await import("../../src/commands/status.js");
-      await statusCommand();
+      await statusCommand({ verbose: true });
       expect(logs.some((line) => line.includes("Worktree changes: clean"))).toBe(true);
     });
 

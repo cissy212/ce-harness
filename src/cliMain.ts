@@ -267,16 +267,23 @@ export async function runCli(): Promise<void> {
   program
     .command("status")
     .description(
-      "Show details about a ce-harness workspace, including the OpenSpec store id, root " +
-        "path, health, and the active OpenSpec change's artifacts (explore/enrich/proposal/" +
-        "design/tasks/specs/reports -- see `ce open --change` to open them). With no " +
-        "argument, shows the current default workspace, plus an \"Other workspaces\" list " +
-        "of every other one preserved on disk; with [workspace] (as <project>/<issue>), " +
-        "shows that one instead, without changing the default (read-only).",
+      "Show a concise, human-oriented summary of a ce-harness workspace: what you're working " +
+        "on, its current workflow progress, anything that needs attention, and the next " +
+        "suggested command. With no argument, shows the current default workspace, plus an " +
+        "\"Other workspaces\" list of every other one preserved on disk; with [workspace] " +
+        "(as <project>/<issue>), shows that one instead, without changing the default " +
+        "(read-only). --verbose shows the full low-level detail this command used to show " +
+        "unconditionally (internal paths, OpenSpec store id/root, Project Identity evidence, " +
+        "config/lens directories, etc.) -- see `ce open --change` for the OpenSpec change's " +
+        "artifacts either way. --all shows a compact, cross-project overview of everything " +
+        "ce-harness has durably retained instead (every known project, not just currently " +
+        "preserved workspaces); mutually exclusive with [workspace].",
     )
     .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
-    .action(async (workspace: string | undefined) => {
-      await run(() => statusCommand({ workspace }));
+    .option("--verbose", "show full low-level detail instead of the concise default")
+    .option("--all", "show a compact, cross-project overview of everything ce-harness has durably retained")
+    .action(async (workspace: string | undefined, options: { verbose?: boolean; all?: boolean }) => {
+      await run(() => statusCommand({ workspace, verbose: options.verbose, all: options.all }));
     });
 
   program

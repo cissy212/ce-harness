@@ -18,7 +18,12 @@ import { nonExistentCodeGraphBin } from "../helpers/fakeCodeGraph.js";
 import { nonExistentOsascriptBin } from "../helpers/fakeOsascript.js";
 import { deregisterWorktreeBookkeeping } from "../helpers/deregisterWorktree.js";
 
-describe("ce status (integration)", () => {
+// This file exercises `ce status --verbose` -- the full, low-level detail
+// this command showed unconditionally before a concise, human-oriented
+// default was introduced. See the "ce status (concise default output)"
+// and "ce status --all" describe blocks near the end of this file for the
+// newer behavior.
+describe("ce status --verbose (integration)", () => {
   let harnessHomeDir: string;
   let repoDir: string;
   let fakeOpenSpec: FakeOpenSpecEnv;
@@ -59,7 +64,7 @@ describe("ce status (integration)", () => {
     const { statusCommand } = await import("../../src/commands/status.js");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await statusCommand();
+    await statusCommand({ verbose: true });
 
     expect(logSpy).toHaveBeenCalledWith("No active workspace.");
   });
@@ -72,7 +77,7 @@ describe("ce status (integration)", () => {
     await startCommand({ repo: repoDir, issue: "issue-1" });
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    await statusCommand();
+    await statusCommand({ verbose: true });
 
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
     expect(output).toMatch(/Issue:\s+issue-1/);
@@ -104,7 +109,7 @@ describe("ce status (integration)", () => {
     await writeFile(join(worktreePath, "new-file.txt"), "changed\n", "utf8");
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    await statusCommand();
+    await statusCommand({ verbose: true });
 
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
     expect(output).toMatch(/Worktree changes:\s+1 changed file\(s\)/);
@@ -126,7 +131,7 @@ describe("ce status (integration)", () => {
       await deregisterWorktreeBookkeeping(repoDir, worktreePath);
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await expect(statusCommand()).resolves.toBeUndefined();
+      await expect(statusCommand({ verbose: true })).resolves.toBeUndefined();
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Worktree exists:\s+yes/);
@@ -153,7 +158,7 @@ describe("ce status (integration)", () => {
       });
       expect(rawStatus.exitCode).not.toBe(0);
 
-      await expect(statusCommand()).resolves.toBeUndefined();
+      await expect(statusCommand({ verbose: true })).resolves.toBeUndefined();
     });
 
     it("a normal, still-registered worktree is unaffected by this check", async () => {
@@ -164,7 +169,7 @@ describe("ce status (integration)", () => {
       await startCommand({ repo: repoDir, issue: "issue-1" });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).not.toMatch(/Worktree registered:/);
@@ -182,7 +187,7 @@ describe("ce status (integration)", () => {
 
       process.env.FAKE_OPENSPEC_FAIL_DOCTOR = "1";
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/OpenSpec healthy:\s+no/);
@@ -203,7 +208,7 @@ describe("ce status (integration)", () => {
       await unregisterStore(workspace.workspacePath, workspace.openSpec!.storeId);
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/OpenSpec healthy:\s+no/);
@@ -218,7 +223,7 @@ describe("ce status (integration)", () => {
 
       process.env.CE_OPENSPEC_BIN = nonExistentOpenSpecBin(fakeOpenSpec.dir);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await expect(statusCommand()).resolves.toBeUndefined();
+      await expect(statusCommand({ verbose: true })).resolves.toBeUndefined();
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/OpenSpec healthy:\s+unavailable/);
@@ -251,7 +256,7 @@ describe("ce status (integration)", () => {
       await writeActivePointer({ project, sanitizedIssue: "issue-1" });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).not.toMatch(/OpenSpec/);
@@ -269,7 +274,7 @@ describe("ce status (integration)", () => {
       const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(
@@ -309,7 +314,7 @@ describe("ce status (integration)", () => {
       await writeActivePointer({ project, sanitizedIssue: "issue-1" });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await expect(statusCommand()).resolves.toBeUndefined();
+      await expect(statusCommand({ verbose: true })).resolves.toBeUndefined();
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/OpenCode config:\s+.+\/opencode$/m);
@@ -342,7 +347,7 @@ describe("ce status (integration)", () => {
       const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(new RegExp(`Review base:\\s+${workspace.diffBase}`));
@@ -377,7 +382,7 @@ describe("ce status (integration)", () => {
       await writeActivePointer({ project, sanitizedIssue: "issue-1" });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await expect(statusCommand()).resolves.toBeUndefined();
+      await expect(statusCommand({ verbose: true })).resolves.toBeUndefined();
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).not.toMatch(/Review base:/);
@@ -395,7 +400,7 @@ describe("ce status (integration)", () => {
       await startCommand({ repo: repoDir, issue: "issue-1" });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Workspace type:\s+Implementation/);
@@ -419,7 +424,7 @@ describe("ce status (integration)", () => {
       await startCommand({ repo: repoDir, issue: "issue-1", base: baseSha, head: headSha });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Workspace type:\s+Existing PR review/);
@@ -445,7 +450,7 @@ describe("ce status (integration)", () => {
       await startCommand({ repo: repoDir, issue: "issue-1" });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+\(none\)/);
@@ -478,7 +483,7 @@ describe("ce status (integration)", () => {
       );
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+contacts-email-notes/);
@@ -498,7 +503,7 @@ describe("ce status (integration)", () => {
       await mkdir(join(root, "openspec", "changes", "beta-change"), { recursive: true });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+alpha-change/);
@@ -519,7 +524,7 @@ describe("ce status (integration)", () => {
       });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+\(none\)/);
@@ -553,7 +558,7 @@ describe("ce status (integration)", () => {
       );
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/specs \(1: contacts-directory\)/);
@@ -580,7 +585,7 @@ describe("ce status (integration)", () => {
       await startCommand({ repo: repoDir, issue: "issue-1" });
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).not.toMatch(/Provenance:/);
@@ -601,7 +606,7 @@ describe("ce status (integration)", () => {
       );
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+contacts-email-notes/);
@@ -630,7 +635,7 @@ describe("ce status (integration)", () => {
       );
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Provenance:\s+explore fresh \(as of 2026-09-01\)/);
@@ -659,7 +664,7 @@ describe("ce status (integration)", () => {
       await writeFile(join(workspace.worktreePath, "new-file.txt"), "x\n", "utf8");
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Provenance:\s+explore stale \(repo changed since 2026-08-20\)/);
@@ -693,7 +698,7 @@ describe("ce status (integration)", () => {
       );
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/explore fresh \(as of 2026-09-01\)/);
@@ -730,7 +735,7 @@ describe("ce status (integration)", () => {
       // The exact command propose.md's step 1 now runs, using
       // $CE_PROJECT/$CE_ISSUE (here: workspace.project/workspace.issue,
       // the same raw values CE_PROJECT/CE_ISSUE are set to).
-      await statusCommand({ workspace: `${workspace.project}/${workspace.issue}` });
+      await statusCommand({ workspace: `${workspace.project}/${workspace.issue}`, verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       // 1. The change name is resolved automatically -- no ambiguity,
@@ -783,13 +788,13 @@ describe("ce status (integration)", () => {
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       logSpy.mockClear();
-      await statusCommand({ workspace: `${project}/issue-130` });
+      await statusCommand({ workspace: `${project}/issue-130`, verbose: true });
       let output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+fix-contact-empty-state/);
       expect(output).not.toMatch(/add-billing-export/);
 
       logSpy.mockClear();
-      await statusCommand({ workspace: `${project}/issue-143` });
+      await statusCommand({ workspace: `${project}/issue-143`, verbose: true });
       output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+add-billing-export/);
       expect(output).not.toMatch(/fix-contact-empty-state/);
@@ -814,21 +819,21 @@ describe("ce status (integration)", () => {
       // The exact invocation the fixed templates now run:
       // `ce status "$CE_PROJECT/$CE_ISSUE"`.
       logSpy.mockClear();
-      await statusCommand({ workspace: `${project}/issue-138` });
+      await statusCommand({ workspace: `${project}/issue-138`, verbose: true });
       let output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+consolidate-drawer-base-component/);
       expect(output).not.toMatch(/fix-contact-empty-state/);
       expect(output).not.toMatch(/add-billing-export/);
 
       logSpy.mockClear();
-      await statusCommand({ workspace: `${project}/issue-130` });
+      await statusCommand({ workspace: `${project}/issue-130`, verbose: true });
       output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+fix-contact-empty-state/);
       expect(output).not.toMatch(/consolidate-drawer-base-component/);
       expect(output).not.toMatch(/add-billing-export/);
 
       logSpy.mockClear();
-      await statusCommand({ workspace: `${project}/issue-143` });
+      await statusCommand({ workspace: `${project}/issue-143`, verbose: true });
       output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+add-billing-export/);
       expect(output).not.toMatch(/consolidate-drawer-base-component/);
@@ -848,7 +853,7 @@ describe("ce status (integration)", () => {
       await tagChange(root, "fix-contact-empty-state", project, "issue-130");
       await tagChange(root, "add-billing-export", project, "issue-143");
 
-      await statusCommand({ workspace: `${project}/issue-130` });
+      await statusCommand({ workspace: `${project}/issue-130`, verbose: true });
 
       expect(await readActivePointer()).toEqual({ project, sanitizedIssue: "issue-143" });
     });
@@ -864,7 +869,7 @@ describe("ce status (integration)", () => {
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       logSpy.mockClear();
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+legacy-change/);
@@ -883,7 +888,7 @@ describe("ce status (integration)", () => {
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       logSpy.mockClear();
-      await statusCommand({ workspace: `${project}/issue-130` });
+      await statusCommand({ workspace: `${project}/issue-130`, verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+\(none\)/);
@@ -906,7 +911,7 @@ describe("ce status (integration)", () => {
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       logSpy.mockClear();
-      await statusCommand({ workspace: `${project}/issue-130` });
+      await statusCommand({ workspace: `${project}/issue-130`, verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Active change:\s+legacy-change/);
@@ -927,7 +932,7 @@ describe("ce status (integration)", () => {
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       logSpy.mockClear();
-      await statusCommand({ workspace: `${project}/issue-130` });
+      await statusCommand({ workspace: `${project}/issue-130`, verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Issue:\s+issue-130/);
@@ -945,7 +950,7 @@ describe("ce status (integration)", () => {
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       logSpy.mockClear();
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).toMatch(/Issue:\s+issue-143/);
@@ -962,7 +967,7 @@ describe("ce status (integration)", () => {
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       logSpy.mockClear();
-      await statusCommand();
+      await statusCommand({ verbose: true });
 
       const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(output).not.toMatch(/Other workspaces:/);
@@ -977,10 +982,486 @@ describe("ce status (integration)", () => {
       await startCommand({ repo: repoDir, issue: "issue-1" });
       const project = basenameOf(repoDir);
 
-      await expect(statusCommand({ workspace: `${project}/no-such-issue` })).rejects.toThrow(CeError);
-      await expect(statusCommand({ workspace: `${project}/no-such-issue` })).rejects.toThrow(
+      await expect(statusCommand({ workspace: `${project}/no-such-issue`, verbose: true })).rejects.toThrow(CeError);
+      await expect(statusCommand({ workspace: `${project}/no-such-issue`, verbose: true })).rejects.toThrow(
         /No workspace found for/,
       );
+    });
+  });
+
+  describe("ce status (concise default output)", () => {
+    async function trustedRoot(): Promise<string> {
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace);
+      return trusted!.root;
+    }
+
+    async function currentWorktreePath(): Promise<string> {
+      const { readActivePointer, readWorkspace } = await import("../../src/core/workspace.js");
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      return workspace.worktreePath;
+    }
+
+    /**
+     * Records a *fresh* provenance stamp for `stage`, matching the
+     * worktree's current fingerprint -- the state a real `/explore`,
+     * `/enrich`, or `/propose` run leaves behind. Used so a test can
+     * exercise a *later* workflow stage without every earlier one being
+     * reported as invalid for having no provenance at all (exactly the
+     * "never treat unknown as fresh" gate the templates themselves
+     * enforce -- see core/provenance.ts).
+     */
+    async function writeFreshProvenance(
+      changeRoot: string,
+      stage: "explore" | "enrich" | "propose",
+    ): Promise<void> {
+      const { computeWorktreeFingerprint } = await import("../../src/core/git.js");
+      const worktreePath = await currentWorktreePath();
+      const fingerprint = await computeWorktreeFingerprint(worktreePath);
+      const filenames = {
+        explore: ".ce-provenance-explore.yml",
+        enrich: ".ce-provenance-enrich.yml",
+        propose: ".ce-provenance-propose.yml",
+      };
+      await writeFile(
+        join(changeRoot, filenames[stage]),
+        `commit: "${"0".repeat(40)}"\nfingerprint: "${fingerprint}"\nrecordedAt: "2026-01-01"\n`,
+        "utf8",
+      );
+    }
+
+    it("shows the four essentials -- project, issue, type, worktree -- with no active change", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Project:\s+/);
+      expect(output).toMatch(/Issue:\s+issue-1/);
+      expect(output).toMatch(/Type:\s+Implementation/);
+      expect(output).toMatch(/Worktree:\s+clean/);
+      expect(output).toMatch(/Active change:\s+\(none\)/);
+      expect(output).toMatch(/Next step:\s+\/explore \(or \/propose if you already know what to build\)/);
+    });
+
+    it("never shows internal implementation/debug detail by default", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).not.toMatch(/Repository path:/);
+      expect(output).not.toMatch(/Worktree path:/);
+      expect(output).not.toMatch(/Workspace path:/);
+      expect(output).not.toMatch(/Internal branch:/);
+      expect(output).not.toMatch(/Base commit:/);
+      expect(output).not.toMatch(/Created at:/);
+      expect(output).not.toMatch(/OpenSpec store:/);
+      expect(output).not.toMatch(/OpenSpec root:/);
+      expect(output).not.toMatch(/Project id:/);
+      expect(output).not.toMatch(/Identity evidence:/);
+      expect(output).not.toMatch(/OpenCode config:/);
+      expect(output).not.toMatch(/Lenses dir:/);
+      // No full 40-char SHA appears anywhere.
+      expect(output).not.toMatch(/\b[0-9a-f]{40}\b/);
+    });
+
+    it("shows progress and suggests /enrich once explore exists but enrich/propose don't", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const changeRoot = join(root, "openspec", "changes", "add-contact-notes");
+      await mkdir(changeRoot, { recursive: true });
+      await writeFile(join(changeRoot, "explore.md"), "findings\n", "utf8");
+      await writeFreshProvenance(changeRoot, "explore");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+add-contact-notes/);
+      expect(output).toMatch(/Progress:\s+explore ✓\s+enrich ✗\s+proposal ✗\s+design ✗\s+tasks ✗/);
+      expect(output).toMatch(/Next step:\s+\/enrich/);
+      expect(output).not.toMatch(/Needs attention:/);
+    });
+
+    it("surfaces stale planning-artifact provenance as attention, and suggests rerunning exactly that stage", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const changeRoot = join(root, "openspec", "changes", "add-contact-notes");
+      await mkdir(changeRoot, { recursive: true });
+      await writeFile(join(changeRoot, "explore.md"), "findings\n", "utf8");
+      // A provenance sidecar recorded against a fingerprint that will
+      // never match the current worktree -- deterministically "stale"
+      // without needing to actually mutate the worktree in between.
+      await writeFile(
+        join(changeRoot, ".ce-provenance-explore.yml"),
+        'commit: "0000000000000000000000000000000000000000"\nfingerprint: "deadbeefdead"\nrecordedAt: "2026-01-01"\n',
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Needs attention:/);
+      expect(output).toMatch(/\/explore's findings are stale/);
+      expect(output).toMatch(/Next step:\s+\/explore\s*$/m);
+    });
+
+    it("suggests /apply while tasks remain, showing numeric progress", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const changeRoot = join(root, "openspec", "changes", "add-contact-notes");
+      await mkdir(changeRoot, { recursive: true });
+      await writeFile(join(changeRoot, "proposal.md"), "why\n", "utf8");
+      await writeFile(
+        join(changeRoot, "tasks.md"),
+        "- [x] Task one\n- [x] Task two\n- [ ] Task three\n",
+        "utf8",
+      );
+      await writeFreshProvenance(changeRoot, "propose");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Progress:.*tasks 2\/3/);
+      expect(output).toMatch(/Next step:\s+\/apply/);
+      expect(output).not.toMatch(/Needs attention:/);
+    });
+
+    it("suggests /verify once every task is checked and no verify report exists yet", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const changeRoot = join(root, "openspec", "changes", "add-contact-notes");
+      await mkdir(changeRoot, { recursive: true });
+      await writeFile(join(changeRoot, "proposal.md"), "why\n", "utf8");
+      await writeFile(join(changeRoot, "tasks.md"), "- [x] Task one\n", "utf8");
+      await writeFreshProvenance(changeRoot, "propose");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Next step:\s+\/verify/);
+    });
+
+    it("flags a FAIL verify report as attention and suggests fixing before re-verifying", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const changeRoot = join(root, "openspec", "changes", "add-contact-notes");
+      await mkdir(join(changeRoot, "reports"), { recursive: true });
+      await writeFile(join(changeRoot, "proposal.md"), "why\n", "utf8");
+      await writeFile(join(changeRoot, "tasks.md"), "- [x] Task one\n", "utf8");
+      await writeFreshProvenance(changeRoot, "propose");
+      await writeFile(
+        join(changeRoot, "reports", "2026-06-01-verify.md"),
+        "# Verify\n\n**Verdict:** FAIL\n",
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Needs attention:/);
+      expect(output).toMatch(/last \/verify was FAIL/);
+      expect(output).toMatch(/Next step:\s+\/apply \(fix findings\), then \/verify/);
+    });
+
+    it("suggests /archive once both /verify and /adversarial-review are a clean PASS", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      const changeRoot = join(root, "openspec", "changes", "add-contact-notes");
+      await mkdir(join(changeRoot, "reports"), { recursive: true });
+      await writeFile(join(changeRoot, "proposal.md"), "why\n", "utf8");
+      await writeFile(join(changeRoot, "tasks.md"), "- [x] Task one\n", "utf8");
+      await writeFreshProvenance(changeRoot, "propose");
+      await writeFile(
+        join(changeRoot, "reports", "2026-06-01-verify.md"),
+        "# Verify\n\n**Verdict:** PASS\n",
+        "utf8",
+      );
+      await writeFile(
+        join(changeRoot, "reports", "2026-06-02-adversarial-review.md"),
+        "# Adversarial Review\n\n**Verdict:** PASS\n",
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Next step:\s+\/archive/);
+      expect(output).not.toMatch(/Needs attention:/);
+    });
+
+    it("shows a compact multi-change notice, never a full per-change breakdown, when more than one active change exists", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const root = await trustedRoot();
+      await mkdir(join(root, "openspec", "changes", "alpha-change"), { recursive: true });
+      await mkdir(join(root, "openspec", "changes", "beta-change"), { recursive: true });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active changes:\s+alpha-change, beta-change/);
+      expect(output).toMatch(/ce open --change <name>/);
+    });
+
+    it("reports repository-bootstrap needs as attention, with the exact commands still shown", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readWorkspace, writeWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const project = basenameOf(repoDir);
+      const workspace = await readWorkspace(project, "issue-1");
+      await writeWorkspace({
+        ...workspace,
+        bootstrap: {
+          required: true,
+          findings: [
+            {
+              ecosystem: "node",
+              manifest: "package.json",
+              message: "node_modules/ is missing",
+              suggestedCommand: "npm install",
+            },
+          ],
+        },
+      });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Needs attention:/);
+      expect(output).toMatch(/This repository needs local setup/);
+      expect(output).toMatch(/Local setup needed:/);
+      expect(output).toMatch(/node_modules\/ is missing/);
+      expect(output).toMatch(/Run: npm install/);
+    });
+
+    describe("Existing PR review workspace", () => {
+      it("suggests /adversarial-review when no review report exists yet", async () => {
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { execa } = await import("execa");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const base = await execa("git", ["-C", repoDir, "rev-parse", "HEAD"]).then((r) => r.stdout.trim());
+        await writeFile(join(repoDir, "feature.txt"), "x\n", "utf8");
+        await execa("git", ["-C", repoDir, "add", "."]);
+        await execa("git", ["-C", repoDir, "commit", "-m", "feature"]);
+        const head = await execa("git", ["-C", repoDir, "rev-parse", "HEAD"]).then((r) => r.stdout.trim());
+
+        await startCommand({ repo: repoDir, issue: "review-1", base, head });
+
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        await statusCommand();
+
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Type:\s+Existing PR review/);
+        expect(output).toMatch(/Review:\s+not yet done/);
+        expect(output).toMatch(/Next step:\s+\/adversarial-review/);
+      });
+
+      it("reports a clean review PASS as complete", async () => {
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { execa } = await import("execa");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const base = await execa("git", ["-C", repoDir, "rev-parse", "HEAD"]).then((r) => r.stdout.trim());
+        await writeFile(join(repoDir, "feature.txt"), "x\n", "utf8");
+        await execa("git", ["-C", repoDir, "add", "."]);
+        await execa("git", ["-C", repoDir, "commit", "-m", "feature"]);
+        const head = await execa("git", ["-C", repoDir, "rev-parse", "HEAD"]).then((r) => r.stdout.trim());
+
+        await startCommand({ repo: repoDir, issue: "review-1", base, head });
+
+        const pointer = await readActivePointer();
+        const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+        const trusted = resolveTrustedOpenSpec(workspace)!;
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+        await writeFile(
+          join(trusted.root, "reviews", "2026-06-01-adversarial-review.md"),
+          "# Adversarial Review\n\n**Verdict:** PASS\n",
+          "utf8",
+        );
+
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        await statusCommand();
+
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+done -- verdict PASS/);
+        expect(output).toMatch(/Next step:\s+none -- review complete/);
+      });
+    });
+  });
+
+  describe("ce status --all", () => {
+    it("reports nothing to show when no workspace or project has ever existed", async () => {
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await statusCommand({ all: true });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/no projects or workspaces yet/i);
+    });
+
+    it("refuses when combined with an explicit [workspace] selector", async () => {
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await expect(statusCommand({ all: true, workspace: "foo/bar" })).rejects.toThrow(CeError);
+      await expect(statusCommand({ all: true, workspace: "foo/bar" })).rejects.toThrow(
+        /cannot be combined with a specific workspace/,
+      );
+    });
+
+    it("shows a project with its preserved workspace, marking the default", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand({ all: true });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/ce-harness knows about 1 project\(s\)/);
+      expect(output).toMatch(/Workspaces:\s+issue-1 \(default\)/);
+      expect(output).toMatch(/Active changes:\s+\(none\)/);
+      expect(output).toMatch(/Archived:\s+\(none\)/);
+      expect(output).toMatch(/Reviews:\s+\(none\)/);
+      // Never dumps the raw store path/id.
+      expect(output).not.toMatch(/\.ce-harness\/openspec/);
+    });
+
+    it("shows an active change's compact progress line", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace)!;
+      const changeRoot = join(trusted.root, "openspec", "changes", "add-contact-notes");
+      await mkdir(changeRoot, { recursive: true });
+      await writeFile(join(changeRoot, "explore.md"), "findings\n", "utf8");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand({ all: true });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Active change:\s+add-contact-notes\s+\(explore ✓/);
+    });
+
+    it("still shows a project's durable history (archived changes) after its only workspace is cleaned up -- proving this is not merely a workspace-directory listing", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace)!;
+      await mkdir(join(trusted.root, "openspec", "changes", "archive", "2026-05-01-old-change"), {
+        recursive: true,
+      });
+
+      await cleanupCommand({ force: true });
+      const { listWorkspaces } = await import("../../src/core/workspace.js");
+      expect(await listWorkspaces()).toEqual([]);
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await statusCommand({ all: true });
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/ce-harness knows about 1 project\(s\)/);
+      expect(output).toMatch(/Workspaces:\s+\(none currently preserved\)/);
+      expect(output).toMatch(/Archived:\s+1 change\(s\) -- most recent: old-change/);
+    });
+
+    it("shows multiple projects, sorted", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { statusCommand } = await import("../../src/commands/status.js");
+      const otherRepo = await createTempRepo();
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      try {
+        await startCommand({ repo: repoDir, issue: "issue-1" });
+        await startCommand({ repo: otherRepo, issue: "issue-2" });
+
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        await statusCommand({ all: true });
+
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/ce-harness knows about 2 project\(s\)/);
+      } finally {
+        await rm(otherRepo, { recursive: true, force: true });
+      }
     });
   });
 });

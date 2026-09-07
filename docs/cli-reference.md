@@ -235,17 +235,52 @@ filesystem path into the external store isn't itself an actionable
 handoff (it isn't inside the worktree, isn't a URL, and doesn't
 Cmd/Ctrl-click open from a terminal).
 
-## `ce status [workspace]`
+## `ce status [workspace] [--verbose] [--all]`
 
 Read-only; safe to run any time, including with no default workspace set
 (it prints `No active workspace.` and exits). With no `[workspace]`
 argument, reports on the current default; with `[workspace]` (as
 `<project>/<issue>`), reports on that one instead, without changing the
-default. Either way it reports:
+default.
 
-- Project, issue, workspace type (`Implementation` or `Existing PR
-  review` — derived from whether `--base`/`--head` were used, never a
-  separate piece of state), repository path, base branch, internal branch
+### Default (concise) output
+
+Answers four questions at a glance, with no internal/debug detail:
+
+- **What am I working on?** Project, issue, workspace type
+  (`Implementation` or `Existing PR review`), and worktree state (clean,
+  N changed files, orphaned, or missing).
+- **What state is it in?** The active change's name and a compact
+  progress line (`explore ✓  enrich ✓ (ready)  proposal ✓  design ✓
+  tasks 3/7`) — numeric task progress once `tasks.md` exists, an
+  artifact checkmark otherwise. For an Existing PR review workspace,
+  whether `/adversarial-review` has run yet and its verdict instead.
+- **Does anything need my attention?** A `Needs attention:` list,
+  covering: stale or unrecorded provenance on a planning artifact
+  (naming the exact stage to rerun); a non-`PASS` `/verify` or
+  `/adversarial-review` verdict; repository bootstrap still required;
+  or invalid/corrupted OpenSpec metadata. Omitted entirely when there's
+  nothing to flag.
+- **What should I do next?** A single `Next step:` line — the same
+  guidance the workflow templates themselves give (e.g. the earliest
+  invalid planning stage to rerun, `/apply` while tasks remain,
+  `/verify` once they're done, `/adversarial-review` after a clean
+  `/verify`, `/archive` once both are a clean `PASS`).
+- **Other workspaces:** every other workspace preserved on disk, as
+  `<project>/<issue>`, whenever more than one exists.
+
+Never shown by default: repository/worktree/workspace paths, full
+commit SHAs, the OpenSpec store id/root, Project Identity evidence,
+CodeGraph/OpenCode/lens config paths. Use `--verbose` for all of that.
+
+### `--verbose`
+
+The full, low-level detail this command showed unconditionally before
+the concise default existed — nothing is removed, only moved behind
+this flag:
+
+- Project, issue, workspace type, repository path, base branch, internal
+  branch
 - The base branch's exact resolved commit, and whether it was
   auto-detected or given explicitly via `--from` (shown for a normal
   Implementation workspace either way — an explicit `--base`/`--head`
@@ -289,6 +324,24 @@ default. Either way it reports:
   all, directing the user to rerun the invalid stage (and, for
   `/propose`, whichever earlier stage is invalid first). A legacy
   artifact with no sidecar is never treated as fresh.
+
+### `--all`
+
+A compact, cross-project overview of everything ce-harness has
+*durably* retained — not just the workspaces currently preserved on
+disk. For each known project (discovered from its OpenSpec store's own
+identity record, via the same mechanism [Project
+Identity](concepts.md#project-identity) uses — so a project with zero
+current workspaces but a durable store full of archived changes still
+appears): its preserved workspaces (marking the default), active
+changes with a compact progress line each, an archived-change count
+with a few of the most recent names, and a count of logged PR reviews.
+Preserved workspaces with no resolvable durable project (legacy, or
+never OpenSpec-enabled) are listed separately, never silently dropped.
+Mutually exclusive with `[workspace]`. Never shells out to the
+`openspec` binary (unlike the default/`--verbose` single-workspace
+view's health check), so it stays fast regardless of how many projects
+exist — it never prints raw storage paths or metadata either.
 
 ## `ce cleanup [workspace] [--force]`
 

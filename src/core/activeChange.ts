@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { parseTaskProgress } from "./workflowStatus.js";
 
 /**
  * Read-only discovery of a durable OpenSpec store's active (i.e. not yet
@@ -271,6 +272,22 @@ export async function summarizeChangeArtifacts(changeRoot: string): Promise<Chan
     specs,
     reports,
   };
+}
+
+/**
+ * Best-effort read of a change's `tasks.md`, parsed into a checkbox
+ * completion count (see `core/workflowStatus.ts`'s `parseTaskProgress`).
+ * Never throws: a missing file, or one with no recognizable checkboxes
+ * at all, both yield `null` -- "no task-progress signal available", not
+ * an error.
+ */
+export async function readTaskProgress(tasksPath: string): Promise<{ completed: number; total: number } | null> {
+  try {
+    const content = await readFile(tasksPath, "utf8");
+    return parseTaskProgress(content);
+  } catch {
+    return null;
+  }
 }
 
 /** Renders a `ChangeArtifactSummary` as a single compact line, e.g. `explore ✓  enrich ✓ (ready)  proposal ✓  design ✓  tasks ✗  specs (2: billing, auth)`. Used by `ce status`; the workflow templates use the same convention in their own prose. */

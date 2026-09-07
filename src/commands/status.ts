@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { branchExists, isRegisteredWorktree, statusPorcelain } from "../core/git.js";
 import { CeError } from "../core/errors.js";
 import { parseWorkspaceSelector } from "../core/sanitize.js";
@@ -10,6 +12,7 @@ import {
   resolveTrustedOpenSpec,
   workspaceExistsOnDisk,
   workspaceType,
+  type Workspace,
   type ActivePointer,
 } from "../core/workspace.js";
 import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
@@ -17,25 +20,63 @@ import { readIdentityRecord } from "../core/projectIdentity.js";
 import {
   activeChangeRoot,
   formatArtifactChecklist,
+  readTaskProgress,
   resolveActiveChangesForWorkspace,
   summarizeChangeArtifacts,
 } from "../core/activeChange.js";
-import { checkStaleness, formatProvenanceSummary, type ProvenanceStage } from "../core/provenance.js";
+import { checkStaleness, formatProvenanceSummary, type ProvenanceStage, type StalenessResult } from "../core/provenance.js";
+import {
+  deriveImplementationWorkflowStatus,
+  deriveReviewWorkflowStatus,
+  extractVerdict,
+  formatProgressLine,
+  latestReportFile,
+  type ReportVerdict,
+} from "../core/workflowStatus.js";
+import { latestReviewVerdict } from "../core/reviewReports.js";
 import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
 import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
 import { filterHarnessManagedChanges } from "../core/worktreeArtifacts.js";
+import { buildAllOverview } from "../core/allOverview.js";
 
 export interface StatusOptions {
   /**
    * `<project>/<issue>` selector (see the "Other workspaces" section
    * this command prints) to inspect a specific workspace instead of the
    * current default. Purely a read: never changes which workspace is
-   * the default, even when given explicitly.
+   * the default, even when given explicitly. Mutually exclusive with
+   * `all`.
    */
   workspace?: string;
+  /**
+   * Show the full, low-level detail this command showed unconditionally
+   * before the concise default was introduced: internal paths, OpenSpec
+   * store id/root, Project Identity evidence, config/lens directories,
+   * etc. `false`/omitted gives the concise, human-oriented default.
+   */
+  verbose?: boolean;
+  /**
+   * Show a compact, cross-project overview of everything ce-harness has
+   * durably retained -- every known project (from its OpenSpec store's
+   * identity record, not just workspaces currently on disk), its
+   * preserved workspaces, active changes, and archived/reviewed history.
+   * Mutually exclusive with `workspace`.
+   */
+  all?: boolean;
 }
 
 export async function statusCommand(options: StatusOptions = {}): Promise<void> {
+  if (options.all) {
+    if (options.workspace) {
+      throw new CeError(
+        "`--all` cannot be combined with a specific workspace selector.",
+        "Run `ce status --all` on its own for the cross-project overview, or `ce status [workspace]` to inspect one workspace.",
+      );
+    }
+    await renderAllOverview();
+    return;
+  }
+
   const pointer: ActivePointer | null = options.workspace
     ? parseWorkspaceSelector(options.workspace)
     : await readActivePointer();
@@ -55,6 +96,21 @@ export async function statusCommand(options: StatusOptions = {}): Promise<void> 
 
   const workspace = await readWorkspace(pointer.project, pointer.sanitizedIssue);
 
+  if (options.verbose) {
+    await renderVerbose(workspace);
+  } else {
+    await renderConcise(workspace);
+  }
+}
+
+interface WorktreeSummary {
+  worktreeExists: boolean;
+  worktreeRegistered: boolean;
+  branchStillExists: boolean;
+  changesSummary: string;
+}
+
+async function computeWorktreeSummary(workspace: Workspace): Promise<WorktreeSummary> {
   const worktreeExists = existsSync(workspace.worktreePath);
   // `existsSync` alone is never proof this is still a valid, usable Git
   // worktree: a previous `ce cleanup`/`git worktree remove` can fail
@@ -86,6 +142,190 @@ export async function statusCommand(options: StatusOptions = {}): Promise<void> 
     changesSummary =
       significantChanges.length === 0 ? "clean" : `${significantChanges.length} changed file(s)`;
   }
+
+  return { worktreeExists, worktreeRegistered, branchStillExists, changesSummary };
+}
+
+async function printOtherWorkspaces(workspace: Workspace): Promise<void> {
+  // Discoverability for the "many workspaces, one default" model (see
+  // core/workspace.ts's `ActivePointer` doc comment): every other
+  // preserved workspace, so a user is never left wondering whether one
+  // still exists just because it isn't the default shown above.
+  const others = (await listWorkspaces()).filter(
+    (w) => !(w.project === workspace.project && w.sanitizedIssue === workspace.sanitizedIssue),
+  );
+  if (others.length > 0) {
+    console.log(`Other workspaces: ${others.map((o) => `${o.project}/${o.sanitizedIssue}`).join(", ")}`);
+  }
+}
+
+/** Reads a change's most recent report (by suffix) and extracts its verdict, if any. Never throws. */
+async function readLatestVerdict(changeRoot: string, reports: string[], suffix: string): Promise<ReportVerdict | null> {
+  const filename = latestReportFile(reports, suffix);
+  if (!filename) return null;
+  try {
+    const content = await readFile(join(changeRoot, "reports", filename), "utf8");
+    return extractVerdict(content);
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Concise (default) rendering
+// ---------------------------------------------------------------------
+
+async function renderConcise(workspace: Workspace): Promise<void> {
+  const { changesSummary } = await computeWorktreeSummary(workspace);
+
+  console.log(`Project:          ${workspace.project}`);
+  console.log(`Issue:            ${workspace.issue}`);
+  console.log(`Type:             ${workspaceType(workspace)}`);
+  console.log(`Worktree:         ${changesSummary}`);
+
+  const attention: string[] = [];
+
+  if (!workspace.openSpec) {
+    console.log();
+    await printOtherWorkspaces(workspace);
+    return;
+  }
+
+  const trusted = resolveTrustedOpenSpec(workspace);
+  if (!trusted) {
+    console.log();
+    console.log(`Needs attention:`);
+    console.log(`  - OpenSpec metadata for this workspace is invalid or corrupted -- run \`ce cleanup --force\`, then \`ce start\` again.`);
+    await printOtherWorkspaces(workspace);
+    return;
+  }
+
+  if (workspace.bootstrap?.required) {
+    attention.push("This repository needs local setup before /apply or /verify (see below).");
+  }
+
+  const activeChanges = await resolveActiveChangesForWorkspace(trusted.root, workspace.project, workspace.issue);
+
+  console.log();
+
+  if (workspaceType(workspace) === "Existing PR review") {
+    const verdict = await latestReviewVerdict(trusted.root);
+    const review = deriveReviewWorkflowStatus({ reviewVerdict: verdict });
+    console.log(`Review:           ${review.summaryLine}`);
+    attention.push(...review.attention);
+    printAttentionAndNextStep(attention, review.nextStep);
+    printBootstrapFindings(workspace);
+    await printOtherWorkspaces(workspace);
+    return;
+  }
+
+  if (activeChanges.length === 0) {
+    console.log(`Active change:    (none)`);
+    printAttentionAndNextStep(attention, "/explore (or /propose if you already know what to build)");
+    printBootstrapFindings(workspace);
+    await printOtherWorkspaces(workspace);
+    return;
+  }
+
+  if (activeChanges.length > 1) {
+    console.log(`Active changes:   ${activeChanges.join(", ")}`);
+    console.log(`                  (more than one -- see \`ce status --verbose\` or \`ce open --change <name>\` to inspect one)`);
+    printAttentionAndNextStep(attention, "inspect one with `ce open --change <name>`");
+    printBootstrapFindings(workspace);
+    await printOtherWorkspaces(workspace);
+    return;
+  }
+
+  const changeName = activeChanges[0];
+  const changeRoot = activeChangeRoot(trusted.root, changeName);
+  const [summary, taskProgress, openSpecHealthy] = await Promise.all([
+    summarizeChangeArtifacts(changeRoot),
+    readTaskProgress(join(changeRoot, "tasks.md")),
+    checkOpenSpecHealthy(workspace, trusted.storeId),
+  ]);
+
+  const stagePresence: [ProvenanceStage, boolean][] = [
+    ["explore", summary.explore.present],
+    ["enrich", summary.enrich.present],
+    ["propose", summary.proposal.present],
+  ];
+  const provenance: { stage: ProvenanceStage; result: StalenessResult }[] = await Promise.all(
+    stagePresence
+      .filter(([, present]) => present)
+      .map(async ([stage]) => ({ stage, result: await checkStaleness(changeRoot, stage, workspace.worktreePath) })),
+  );
+
+  const [verifyVerdict, adversarialVerdict] = await Promise.all([
+    readLatestVerdict(changeRoot, summary.reports, "verify"),
+    readLatestVerdict(changeRoot, summary.reports, "adversarial-review"),
+  ]);
+
+  const workflow = deriveImplementationWorkflowStatus({
+    summary,
+    provenance,
+    taskProgress,
+    verifyVerdict,
+    adversarialVerdict,
+    bootstrapRequired: workspace.bootstrap?.required ?? false,
+  });
+
+  console.log(`Active change:    ${changeName}`);
+  console.log(`Progress:         ${workflow.progressLine}`);
+
+  if (openSpecHealthy === false) {
+    attention.push("The OpenSpec store reports an unhealthy state -- see `ce status --verbose` for detail.");
+  }
+  attention.push(...workflow.attention);
+
+  printAttentionAndNextStep(attention, workflow.nextStep);
+  printBootstrapFindings(workspace);
+
+  await printOtherWorkspaces(workspace);
+}
+
+function printAttentionAndNextStep(attention: string[], nextStep: string): void {
+  if (attention.length > 0) {
+    console.log();
+    console.log(`Needs attention:`);
+    for (const item of attention) {
+      console.log(`  - ${item}`);
+    }
+  }
+  console.log();
+  console.log(`Next step:        ${nextStep}`);
+}
+
+/** The exact commands to fix each repository-bootstrap finding, printed once regardless of which active-change branch (none/one/many) is otherwise showing. No-op when bootstrap isn't required, or predates this workspace's bootstrap detection. */
+function printBootstrapFindings(workspace: Workspace): void {
+  if (!workspace.bootstrap?.required) return;
+  console.log();
+  console.log(`Local setup needed:`);
+  for (const finding of workspace.bootstrap.findings) {
+    console.log(`  - ${finding.message}`);
+    console.log(`    Run: ${finding.suggestedCommand}`);
+    if (finding.sideEffectWarning) {
+      console.log(`    Warning: ${finding.sideEffectWarning}`);
+    }
+  }
+}
+
+async function checkOpenSpecHealthy(workspace: Workspace, storeId: string): Promise<boolean | null> {
+  const available = await isOpenSpecAvailable(workspace.workspacePath);
+  if (!available) return null;
+  const doctor = await storeDoctor(workspace.workspacePath, storeId);
+  return doctor.found && doctor.healthy;
+}
+
+// ---------------------------------------------------------------------
+// Verbose rendering -- the full, low-level detail this command always
+// showed before the concise default was introduced. Unchanged from that
+// original behavior; nothing here should differ from what a user of an
+// older ce-harness version already saw.
+// ---------------------------------------------------------------------
+
+async function renderVerbose(workspace: Workspace): Promise<void> {
+  const { worktreeExists, worktreeRegistered, branchStillExists, changesSummary } =
+    await computeWorktreeSummary(workspace);
 
   console.log(`Project:          ${workspace.project}`);
   console.log(`Issue:            ${workspace.issue}`);
@@ -125,21 +365,7 @@ export async function statusCommand(options: StatusOptions = {}): Promise<void> 
   console.log(`Branch exists:    ${branchStillExists ? "yes" : "no"}`);
   console.log(`Worktree changes: ${changesSummary}`);
 
-  // Discoverability for the "many workspaces, one default" model (see
-  // core/workspace.ts's `ActivePointer` doc comment): every other
-  // preserved workspace, so a user is never left wondering whether one
-  // still exists just because it isn't the default shown above. Printed
-  // unconditionally, before any section below that could return early
-  // (e.g. a workspace with no OpenSpec metadata), so it always appears.
-  const others = (await listWorkspaces()).filter(
-    (w) => !(w.project === workspace.project && w.sanitizedIssue === workspace.sanitizedIssue),
-  );
-  if (others.length > 0) {
-    console.log(`Other workspaces:`);
-    for (const other of others) {
-      console.log(`  ${other.project}/${other.sanitizedIssue}`);
-    }
-  }
+  await printOtherWorkspaces(workspace);
 
   // The OpenCode config directory path is fully deterministic from
   // workspacePath, so it applies to every workspace regardless of
@@ -303,4 +529,69 @@ export async function statusCommand(options: StatusOptions = {}): Promise<void> 
   const doctor = await storeDoctor(workspace.workspacePath, trusted.storeId);
   const healthy = doctor.found && doctor.healthy;
   console.log(`OpenSpec healthy: ${healthy ? "yes" : "no"}`);
+}
+
+// ---------------------------------------------------------------------
+// `--all`: cross-project, durable-history overview
+// ---------------------------------------------------------------------
+
+async function renderAllOverview(): Promise<void> {
+  const overview = await buildAllOverview();
+
+  if (overview.projects.length === 0 && overview.unresolved.length === 0) {
+    console.log("ce-harness has no projects or workspaces yet.");
+    console.log("Start one with:");
+    console.log();
+    console.log("  ce start <repo> <issue>");
+    return;
+  }
+
+  console.log(
+    `ce-harness knows about ${overview.projects.length} project(s):`,
+  );
+
+  for (const project of overview.projects) {
+    console.log();
+    console.log(`${project.label}  (project id ${project.projectId})`);
+
+    if (project.workspaces.length > 0) {
+      console.log(
+        `  Workspaces:     ${project.workspaces
+          .map((w) => `${w.issue}${w.isDefault ? " (default)" : ""}`)
+          .join(", ")}`,
+      );
+    } else {
+      console.log(`  Workspaces:     (none currently preserved)`);
+    }
+
+    if (project.activeChanges.length > 0) {
+      for (const change of project.activeChanges) {
+        console.log(`  Active change:  ${change.name}  (${change.progressLine})`);
+      }
+    } else {
+      console.log(`  Active changes: (none)`);
+    }
+
+    if (project.archivedCount > 0) {
+      console.log(
+        `  Archived:       ${project.archivedCount} change(s) -- most recent: ${project.recentArchived.join(", ")}`,
+      );
+    } else {
+      console.log(`  Archived:       (none)`);
+    }
+
+    console.log(
+      `  Reviews:        ${project.reviewCount > 0 ? `${project.reviewCount} PR review(s) logged` : "(none)"}`,
+    );
+  }
+
+  if (overview.unresolved.length > 0) {
+    console.log();
+    console.log(
+      `${overview.unresolved.length} preserved workspace(s) have no durable project history yet (legacy or not yet OpenSpec-enabled):`,
+    );
+    for (const w of overview.unresolved) {
+      console.log(`  ${w.project}/${w.issue}${w.isDefault ? " (default)" : ""}`);
+    }
+  }
 }

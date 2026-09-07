@@ -150,7 +150,7 @@ describe("Repository bootstrap detection (ce start integration)", () => {
     await startCommand({ repo: repoDir, issue: "issue-1" });
     logSpy.mockClear();
 
-    await statusCommand();
+    await statusCommand({ verbose: true });
 
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
     expect(output).toMatch(/Bootstrap:\s+required before running code.*\(1 item\(s\)\)/);
@@ -165,7 +165,7 @@ describe("Repository bootstrap detection (ce start integration)", () => {
     await startCommand({ repo: repoDir, issue: "issue-1" });
     logSpy.mockClear();
 
-    await statusCommand();
+    await statusCommand({ verbose: true });
 
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
     expect(output).toMatch(/Bootstrap:\s+not required/);
@@ -211,7 +211,7 @@ describe("Repository bootstrap detection (ce start integration)", () => {
     expect(output).toMatch(/Warning: This can modify the lockfile/);
 
     logSpy.mockClear();
-    await statusCommand();
+    await statusCommand({ verbose: true });
     output = logSpy.mock.calls.map((call) => call[0]).join("\n");
     expect(output).toMatch(/Warning: This can modify the lockfile/);
   });
