@@ -8,6 +8,7 @@ import { refreshCommand } from "./commands/refresh.js";
 import { openCommand } from "./commands/open.js";
 import { migrateOpenSpecCommand } from "./commands/migrateOpenSpec.js";
 import { retrieveCommand } from "./commands/retrieve.js";
+import { libraryCommand } from "./commands/library.js";
 import { publishCommand } from "./commands/publish.js";
 import type { RetrievalSource } from "./core/retrieval.js";
 import { formatError } from "./core/errors.js";
@@ -250,6 +251,25 @@ export async function runCli(): Promise<void> {
     .option("--all", "show a compact, cross-project overview of everything ce-harness has durably retained")
     .action(async (workspace: string | undefined, options: { verbose?: boolean; all?: boolean }) => {
       await run(() => statusCommand({ workspace, verbose: options.verbose, all: options.all }));
+    });
+
+  program
+    .command("library")
+    .summary("Open a human-readable library of retained project knowledge in your editor")
+    .description(
+      "Rebuilds a human-readable, browsable directory of every known project's retained " +
+        "OpenSpec knowledge -- organized by recognizable project name, not by project id or " +
+        "internal store path -- and opens it directly in an editor. Each project gets its own " +
+        "folder (disambiguated with a short id suffix if two currently share the same name) " +
+        "containing whichever of `changes/`, `archive/`, `specs/`, `reviews/` actually exist, " +
+        "as plain symlinks into the real durable store -- nothing is copied or duplicated. " +
+        "Entirely derived: the whole directory is wiped and regenerated on every run, so it is " +
+        "always safe to delete and never goes stale. A legacy durable store with no recorded " +
+        "Project Identity has no authoritative name to show here and is simply absent -- see " +
+        "`ce migrate-openspec`.",
+    )
+    .action(async () => {
+      await run(() => libraryCommand());
     });
 
   program

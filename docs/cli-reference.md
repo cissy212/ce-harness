@@ -369,6 +369,46 @@ Mutually exclusive with `[workspace]`. Never shells out to the
 view's health check), so it stays fast regardless of how many projects
 exist — it never prints raw storage paths or metadata either.
 
+## `ce library`
+
+Rebuilds a human-readable, browsable directory of every known project's
+retained OpenSpec knowledge, organized by recognizable project name —
+not project id, not `~/.ce-harness/openspec/...` — and opens it directly
+in an editor:
+
+```bash
+ce library
+```
+
+Each known project gets its own folder (its current label — see
+[Project Identity](concepts.md#project-identity) for where that comes
+from; the same resolution `ce status --all` uses, so the two can never
+show a different name for the same project) containing whichever of
+`changes/`, `archive/`, `specs/`, `reviews/` actually exist for it, as
+plain symlinks into the real durable store. Nothing is ever copied or
+duplicated — deleting the whole library directory is always safe and
+lossless, since the next `ce library` run reconstructs it identically
+from the durable stores, which remain the sole authority.
+
+**Label collisions.** If two distinct projects currently resolve to the
+same label (e.g. two unrelated repositories both happen to be named
+`web`), *both* get a short, stable suffix derived from their own project
+id (e.g. `web-2dd4d5b9`, `web-9a12ff3c`) — never just the second one
+seen, and never a silent, wrong-project folder. The suffix is
+deterministic across rebuilds regardless of scan order.
+
+**What's excluded.** A legacy durable store with no recorded Project
+Identity (`.identity.yml`) has no authoritative label to show here and
+is simply absent — never guessed, never shown under an invented name.
+Run [`ce migrate-openspec`](#ce-migrate-openspec) to give it one and
+bring it into the library.
+
+**Always fully regenerated**, never incrementally maintained: every run
+wipes and rebuilds the whole directory from `resolveKnownProjects()`
+(the same one `ce status --all` uses for its own project list), so a
+rename, a newly-registered project, or a newly-resolved/newly-cleared
+label collision is always reflected correctly with nothing to go stale.
+
 ## `ce cleanup [workspace] [--force]`
 
 Removes a workspace's worktree, its Git branch, and the workspace

@@ -105,10 +105,13 @@ ce review . <pr-number>
 
 A few more commands you'll use often: `ce status` shows what's currently
 active, `ce resume` gets you back in if the agent's session closes, and
-`ce cleanup` removes the isolated copy when you're done. Every command
-and flag is documented in the [CLI reference](docs/cli-reference.md);
-what each workflow step actually does is documented in the [workflow
-guide](docs/workflow-guide.md).
+`ce cleanup` removes the isolated copy when you're done. When you want
+to browse everything ce-harness has retained across every project —
+without remembering an issue number, a project id, or an archived
+change's name — run `ce library`: it opens a folder of your projects, by
+name, in your editor. Every command and flag is documented in the [CLI
+reference](docs/cli-reference.md); what each workflow step actually does
+is documented in the [workflow guide](docs/workflow-guide.md).
 
 ## Troubleshooting
 

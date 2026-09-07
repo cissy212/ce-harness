@@ -220,11 +220,25 @@ a separate, unsolved problem.
                                      #   dedicated report location, since there is no change to nest reports under
   state/
     active.yml                      # which single workspace is currently active
+  library/<project-label>/           # entirely derived -- see below; rebuilt fresh by `ce library` every run
+    changes -> openspec/<project-id>/openspec/changes    # symlink
+    archive -> openspec/<project-id>/openspec/changes/archive  # symlink
+    specs   -> openspec/<project-id>/openspec/specs      # symlink
+    reviews -> openspec/<project-id>/reviews             # symlink
 ```
 
 A workspace created before durable storage existed still has its OpenSpec
 store nested at `workspaces/<project>/<issue>/openspec/` instead — see
 [`ce migrate-openspec`](cli-reference.md#ce-migrate-openspec) to move it.
+
+`library/` is not a fourth kind of durable storage — it holds no data of
+its own at all, only directories of symlinks into `openspec/<project-id>/`
+above, organized by each project's current recognizable label instead of
+its opaque id. [`ce library`](cli-reference.md#ce-library) wipes and
+regenerates the whole thing on every run, which is what makes it safe to
+delete at any time and impossible for it to go stale: the durable stores
+under `openspec/` remain the only authority, this is purely a human
+navigation projection over them.
 
 If CodeGraph (semantic code navigation) is available and used, its index
 lives at `<worktree>/.codegraph/` — never inside the workspace directory

@@ -38,6 +38,19 @@ export function openspecRoot(): string {
   return join(harnessHome(), "openspec");
 }
 
+/**
+ * Root directory for the human-readable project library (`ce library`) --
+ * a sibling of every other root above, never nested under any of them.
+ * Unlike the others, this one holds no durable data of its own at all:
+ * it is entirely derived (symlinks only, generated fresh on every `ce
+ * library` run) from the durable OpenSpec stores under `openspecRoot()`,
+ * so wiping and rebuilding it is always safe -- see
+ * `core/library.ts`'s `rebuildLibrary`.
+ */
+export function libraryRoot(): string {
+  return join(harnessHome(), "library");
+}
+
 export function worktreePath(project: string, sanitizedIssue: string): string {
   return join(worktreesRoot(), project, sanitizedIssue);
 }
@@ -127,6 +140,7 @@ export async function removeEmptyProjectDir(dir: string): Promise<void> {
     workspacesRoot(),
     stateRoot(),
     openspecRoot(),
+    libraryRoot(),
   ]);
   if (protectedTopLevelDirs.has(resolvedDir)) {
     return;

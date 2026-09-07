@@ -8,9 +8,8 @@ import {
   readTaskProgress,
   summarizeChangeArtifacts,
 } from "./activeChange.js";
-import { expectedDurableOpenSpecRoot } from "./openspecId.js";
+import { resolveKnownProjects } from "./knownProjects.js";
 import { listReviewReports } from "./reviewReports.js";
-import { scanProjectIdentities } from "./projectIdentity.js";
 import { formatProgressLine } from "./workflowStatus.js";
 import { listWorkspaces, readActivePointer, readWorkspace, resolveTrustedOpenSpec } from "./workspace.js";
 
@@ -22,14 +21,12 @@ import { listWorkspaces, readActivePointer, readWorkspace, resolveTrustedOpenSpe
  * preserved workspaces but a durable OpenSpec store full of archived
  * changes is exactly the case this must not silently omit.
  *
- * Two data sources are unioned by project id:
- * 1. `scanProjectIdentities()` -- every durable store's own identity
- *    record, regardless of whether any workspace for it currently exists
- *    on disk.
- * 2. `listWorkspaces()`, each resolved to its trusted OpenSpec metadata
- *    (if any) -- covers a workspace whose durable store predates this
- *    scan somehow being out of sync, and is also how preserved
- *    workspaces get attached to the right project entry.
+ * Which projects exist, and what each is currently called, comes from
+ * `core/knownProjects.ts`'s `resolveKnownProjects` -- shared with `ce
+ * library` so the two can never disagree about a project's label. This
+ * module only adds the per-project *content* on top: preserved
+ * workspaces, active changes, archived-change history, and review
+ * counts.
  *
  * A workspace that resolves to no durable, project-id-keyed store at all
  * (a legacy or non-OpenSpec workspace) is reported separately, never
@@ -139,24 +136,23 @@ async function summarizeProjectChanges(durableRoot: string): Promise<{
 }
 
 export async function buildAllOverview(): Promise<AllOverview> {
-  const [pointers, activePointer, identities] = await Promise.all([
+  const [pointers, activePointer, knownProjects] = await Promise.all([
     listWorkspaces(),
     readActivePointer(),
-    scanProjectIdentities(),
+    resolveKnownProjects(),
   ]);
 
   const projectsById = new Map<string, ProjectOverview>();
 
-  // Seed every known durable project first, so one with zero currently
-  // preserved workspaces still appears.
+  // Seed every known durable project first (label and durable root
+  // already resolved), so one with zero currently preserved workspaces
+  // still appears.
   await Promise.all(
-    identities.map(async (identity) => {
-      const label = identity.evidence[identity.evidence.length - 1].project;
-      const durableRoot = expectedDurableOpenSpecRoot(identity.projectId);
-      const changes = await summarizeProjectChanges(durableRoot);
-      projectsById.set(identity.projectId, {
-        projectId: identity.projectId,
-        label,
+    knownProjects.map(async (known) => {
+      const changes = await summarizeProjectChanges(known.durableRoot);
+      projectsById.set(known.projectId, {
+        projectId: known.projectId,
+        label: known.label,
         workspaces: [],
         ...changes,
       });
@@ -179,25 +175,15 @@ export async function buildAllOverview(): Promise<AllOverview> {
       activePointer?.project === pointer.project && activePointer?.sanitizedIssue === pointer.sanitizedIssue;
     const trusted = resolveTrustedOpenSpec(workspace);
 
-    if (trusted?.durable && trusted.projectId) {
-      const existing = projectsById.get(trusted.projectId);
-      const entry: WorkspaceOverview = { issue: workspace.issue, sanitizedIssue: pointer.sanitizedIssue, isDefault };
-      if (existing) {
-        existing.workspaces.push(entry);
-        // A workspace's own project label (its repo folder's current
-        // basename) is often more current/recognizable than a possibly
-        // older identity-evidence label -- prefer it once we have one.
-        existing.label = workspace.project;
-      } else {
-        const durableRoot = trusted.root;
-        const changes = await summarizeProjectChanges(durableRoot);
-        projectsById.set(trusted.projectId, {
-          projectId: trusted.projectId,
-          label: workspace.project,
-          workspaces: [entry],
-          ...changes,
-        });
-      }
+    // `resolveKnownProjects` already unioned every durable, trusted
+    // workspace's project id above, so `existing` is always found here
+    // when `trusted` resolves at all -- this only ever attaches the
+    // workspace entry, never re-decides the label (that decision lives
+    // solely in knownProjects.ts, so it can never drift from what it
+    // resolved).
+    const existing = trusted?.durable && trusted.projectId ? projectsById.get(trusted.projectId) : undefined;
+    if (existing) {
+      existing.workspaces.push({ issue: workspace.issue, sanitizedIssue: pointer.sanitizedIssue, isDefault });
     } else {
       unresolved.push({
         project: pointer.project,
