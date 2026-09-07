@@ -266,7 +266,12 @@ export async function runCli(): Promise<void> {
         "needing to know the durable store's internal path. With --path, opens one exact " +
         "file or directory inside the workspace's OpenSpec store instead -- e.g. the exact " +
         "report /verify or /adversarial-review just wrote -- rejected if it isn't inside " +
-        "the store root; cannot be combined with --change. Creates nothing, registers " +
+        "the store root; cannot be combined with --change. With --archived " +
+        "<project>/<issue-or-name>, opens an archived OpenSpec change directly by its " +
+        "original issue identifier or its change name (the identifiers `ce status --all` " +
+        "shows), with no dependency on any live/preserved workspace -- so retained project " +
+        "history stays reachable even after `ce cleanup`; mutually exclusive with " +
+        "[workspace]/--change/--path. Creates nothing, registers " +
         "nothing, and never modifies workspace.yml or which workspace is the default.",
     )
     .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
@@ -282,9 +287,20 @@ export async function runCli(): Promise<void> {
         "(e.g. a report /verify or /adversarial-review just wrote) -- rejected if it isn't " +
         "inside the store root; mutually exclusive with --change",
     )
+    .option(
+      "--archived <project>/<issue-or-name>",
+      "open an archived OpenSpec change directly by its original issue identifier or its " +
+        "change name (see `ce status --all`) -- works even when its workspace has since " +
+        "been cleaned up; mutually exclusive with [workspace]/--change/--path",
+    )
     .action(
-      async (workspace: string | undefined, options: { change?: string | true; path?: string }) => {
-        await run(() => openCommand({ workspace, change: options.change, path: options.path }));
+      async (
+        workspace: string | undefined,
+        options: { change?: string | true; path?: string; archived?: string },
+      ) => {
+        await run(() =>
+          openCommand({ workspace, change: options.change, path: options.path, archived: options.archived }),
+        );
       },
     );
 

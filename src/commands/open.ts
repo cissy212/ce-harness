@@ -11,7 +11,15 @@ import {
   type ActivePointer,
 } from "../core/workspace.js";
 import { DEFAULT_EDITOR, formatOpenCommand, openInEditor } from "../core/editor.js";
-import { activeChangeRoot, resolveActiveChangesForWorkspace } from "../core/activeChange.js";
+import {
+  activeChangeRoot,
+  archivedChangeRoot,
+  listArchivedChanges,
+  readChangeOwnership,
+  resolveActiveChangesForWorkspace,
+} from "../core/activeChange.js";
+import { expectedDurableOpenSpecRoot } from "../core/openspecId.js";
+import { scanProjectIdentities } from "../core/projectIdentity.js";
 
 export interface OpenCommandOptions {
   /**
@@ -40,6 +48,21 @@ export interface OpenCommandOptions {
    * artifact directory by name, `--path` opens one exact path.
    */
   path?: string;
+  /**
+   * Open an *archived* OpenSpec change directly, addressed as
+   * `<project>/<issue-or-name>` -- the exact identifiers `ce status
+   * --all` shows for retained project history -- without requiring any
+   * live/preserved workspace to exist for it (the whole point: a
+   * workspace's own worktree/workspace directory is ephemeral and may
+   * long since be `ce cleanup`-ed, but the durable OpenSpec store, and
+   * what's archived in it, is not). `<project>` matches a known
+   * project's id or its most recently recorded label; `<issue-or-name>`
+   * matches an archived change's own persisted issue identifier first
+   * (see `.ce-workspace.yml`), falling back to an exact match on the
+   * change's name. Mutually exclusive with `workspace`, `change`, and
+   * `path`.
+   */
+  archived?: string;
 }
 
 /**
@@ -57,8 +80,27 @@ export interface OpenCommandOptions {
  * already has -- creates nothing, registers nothing, and never modifies
  * `workspace.yml` or the active-default pointer, regardless of whether
  * a workspace was given explicitly.
+ *
+ * `--archived <project>/<issue-or-name>` is the odd one out: it never
+ * touches a workspace at all (not the active pointer, not
+ * `workspace.yml`), resolving straight from Project Identity + the
+ * durable store's own `archive/` directory instead -- see
+ * `openArchivedChange` below. This is what lets `ce status --all`'s
+ * retained history actually be opened, not just displayed, even for a
+ * project with zero currently preserved workspaces.
  */
 export async function openCommand(options: OpenCommandOptions = {}): Promise<void> {
+  if (options.archived !== undefined) {
+    if (options.workspace !== undefined || options.change !== undefined || options.path !== undefined) {
+      throw new CeError(
+        "--archived cannot be combined with [workspace], --change, or --path.",
+        "Run `ce open --archived <project>/<issue-or-name>` on its own.",
+      );
+    }
+    await openArchivedChange(options.archived);
+    return;
+  }
+
   const pointer: ActivePointer | null = options.workspace
     ? parseWorkspaceSelector(options.workspace)
     : await readActivePointer();
@@ -219,6 +261,101 @@ export async function openCommand(options: OpenCommandOptions = {}): Promise<voi
   if (!result.opened) {
     throw new CeError(
       `Failed to open the change in ${DEFAULT_EDITOR.label}: ${result.message}`,
+      `Open it manually with:\n  ${formatOpenCommand(changeRoot)}`,
+    );
+  }
+}
+
+/** Splits `--archived`'s `<project>/<issue-or-name>` selector. Deliberately not `parseWorkspaceSelector` -- that sanitizes its second segment as an *issue*, which would be wrong for a plain change-name match, and its error message talks about "workspace selector", not an archived-change one. */
+function parseArchivedSelector(selector: string): { project: string; identifier: string } {
+  const separatorIndex = selector.indexOf("/");
+  const project = separatorIndex === -1 ? "" : selector.slice(0, separatorIndex).trim();
+  const identifier = separatorIndex === -1 ? "" : selector.slice(separatorIndex + 1).trim();
+  if (project.length === 0 || identifier.length === 0) {
+    throw new CeError(
+      `Invalid --archived selector "${selector}" -- expected the form <project>/<issue-or-name>.`,
+      'e.g. "market-audit-tool/138" or "market-audit-tool/consolidate-drawer-base-component" -- run `ce status --all` to see retained projects and archived changes.',
+    );
+  }
+  return { project, identifier };
+}
+
+/**
+ * Opens an archived OpenSpec change directly by project + issue/name,
+ * with no dependency on any live workspace -- see `OpenCommandOptions.archived`'s
+ * doc comment above for the full resolution rules. Never guesses: an
+ * ambiguous project or archived-change match refuses rather than picking
+ * one, exactly like every other Project-Identity-aware resolution in
+ * ce-harness.
+ */
+async function openArchivedChange(selector: string): Promise<void> {
+  const { project, identifier } = parseArchivedSelector(selector);
+
+  const identities = await scanProjectIdentities();
+  const projectMatches = identities.filter((identity) => {
+    const latestLabel = identity.evidence[identity.evidence.length - 1].project;
+    return identity.projectId === project || latestLabel === project;
+  });
+
+  if (projectMatches.length === 0) {
+    throw new CeError(
+      `No known project matches "${project}".`,
+      "Run `ce status --all` to see every known project and its identifiers.",
+    );
+  }
+  if (projectMatches.length > 1) {
+    throw new CeError(
+      `More than one known project matches "${project}" -- ce-harness will not guess.`,
+      `Matching project ids: ${projectMatches.map((m) => m.projectId).join(", ")}. ` +
+        "Retry with the exact project id instead (see `ce status --all`).",
+    );
+  }
+
+  const durableRoot = expectedDurableOpenSpecRoot(projectMatches[0].projectId);
+  const archived = await listArchivedChanges(durableRoot);
+  const withOwnership = await Promise.all(
+    archived.map(async (entry) => ({
+      entry,
+      ownership: await readChangeOwnership(archivedChangeRoot(durableRoot, entry.archiveDirName)),
+    })),
+  );
+
+  // Prefer the archived change's own persisted issue identifier (never
+  // inferred or guessed -- see core/activeChange.ts's
+  // readChangeOwnership) over a name match, falling back to matching
+  // the change's own name only when no archived change in this project
+  // was tagged with this exact issue -- e.g. one archived before the
+  // ownership sidecar existed.
+  const byIssue = withOwnership.filter(({ ownership }) => ownership?.issue === identifier);
+  const candidates = byIssue.length > 0 ? byIssue : withOwnership.filter(({ entry }) => entry.name === identifier);
+
+  if (candidates.length === 0) {
+    throw new CeError(
+      `No archived change matches "${identifier}" in project "${project}".`,
+      "Run `ce status --all` to see this project's archived changes and their identifiers.",
+    );
+  }
+  if (candidates.length > 1) {
+    throw new CeError(
+      `More than one archived change matches "${identifier}" in project "${project}" -- ce-harness will not guess.`,
+      `Matching changes: ${candidates.map((c) => c.entry.name).join(", ")}. Retry with the exact change name instead.`,
+    );
+  }
+
+  const { entry } = candidates[0];
+  const changeRoot = archivedChangeRoot(durableRoot, entry.archiveDirName);
+  if (!existsSync(changeRoot)) {
+    throw new CeError(
+      `Archived change "${entry.name}"'s directory no longer exists.`,
+      `Expected it at "${changeRoot}".`,
+    );
+  }
+
+  console.log(`Opening archived change "${entry.name}" in ${DEFAULT_EDITOR.label}...`);
+  const result = await openInEditor(changeRoot);
+  if (!result.opened) {
+    throw new CeError(
+      `Failed to open the archived change in ${DEFAULT_EDITOR.label}: ${result.message}`,
       `Open it manually with:\n  ${formatOpenCommand(changeRoot)}`,
     );
   }

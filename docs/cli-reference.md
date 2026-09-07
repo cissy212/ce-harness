@@ -235,6 +235,24 @@ filesystem path into the external store isn't itself an actionable
 handoff (it isn't inside the worktree, isn't a URL, and doesn't
 Cmd/Ctrl-click open from a terminal).
 
+`ce open --archived <project>/<issue-or-name>` opens an *archived*
+OpenSpec change directly — with no dependency on any live/preserved
+workspace, unlike every other form of `ce open` above. This is what
+makes `ce status --all`'s retained history actually reachable, not just
+displayed: a workspace's worktree/workspace directory is ephemeral and
+may long since be `ce cleanup`-ed, but the durable OpenSpec store — and
+whatever's archived in it — is not. Use the exact identifiers `ce status
+--all` shows: `<project>` matches a known project's id or its most
+recently recorded label; `<issue-or-name>` matches the archived change's
+own persisted issue identifier first (from its `.ce-workspace.yml`
+ownership sidecar — the same one `/propose`/`/archive` already write and
+carry along), falling back to an exact match on the change's own name
+for a change archived before that sidecar existed. Never guesses: an
+ambiguous project or archived-change match refuses rather than picking
+one, naming the exact matches found so you can retry with a more precise
+selector. Mutually exclusive with `[workspace]`, `--change`, and
+`--path`.
+
 ## `ce status [workspace] [--verbose] [--all]`
 
 Read-only; safe to run any time, including with no default workspace set

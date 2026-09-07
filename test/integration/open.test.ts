@@ -521,6 +521,150 @@ describe("ce open (integration)", () => {
     });
   });
 
+  describe("--archived (opens an archived OpenSpec change directly, with no dependency on any live workspace)", () => {
+    async function trustedRootAndProjectId(): Promise<{ root: string; projectId: string }> {
+      const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+        "../../src/core/workspace.js"
+      );
+      const pointer = await readActivePointer();
+      const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+      const trusted = resolveTrustedOpenSpec(workspace);
+      return { root: trusted!.root, projectId: trusted!.projectId! };
+    }
+
+    it("opens an archived change by its original issue identifier, addressed as <project>/<issue>, after its workspace has been cleaned up", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "138" });
+      const { root } = await trustedRootAndProjectId();
+      const archiveDir = join(root, "openspec", "changes", "archive", "2026-05-01-consolidate-drawer-base-component");
+      await mkdir(archiveDir, { recursive: true });
+      await writeFile(
+        join(archiveDir, ".ce-workspace.yml"),
+        `project: ${basenameOf(repoDir)}\nissue: "138"\n`,
+        "utf8",
+      );
+
+      await cleanupCommand({ force: true });
+      const { listWorkspaces } = await import("../../src/core/workspace.js");
+      expect(await listWorkspaces()).toEqual([]);
+
+      await openCommand({ archived: `${basenameOf(repoDir)}/138` });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([archiveDir]);
+    });
+
+    it("opens an archived change by its exact name when it has no persisted issue identifier", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+      const { root } = await trustedRootAndProjectId();
+      const archiveDir = join(root, "openspec", "changes", "archive", "2026-05-01-legacy-cleanup");
+      await mkdir(archiveDir, { recursive: true });
+      // No .ce-workspace.yml -- predates the ownership sidecar.
+
+      await openCommand({ archived: `${basenameOf(repoDir)}/legacy-cleanup` });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([archiveDir]);
+    });
+
+    it("also accepts the project id in place of the project label", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "130" });
+      const { root, projectId } = await trustedRootAndProjectId();
+      const archiveDir = join(root, "openspec", "changes", "archive", "2026-05-01-contacts-email-notes");
+      await mkdir(archiveDir, { recursive: true });
+      await writeFile(
+        join(archiveDir, ".ce-workspace.yml"),
+        `project: ${basenameOf(repoDir)}\nissue: "130"\n`,
+        "utf8",
+      );
+
+      await openCommand({ archived: `${projectId}/130` });
+
+      const recorded = JSON.parse(await readFile(fakeEditor.outputFile, "utf8"));
+      expect(recorded.argv).toEqual([archiveDir]);
+    });
+
+    it("refuses with an actionable error when no known project matches, never guessing", async () => {
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await expect(openCommand({ archived: "no-such-project/138" })).rejects.toThrow(CeError);
+      await expect(openCommand({ archived: "no-such-project/138" })).rejects.toThrow(
+        /No known project matches "no-such-project"/,
+      );
+    });
+
+    it("refuses with an actionable error when no archived change matches the issue/name, never guessing", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      await expect(openCommand({ archived: `${basenameOf(repoDir)}/no-such-issue` })).rejects.toThrow(CeError);
+      await expect(openCommand({ archived: `${basenameOf(repoDir)}/no-such-issue` })).rejects.toThrow(
+        /No archived change matches "no-such-issue"/,
+      );
+    });
+
+    it("refuses when combined with [workspace], --change, or --path", async () => {
+      const { openCommand } = await import("../../src/commands/open.js");
+      const { CeError } = await import("../../src/core/errors.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await expect(
+        openCommand({ archived: "repo/138", workspace: "repo/138" }),
+      ).rejects.toThrow(CeError);
+      await expect(
+        openCommand({ archived: "repo/138", workspace: "repo/138" }),
+      ).rejects.toThrow(/--archived cannot be combined/);
+
+      await expect(openCommand({ archived: "repo/138", change: true })).rejects.toThrow(
+        /--archived cannot be combined/,
+      );
+      await expect(openCommand({ archived: "repo/138", path: "/tmp/x" })).rejects.toThrow(
+        /--archived cannot be combined/,
+      );
+    });
+
+    it("never creates, registers, or modifies anything -- purely opens the existing archived directory", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { cleanupCommand } = await import("../../src/commands/cleanup.js");
+      const { openCommand } = await import("../../src/commands/open.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "138" });
+      const { root } = await trustedRootAndProjectId();
+      const archiveDir = join(root, "openspec", "changes", "archive", "2026-05-01-consolidate-drawer-base-component");
+      await mkdir(archiveDir, { recursive: true });
+      await writeFile(
+        join(archiveDir, ".ce-workspace.yml"),
+        `project: ${basenameOf(repoDir)}\nissue: "138"\n`,
+        "utf8",
+      );
+      await cleanupCommand({ force: true });
+
+      const registryBefore = await readFile(fakeOpenSpec.registryFile, "utf8");
+      await openCommand({ archived: `${basenameOf(repoDir)}/138` });
+      const registryAfter = await readFile(fakeOpenSpec.registryFile, "utf8");
+      expect(registryAfter).toBe(registryBefore);
+    });
+  });
+
   describe("workspace -> active change association", () => {
     async function trustedRootFor(project: string, sanitizedIssue: string): Promise<string> {
       const { readWorkspace, resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
