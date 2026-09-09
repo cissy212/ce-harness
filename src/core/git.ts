@@ -256,6 +256,29 @@ export async function resolveMergeBase(
 }
 
 /**
+ * Like `resolveMergeBase`, but resolves to `null` instead of throwing when
+ * no merge base exists or either ref does not resolve at all -- for a
+ * caller that tries several candidate refs in turn (e.g. `resolveDiffScope`'s
+ * base-branch fallback chain) and treats a failed candidate as "try the
+ * next one," not as an error.
+ */
+export async function tryMergeBase(repoPath: string, refA: string, refB: string): Promise<string | null> {
+  const result = await git(repoPath, ["merge-base", refA, refB]);
+  return result.exitCode === 0 ? result.stdout.trim() : null;
+}
+
+/**
+ * Reports whether `ancestor` is an ancestor of (or the same commit as)
+ * `descendant` in `repoPath` -- i.e. `descendant` is reachable from
+ * `ancestor`. Never throws: an unresolvable ref and a genuine
+ * non-ancestor relationship both simply resolve to `false`.
+ */
+export async function isAncestor(repoPath: string, ancestor: string, descendant: string): Promise<boolean> {
+  const result = await git(repoPath, ["merge-base", "--is-ancestor", ancestor, descendant]);
+  return result.exitCode === 0;
+}
+
+/**
  * Fetches `refspec` from `remote` into `repoPath`. The low-level fetch
  * primitive -- `ce review` (via `fetchPrCommits`), `ce publish` (via
  * `fetchRemoteBranch` below), and `ce start`'s default (auto-detected)

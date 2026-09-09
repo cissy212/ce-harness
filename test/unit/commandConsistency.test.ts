@@ -6,11 +6,15 @@ import { templatesRoot } from "../../src/core/templates.js";
 /**
  * Cross-file drift detection for methodology that `/verify` and
  * `/adversarial-review` each restate independently rather than sharing
- * through any include/partial mechanism (there is none -- see backlog
- * item H2, deliberately out of scope here). This is a safety net only:
- * it does not refactor either template or introduce shared partials: it
- * only proves that the specific sub-blocks intended to be identical
- * have not silently diverged from each other.
+ * through any include/partial mechanism (there is none for prose -- this
+ * is a safety net only, not a refactor into shared partials). The
+ * diff-scope algorithm itself no longer falls into this category: it was
+ * extracted into `src/core/diffScope.ts` (invoked by both templates via
+ * `ce diff-scope`), formerly backlog item H2, so that sub-block is a
+ * single implementation now rather than duplicated prose -- see the
+ * "Diff-scope resolution" describe block below for what's still worth
+ * pinning about it. The lens-selection algorithm remains prose restated
+ * in both files, and is what the checks below still guard.
  *
  * Sections are extracted by stable anchor text (never brittle whole-file
  * or line-number snapshots), so reformatting elsewhere in either file
@@ -120,19 +124,43 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
     //   equivalent of).
   });
 
-  describe("Diff-scope algorithm (three-dot vs two-dot, explicit range, base-branch fallback)", () => {
-    it("shares an identical diff-scope procedure through the base-branch fallback commands", async () => {
+  describe("Diff-scope resolution (both commands delegate to `ce diff-scope`)", () => {
+    // The merge-base/base-branch-fallback algorithm itself no longer lives
+    // here as prose kept in sync by this test -- it is a single
+    // implementation in src/core/diffScope.ts, exercised directly (against
+    // real Git repositories) by test/unit/diffScopeResolution.test.ts.
+    // What remains worth pinning here is that both templates actually
+    // delegate to it, identically, instead of one silently reverting to
+    // restating the algorithm inline.
+
+    it("both templates invoke `ce diff-scope` instead of restating the algorithm inline", async () => {
       const verify = await readVerify();
       const adversarial = await readAdversarialReview();
 
-      const start = 'Determine the diff scope, entirely inside `$CE_WORKTREE`:';
-      const end =
-        'BASE_MB="${LOCAL_MB:-$ORIGIN_MB}"   # only one resolved, or both agree -- no comparison needed\nfi\n```';
+      for (const [label, content] of [
+        ["verify.md", verify],
+        ["adversarial-review.md", adversarial],
+      ] as const) {
+        expect(content, `${label} should call \`ce diff-scope\``).toContain("ce diff-scope");
+        // The old inline algorithm must not have crept back in.
+        expect(content, `${label} must not restate the merge-base fallback inline`).not.toMatch(
+          /LOCAL_MB=|ORIGIN_MB=|BASE_MB=/,
+        );
+      }
+    });
 
-      const verifyBlock = extractSection(verify, "verify.md diff-scope procedure", start, end);
+    it("shares an identical explanation of the algorithm and identical explicit/merge-base mode handling", async () => {
+      const verify = await readVerify();
+      const adversarial = await readAdversarialReview();
+
+      const start = "Resolve the diff range to review:";
+      const end =
+        'Use `diffRange`\n  (three-dot) for the diff and `logRange` (two-dot) for the commit log:\n  ```bash\n  git -C "$CE_WORKTREE" log --oneline "<logRange>"\n  git -C "$CE_WORKTREE" diff "<diffRange>"\n  ```\n- `"mode": "merge-base"` -- a base was found (`base`, resolved from\n  `baseSource`).';
+
+      const verifyBlock = extractSection(verify, "verify.md diff-scope pointer", start, end);
       const adversarialBlock = extractSection(
         adversarial,
-        "adversarial-review.md diff-scope procedure",
+        "adversarial-review.md diff-scope pointer",
         start,
         end,
       );
@@ -140,92 +168,10 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
       expect(adversarialBlock).toBe(verifyBlock);
     });
 
-    it("prefers CE_BASE_BRANCH (ce start's own detected base branch) over guessing main/master -- both files, not just kept in sync with each other", async () => {
-      const verify = await readVerify();
-      const adversarial = await readAdversarialReview();
-
-      const start = 'Determine the diff scope, entirely inside `$CE_WORKTREE`:';
-      const end =
-        'BASE_MB="${LOCAL_MB:-$ORIGIN_MB}"   # only one resolved, or both agree -- no comparison needed\nfi\n```';
-
-      const verifyBlock = extractSection(verify, "verify.md diff-scope procedure", start, end);
-      const adversarialBlock = extractSection(
-        adversarial,
-        "adversarial-review.md diff-scope procedure",
-        start,
-        end,
-      );
-
-      for (const [label, block] of [
-        ["verify.md", verifyBlock],
-        ["adversarial-review.md", adversarialBlock],
-      ] as const) {
-        expect(block, `${label} should try $CE_BASE_BRANCH before main/master`).toContain(
-          'merge-base HEAD "$CE_BASE_BRANCH"',
-        );
-        expect(block, `${label} should also try the origin/ remote-tracking form`).toContain(
-          'merge-base HEAD "origin/$CE_BASE_BRANCH"',
-        );
-        // The main/master guess must still be present, but only as the last resort.
-        const baseBranchIdx = block.indexOf('merge-base HEAD "$CE_BASE_BRANCH"');
-        const mainIdx = block.indexOf("merge-base HEAD main");
-        expect(baseBranchIdx, `${label} is missing the $CE_BASE_BRANCH attempt`).toBeGreaterThan(-1);
-        expect(mainIdx, `${label} is missing the main fallback`).toBeGreaterThan(-1);
-        expect(baseBranchIdx, `${label} must try $CE_BASE_BRANCH before guessing main`).toBeLessThan(
-          mainIdx,
-        );
-      }
-    });
-
-    it("never assumes the first of $CE_BASE_BRANCH/origin/$CE_BASE_BRANCH to resolve is correct when both exist and disagree -- both files", async () => {
-      const verify = await readVerify();
-      const adversarial = await readAdversarialReview();
-
-      const start = 'Determine the diff scope, entirely inside `$CE_WORKTREE`:';
-      const end =
-        'BASE_MB="${LOCAL_MB:-$ORIGIN_MB}"   # only one resolved, or both agree -- no comparison needed\nfi\n```';
-
-      const verifyBlock = extractSection(verify, "verify.md diff-scope procedure", start, end);
-      const adversarialBlock = extractSection(
-        adversarial,
-        "adversarial-review.md diff-scope procedure",
-        start,
-        end,
-      );
-
-      for (const [label, block] of [
-        ["verify.md", verifyBlock],
-        ["adversarial-review.md", adversarialBlock],
-      ] as const) {
-        // Determines which of the two candidates is actually more current
-        // (a descendant of the other) via ancestry, in both directions --
-        // never hardcoding a preference for either side by name.
-        expect(block, `${label} should compare the two candidates by ancestry`).toContain(
-          "merge-base --is-ancestor",
-        );
-        expect(block).toContain('--is-ancestor "$CE_BASE_BRANCH" "origin/$CE_BASE_BRANCH"');
-        expect(block).toContain('--is-ancestor "origin/$CE_BASE_BRANCH" "$CE_BASE_BRANCH"');
-        // A genuinely diverged pair (neither an ancestor of the other) has
-        // a documented, deterministic fallback -- not a silent guess.
-        expect(block, `${label} should document the true-divergence fallback`).toMatch(
-          /diverged in both directions/,
-        );
-      }
-    });
-
-    // Deliberately NOT asserted identical: the paragraph immediately
-    // following the merge-base commands ("If a merge base is found...
-    // fall back to inspecting/reviewing HEAD...") already differs in
-    // wording between the two files today (verify.md: "diff against
-    // it... fall back to inspecting HEAD"; adversarial-review.md:
-    // "review the full diff scope against it, not just the default file
-    // ordering... fall back to reviewing HEAD"; verify.md also cites
-    // "Gaps and Blockers" explicitly, adversarial-review.md does not).
-    // This is a pre-existing wording variance, not documented anywhere
-    // as an intentional difference -- it is excluded from the
-    // byte-identical check here (rather than left to fail) because this
-    // is a drift-detection safety net for the algorithm's substance, not
-    // a byte-for-byte snapshot test; the variance is called out
-    // explicitly so it isn't mistaken for coverage.
+    // Deliberately NOT asserted identical: the "no-base" bullet's trailing
+    // clause, since it names each report's own, differently-shaped
+    // structure (verify.md: a "Gaps and Blockers" section; adversarial-review.md:
+    // a "**Scope limitations:**" field) -- a genuine, documented difference,
+    // not drift.
   });
 });

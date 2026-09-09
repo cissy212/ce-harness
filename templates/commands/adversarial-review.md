@@ -207,72 +207,36 @@ git -C "$CE_WORKTREE" status --porcelain
 git -C "$CE_WORKTREE" log --oneline -20
 ```
 
-If `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set, this is an explicit
-review of a specific commit range (e.g. an existing pull request, open or
-already merged) injected by `ce start --base --head` -- use them
-directly and skip base-branch detection entirely:
+Resolve the diff range to review:
 
 ```bash
-git -C "$CE_WORKTREE" log --oneline "$CE_DIFF_BASE..$CE_DIFF_HEAD"
-git -C "$CE_WORKTREE" diff "$CE_DIFF_BASE...$CE_DIFF_HEAD"
+ce diff-scope
 ```
 
-Use three-dot (`...`) for the diff itself, not two-dot: three-dot means
-"changes introduced on head since it diverged from base," which is
-correct whether or not base has since advanced (an open PR whose base
-branch moved forward is still a valid comparison). Use two-dot for the
-commit log, which lists exactly the commits unique to head. Derive the
-actual changed code from the three-dot diff, not from the log.
+This determines, deterministically, exactly which range to review --
+an explicit `$CE_DIFF_BASE`/`$CE_DIFF_HEAD` range when both are set (an
+existing pull request injected by `ce start --base --head`); otherwise
+the merge base against `$CE_BASE_BRANCH` (preferring its current
+`origin/` form when the two disagree and it is the more current one),
+falling back to `main`/`master` only when `$CE_BASE_BRANCH` is unset or
+neither of its forms resolves -- never guessing when the two candidates
+have diverged in both directions. Parse its JSON output:
 
-Otherwise, find a base for a proper diff. Prefer `$CE_BASE_BRANCH` -- the
-exact base branch `ce start` itself detected for this repository (never a
-guess -- see `detectBaseBranch`), injected for every workspace the default
-flow creates -- over guessing a name: try it both as a local branch and as
-`origin/$CE_BASE_BRANCH` (a remote-tracking ref, present whenever only that,
-not a local branch, exists -- or simply more current than a stale local
-one). Only when `CE_BASE_BRANCH` is unset (a workspace created before this
-variable existed) or neither form resolves at all, fall back to the common
-`main`/`master` convention names, in that order, and use whichever exists:
-
-```bash
-git -C "$CE_WORKTREE" merge-base HEAD "$CE_BASE_BRANCH"          2>/dev/null
-git -C "$CE_WORKTREE" merge-base HEAD "origin/$CE_BASE_BRANCH"   2>/dev/null
-git -C "$CE_WORKTREE" merge-base HEAD main    2>/dev/null
-git -C "$CE_WORKTREE" merge-base HEAD master  2>/dev/null
-```
-
-If both `$CE_BASE_BRANCH` and `origin/$CE_BASE_BRANCH` produced a merge
-base and the two differ, do not just take whichever command happened to
-run first: a stale local branch (or, symmetrically, an unfetched
-remote-tracking ref) silently widens the diff to include history that has
-already landed on the other side -- e.g. a PR merged upstream after the
-local branch was last updated would otherwise look like new, unreviewed
-work. Never assume either side automatically wins (a local branch can
-legitimately be ahead of `origin/` too, e.g. unpushed integration work);
-determine which of the two branches is actually the more current one (a
-descendant of the other) and use that one's merge base instead:
-
-```bash
-LOCAL_MB=$(git -C "$CE_WORKTREE" merge-base HEAD "$CE_BASE_BRANCH"        2>/dev/null)
-ORIGIN_MB=$(git -C "$CE_WORKTREE" merge-base HEAD "origin/$CE_BASE_BRANCH" 2>/dev/null)
-if [ -n "$LOCAL_MB" ] && [ -n "$ORIGIN_MB" ] && [ "$LOCAL_MB" != "$ORIGIN_MB" ]; then
-  if git -C "$CE_WORKTREE" merge-base --is-ancestor "$CE_BASE_BRANCH" "origin/$CE_BASE_BRANCH" 2>/dev/null; then
-    BASE_MB="$ORIGIN_MB"   # origin/$CE_BASE_BRANCH is ahead -- the more current base
-  elif git -C "$CE_WORKTREE" merge-base --is-ancestor "origin/$CE_BASE_BRANCH" "$CE_BASE_BRANCH" 2>/dev/null; then
-    BASE_MB="$LOCAL_MB"    # $CE_BASE_BRANCH is ahead -- the more current base
-  else
-    BASE_MB="$LOCAL_MB"    # diverged in both directions -- no principled winner by ancestry alone; keep the existing default
-  fi
-else
-  BASE_MB="${LOCAL_MB:-$ORIGIN_MB}"   # only one resolved, or both agree -- no comparison needed
-fi
-```
-
-If a merge base is found, review the full diff scope against it
-(`git -C "$CE_WORKTREE" diff <merge-base>...HEAD`), not just the default
-file ordering. If neither `$CE_BASE_BRANCH` (nor its `origin/` form),
-`main`, nor `master` resolves to a reachable branch, note this as a scope
-limitation and fall back to reviewing `HEAD` and the uncommitted diff only.
+- `"mode": "explicit"` -- an explicit review range. Use `diffRange`
+  (three-dot) for the diff and `logRange` (two-dot) for the commit log:
+  ```bash
+  git -C "$CE_WORKTREE" log --oneline "<logRange>"
+  git -C "$CE_WORKTREE" diff "<diffRange>"
+  ```
+- `"mode": "merge-base"` -- a base was found (`base`, resolved from
+  `baseSource`). Review the full diff scope against it, not just the
+  default file ordering:
+  ```bash
+  git -C "$CE_WORKTREE" diff "<diffRange>"
+  ```
+- `"mode": "no-base"` -- no merge base could be resolved. Note the
+  returned `scopeLimitation` in the report's `**Scope limitations:**`
+  field and fall back to reviewing `HEAD` and the uncommitted diff only.
 
 **Implementation workspace:** map files and changes to spec sections and
 tasks. **Existing PR review workspace:** map files and changes to the PR

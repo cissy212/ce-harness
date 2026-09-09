@@ -3195,28 +3195,22 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/<changeRoot>\/reports\/<YYYY-MM-DD>-verify\.md/);
     });
 
-    describe("explicit CE_DIFF_BASE/CE_DIFF_HEAD review range", () => {
-      it("uses three-dot diff semantics on the explicit range when both are present, and skips base-branch detection", async () => {
+    describe("diff-scope resolution (delegated to `ce diff-scope`)", () => {
+      it("resolves the diff range via `ce diff-scope` instead of restating the algorithm inline", async () => {
         const { readFile } = await import("node:fs/promises");
         const { templatesRoot } = await import("../../src/core/templates.js");
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
 
-        expect(content).toContain("CE_DIFF_BASE");
-        expect(content).toContain("CE_DIFF_HEAD");
-        expect(content).toMatch(/git -C "\$CE_WORKTREE" diff "\$CE_DIFF_BASE\.\.\.\$CE_DIFF_HEAD"/);
-        // Two-dot for the commit log only, never for the diff itself.
-        expect(content).toMatch(/git -C "\$CE_WORKTREE" log --oneline "\$CE_DIFF_BASE\.\.\$CE_DIFF_HEAD"/);
-        expect(content).not.toMatch(/diff "\$CE_DIFF_BASE" "\$CE_DIFF_HEAD"/);
-      });
-
-      it("preserves the merge-base fallback for when CE_DIFF_BASE/CE_DIFF_HEAD are absent", async () => {
-        const { readFile } = await import("node:fs/promises");
-        const { templatesRoot } = await import("../../src/core/templates.js");
-        const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
-
-        expect(content).toMatch(/merge-base HEAD main/);
-        expect(content).toMatch(/merge-base HEAD master/);
-        expect(content).toMatch(/Otherwise, find a base for a proper diff/i);
+        expect(content).toContain("ce diff-scope");
+        // Explicit mode: three-dot for the diff, two-dot for the log.
+        expect(content).toMatch(/"mode": "explicit"/);
+        expect(content).toMatch(/diffRange.*\(three-dot\) for the diff and `logRange` \(two-dot\) for the commit log/s);
+        // Merge-base fallback and the no-base scope-limitation case are both still handled.
+        expect(content).toMatch(/"mode": "merge-base"/);
+        expect(content).toMatch(/"mode": "no-base"/);
+        expect(content).toMatch(/falling back to `main`\/`master` only when/);
+        // The old inline algorithm must not have crept back in.
+        expect(content).not.toMatch(/LOCAL_MB=|ORIGIN_MB=|BASE_MB=/);
       });
     });
 
@@ -3962,23 +3956,17 @@ describe("ce start (integration)", () => {
       );
     });
 
-    describe("explicit CE_DIFF_BASE/CE_DIFF_HEAD review range", () => {
-      it("uses three-dot diff semantics on the explicit range when both are present, and skips base-branch detection", async () => {
+    describe("diff-scope resolution (delegated to `ce diff-scope`)", () => {
+      it("resolves the diff range via `ce diff-scope` instead of restating the algorithm inline", async () => {
         const content = await readTemplate();
 
-        expect(content).toContain("CE_DIFF_BASE");
-        expect(content).toContain("CE_DIFF_HEAD");
-        expect(content).toMatch(/git -C "\$CE_WORKTREE" diff "\$CE_DIFF_BASE\.\.\.\$CE_DIFF_HEAD"/);
-        expect(content).toMatch(/git -C "\$CE_WORKTREE" log --oneline "\$CE_DIFF_BASE\.\.\$CE_DIFF_HEAD"/);
-        expect(content).not.toMatch(/diff "\$CE_DIFF_BASE" "\$CE_DIFF_HEAD"/);
-      });
-
-      it("preserves the merge-base fallback for when CE_DIFF_BASE/CE_DIFF_HEAD are absent", async () => {
-        const content = await readTemplate();
-
-        expect(content).toMatch(/merge-base HEAD main/);
-        expect(content).toMatch(/merge-base HEAD master/);
-        expect(content).toMatch(/Otherwise, find a base for a proper diff/i);
+        expect(content).toContain("ce diff-scope");
+        expect(content).toMatch(/"mode": "explicit"/);
+        expect(content).toMatch(/diffRange.*\(three-dot\) for the diff and `logRange` \(two-dot\) for the commit log/s);
+        expect(content).toMatch(/"mode": "merge-base"/);
+        expect(content).toMatch(/"mode": "no-base"/);
+        expect(content).toMatch(/falling back to `main`\/`master` only when/);
+        expect(content).not.toMatch(/LOCAL_MB=|ORIGIN_MB=|BASE_MB=/);
       });
     });
 

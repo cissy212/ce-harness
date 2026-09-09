@@ -34,6 +34,8 @@ import {
   resolveMergeBase,
   resolveRootCommit,
   statusPorcelain,
+  isAncestor,
+  tryMergeBase,
 } from "../../src/core/git.js";
 
 describe("resolveCommit / resolveMergeBase", () => {
@@ -140,6 +142,72 @@ describe("resolveCommit / resolveMergeBase", () => {
     await expect(resolveMergeBase(repoDir, unrelatedSha, headSha)).rejects.toThrow(
       /share no common history/i,
     );
+  });
+});
+
+describe("tryMergeBase / isAncestor", () => {
+  let repoDir: string;
+
+  beforeEach(async () => {
+    repoDir = await createTempRepo();
+  });
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("tryMergeBase resolves the same merge base resolveMergeBase would, without throwing", async () => {
+    const commonAncestor = await resolveCommit(repoDir, "main");
+    await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+    await writeFile(`${repoDir}/feature-only.txt`, "feature change\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "feature-only change"]);
+
+    expect(await tryMergeBase(repoDir, "main", "feature")).toBe(commonAncestor);
+  });
+
+  it("tryMergeBase returns null (never throws) when a ref does not resolve at all", async () => {
+    await expect(tryMergeBase(repoDir, "HEAD", "does-not-exist-anywhere")).resolves.toBeNull();
+  });
+
+  it("tryMergeBase returns null (never throws) when the two commits share no common history", async () => {
+    const headSha = await resolveCommit(repoDir, "main");
+    await execa("git", ["-C", repoDir, "checkout", "--orphan", "unrelated"]);
+    await execa("git", ["-C", repoDir, "rm", "-rf", "."]);
+    await writeFile(`${repoDir}/unrelated.txt`, "no shared history\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "unrelated root commit"]);
+
+    await expect(tryMergeBase(repoDir, "unrelated", headSha)).resolves.toBeNull();
+  });
+
+  it("isAncestor is true when the first ref is an ancestor of the second", async () => {
+    const rootSha = await resolveCommit(repoDir, "main");
+    await writeFile(`${repoDir}/more.txt`, "more\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "second commit"]);
+
+    expect(await isAncestor(repoDir, rootSha, "main")).toBe(true);
+  });
+
+  it("isAncestor is false when neither commit descends from the other", async () => {
+    await execa("git", ["-C", repoDir, "checkout", "-b", "base-side"]);
+    await writeFile(`${repoDir}/base-only.txt`, "base change\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "base-only change"]);
+
+    await execa("git", ["-C", repoDir, "checkout", "main"]);
+    await execa("git", ["-C", repoDir, "checkout", "-b", "head-side"]);
+    await writeFile(`${repoDir}/head-only.txt`, "head change\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "head-only change"]);
+
+    expect(await isAncestor(repoDir, "base-side", "head-side")).toBe(false);
+    expect(await isAncestor(repoDir, "head-side", "base-side")).toBe(false);
+  });
+
+  it("isAncestor is false (never throws) when a ref does not resolve at all", async () => {
+    await expect(isAncestor(repoDir, "does-not-exist", "main")).resolves.toBe(false);
   });
 });
 

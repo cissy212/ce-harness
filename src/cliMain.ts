@@ -8,6 +8,7 @@ import { refreshCommand } from "./commands/refresh.js";
 import { openCommand } from "./commands/open.js";
 import { migrateOpenSpecCommand } from "./commands/migrateOpenSpec.js";
 import { retrieveCommand } from "./commands/retrieve.js";
+import { diffScopeCommand } from "./commands/diffScope.js";
 import { libraryCommand } from "./commands/library.js";
 import { publishCommand } from "./commands/publish.js";
 import type { RetrievalSource } from "./core/retrieval.js";
@@ -376,6 +377,28 @@ export async function runCli(): Promise<void> {
         );
       },
     );
+
+  program
+    .command("diff-scope")
+    .summary("Resolve the diff range to review (used by /verify and /adversarial-review)")
+    .description(
+      [
+        "Resolve, deterministically, exactly which range /verify and",
+        "/adversarial-review should review: an explicit CE_DIFF_BASE/CE_DIFF_HEAD",
+        "range if both are set (an existing pull request injected by `ce start",
+        "--base --head`); otherwise the merge base against CE_BASE_BRANCH",
+        "(preferring its current origin/ form when the two disagree and it is",
+        "the more current one), falling back to main/master only when",
+        "CE_BASE_BRANCH is unset or neither of its forms resolves -- never",
+        "guessing when the two candidates have diverged in both directions.",
+        "Prints a small JSON result (mode, diffRange, logRange, base,",
+        "baseSource, scopeLimitation) to stdout for a workflow stage to parse.",
+        "Read-only; never fetches.",
+      ].join(" "),
+    )
+    .action(async () => {
+      await run(() => diffScopeCommand());
+    });
 
   // --- Maintenance -------------------------------------------------------
   program.commandsGroup("Maintenance:");
