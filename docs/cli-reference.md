@@ -570,6 +570,17 @@ status`/`ce open --change` use — see
 [Many preserved workspaces, one default](concepts.md#core-concepts));
 publishing still works with no OpenSpec change involved at all.
 
+**Bootstrap readiness preflight.** Before showing a plan (and again,
+independently, before `--confirm` commits anything), `ce publish`
+re-checks this worktree for the same repository-bootstrap needs `ce
+start` detects (e.g. Node dependencies never installed, or a Git-hook
+manager like Husky whose install step never ran here) — checked live
+against the current worktree, not the possibly-stale snapshot from `ce
+start` time. If setup is still needed, `ce publish` refuses outright
+with the specific command(s) to run yourself, rather than showing an
+approvable plan whose commit would fail partway through. It never runs
+an install or otherwise mutates the worktree itself.
+
 Refuses outright for an Existing PR review workspace (there's no
 OpenSpec-driven implementation of its own to publish), and requires the
 `gh` CLI installed and authenticated.

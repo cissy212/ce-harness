@@ -265,6 +265,99 @@ describe("ce publish (integration)", () => {
     });
   });
 
+  describe("real Oz E2E gap: refuses before a commit that would fail on missing repository bootstrap (e.g. Husky never installed in this worktree)", () => {
+    it("prepare refuses with a clear, actionable error instead of showing an approvable plan", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { publishCommand } = await import("../../src/commands/publish.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-130");
+      await addProductCommit(workspace.worktreePath, "feature.txt", "x\n", "Add feature file");
+      // package.json declares dependencies, but node_modules/ was never
+      // installed in this exact worktree -- the real Oz E2E shape.
+      await writeFile(join(workspace.worktreePath, "package.json"), JSON.stringify({ name: "demo" }), "utf8");
+      await execa("git", ["-C", workspace.worktreePath, "add", "package.json"]);
+      await execa("git", ["-C", workspace.worktreePath, "commit", "-m", "Add package.json"]);
+
+      await expect(publishCommand({ workspace: `${basenameOf(repoDir)}/issue-130` })).rejects.toThrow(
+        /needs local setup before `ce publish` can commit successfully/,
+      );
+      try {
+        await publishCommand({ workspace: `${basenameOf(repoDir)}/issue-130` });
+        expect.fail("expected publishCommand to throw");
+      } catch (error) {
+        const ceError = error as { recovery?: string };
+        expect(ceError.recovery).toMatch(/npm install/);
+      }
+
+      // Never mutated the worktree or the remote as a side effect of the check.
+      expect(existsSync(join(workspace.worktreePath, "node_modules"))).toBe(false);
+      const remoteBranches = (await execa("git", ["-C", remoteDir, "branch", "--list"])).stdout;
+      expect(remoteBranches).not.toContain("feature/issue-130");
+    });
+
+    it("--confirm refuses the same way, independently of prepare (never relies on prepare having run first)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { publishCommand } = await import("../../src/commands/publish.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-130");
+      await addProductCommit(workspace.worktreePath, "feature.txt", "x\n", "Add feature file");
+      await writeFile(join(workspace.worktreePath, "package.json"), JSON.stringify({ name: "demo" }), "utf8");
+      await execa("git", ["-C", workspace.worktreePath, "add", "package.json"]);
+      await execa("git", ["-C", workspace.worktreePath, "commit", "-m", "Add package.json"]);
+
+      const bodyFile = join(harnessHomeDir, "pr-body.md");
+      await writeFile(bodyFile, "## Summary\n", "utf8");
+
+      await expect(
+        publishCommand({
+          workspace: `${basenameOf(repoDir)}/issue-130`,
+          confirm: true,
+          title: "Add the feature",
+          bodyFile,
+          // Deliberately wrong -- proves the bootstrap check fires before
+          // (and independently of) the expected-head/fingerprint comparison.
+          expectedHead: "0000000000000000000000000000000000000000",
+          expectedFingerprint: "deadbeefdead",
+        }),
+      ).rejects.toThrow(/needs local setup before `ce publish` can commit successfully/);
+
+      // No commit, no push, no PR happened.
+      const statusAfter = (
+        await execa("git", ["-C", workspace.worktreePath, "status", "--porcelain"])
+      ).stdout.trim();
+      expect(statusAfter).toBe("");
+      const remoteBranches = (await execa("git", ["-C", remoteDir, "branch", "--list"])).stdout;
+      expect(remoteBranches).not.toContain("feature/issue-130");
+    });
+
+    it("does not refuse once node_modules/ exists -- the check is live, not a stale ce-start-time snapshot", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { publishCommand } = await import("../../src/commands/publish.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-130");
+      await addProductCommit(workspace.worktreePath, "feature.txt", "x\n", "Add feature file");
+      await writeFile(join(workspace.worktreePath, "package.json"), JSON.stringify({ name: "demo" }), "utf8");
+      // Simulates the user having already run `npm install` themselves.
+      await mkdir(join(workspace.worktreePath, "node_modules"), { recursive: true });
+      await execa("git", ["-C", workspace.worktreePath, "add", "package.json"]);
+      await execa("git", ["-C", workspace.worktreePath, "commit", "-m", "Add package.json"]);
+
+      logSpy.mockClear();
+      await publishCommand({ workspace: `${basenameOf(repoDir)}/issue-130` });
+      const plan = JSON.parse(logSpy.mock.calls[logSpy.mock.calls.length - 1][0]);
+      expect(plan.updateStatus).toBe("already-current");
+    });
+  });
+
   describe("--confirm: the remote mutation", () => {
     it("commits uncommitted changes, pushes under a non-ce-harness branch name, and creates the PR", async () => {
       const { startCommand } = await import("../../src/commands/start.js");

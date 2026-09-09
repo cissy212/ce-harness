@@ -22,10 +22,35 @@ with.
 
 Read the injected environment (`CE_PROJECT`, `CE_ISSUE`, `CE_WORKSPACE`,
 `CE_WORKTREE`, `CE_OPENSPEC_STORE`) and the user's stated issue/request.
-Look around the worktree at `$CE_WORKTREE` (recent `git log`, `git
-status`, relevant source files) to understand what this repository does
-and where the issue likely lives. Do this for any repository -- nothing
-here should assume a specific project structure or language.
+
+**Confirm you actually know what the task is before exploring the
+repository -- not just its name.** `CE_ISSUE` is often only a bare
+slug/identifier (e.g. `case-studies-domain-model`, `fix-142`) -- a slug
+names a piece of work, it does not describe what that work should do,
+where a relevant prior PR/discussion lives, or what "done" looks like.
+You have enough context once the user's own message that invoked
+`/explore`, or the conversation so far, actually describes the task:
+what should exist or change, a referenced PR/issue with real content
+already visible, or specific behavior/files the user pointed at. A bare
+slug alone, with nothing else said about it, is not enough.
+
+If you don't have enough: **stop here, before looking at the
+repository**, and ask the user directly (the AskUserQuestion tool if
+available, otherwise plain chat) for the missing task context -- e.g.
+"What should `<issue>` actually do?" or "Is there a related PR, issue,
+or doc I should start from (e.g. a linked PR number)?". This never
+requires a formal issue tracker or GitHub issue -- a short free-form
+description is enough to proceed; guessing from the slug alone, or
+performing broad, generic exploration to compensate for not knowing the
+task, is not. Do not ask when the task is already reasonably clear from
+what's already been said -- only when there is genuinely nothing to go
+on beyond a name.
+
+Once you know what the task actually is, look around the worktree at
+`$CE_WORKTREE` (recent `git log`, `git status`, relevant source files)
+to understand what this repository does and where the issue likely
+lives. Do this for any repository -- nothing here should assume a
+specific project structure or language.
 
 ## 2. Derive a change name
 
@@ -166,6 +191,13 @@ directly) is the next step.
 
 ## Never
 
+- Never perform broad, generic repository exploration to compensate for
+  not actually knowing the task -- when `CE_ISSUE` is only a bare slug
+  and nothing else has been said about it, stop and ask the user what
+  the task actually is (step 1) before reading the repository. Never
+  require a formal issue tracker or GitHub issue for this -- a short
+  free-form answer is enough. Never ask when the task is already
+  reasonably clear from what's already been said.
 - Never skip step 8 (recording provenance) -- write/refresh
   `.ce-provenance-explore.yml` every time `explore.md` is written,
   never only on first creation.

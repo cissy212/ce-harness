@@ -173,7 +173,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    Show archive completion summary including:
    - Change name
    - Schema that was used
-   - Archive location
+   - A ready-to-run `ce open --archived <project>/<issue>` command to view the archived artifacts -- never a bare filesystem path (see below)
    - Spec sync status (synced / sync skipped / no delta specs)
    - Note about any warnings (incomplete artifacts/tasks)
 
@@ -184,7 +184,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
 **Change:** <change-name>
 **Schema:** <schema-name>
-**Archived to:** the archive path derived from `planningHome.changesDir`/YYYY-MM-DD-<name>/
+**Archived to:** `ce open --archived <project>/<issue>` -- opens the archived artifacts directly
 **Specs:** ✓ Synced to main specs / No delta specs / Sync skipped (user chose to skip)
 
 **Warnings:**
@@ -214,6 +214,17 @@ closes the development contract, it never pushes or opens a pull
 request itself -- `/publish` is the separate, explicit step for that
 (see templates/commands/publish.md), and this pointer is what tells the
 user it exists.
+
+**Never print the bare archive filesystem path** (e.g.
+`openspec/changes/archive/2026-09-09-case-studies-domain-model/`) as
+the way to reach the archived artifacts -- a relative filesystem path
+looks clickable in most terminals, and clicking it attempts to open it
+as a browser URL instead of doing anything useful. Substitute the
+literal `<project>` and `<issue>` (this workspace's actual `$CE_PROJECT`
+and `$CE_ISSUE`, e.g. `ce open --archived market-audit-tool/case-
+studies-domain-model`) into the **Archived to** line above -- never
+print the placeholder text or the raw `$CE_PROJECT`/`$CE_ISSUE` tokens
+themselves, and never the internal store path.
 
 **Output On Blocked (Missing/Failing/Gapped/Stale Verification Evidence)**
 

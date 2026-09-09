@@ -1703,6 +1703,55 @@ describe("ce start (integration)", () => {
       }
     });
 
+    describe("real Oz E2E gap: a bare issue slug alone must not trigger broad, generic exploration", () => {
+      it("instructs stopping to ask for the missing task context before looking at the repository, ordered before the broad-exploration step", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
+
+        const confirmIdx = content.indexOf(
+          "Confirm you actually know what the task is before exploring the",
+        );
+        const lookAroundIdx = content.indexOf(
+          "Once you know what the task actually is, look around the worktree",
+        );
+        expect(confirmIdx).toBeGreaterThan(-1);
+        expect(lookAroundIdx).toBeGreaterThan(-1);
+        expect(confirmIdx).toBeLessThan(lookAroundIdx);
+
+        expect(content).toMatch(/stop here, before looking at the\s*\n?\s*repository/);
+        expect(content).toMatch(/AskUserQuestion/);
+      });
+
+      it("never requires a formal issue tracker or GitHub issue -- a free-form answer is enough", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
+
+        expect(content).toMatch(/never\s*\n?\s*requires a formal issue tracker or GitHub issue/);
+        expect(content).toMatch(/short free-form\s*\n?\s*description is enough/);
+      });
+
+      it("does not over-trigger: explicitly tells the agent not to ask when the task is already reasonably clear", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
+
+        expect(content).toMatch(/Do not ask when the task is already reasonably clear/);
+      });
+
+      it("restates the rule in the Never section, including the never-require-a-tracker and don't-over-ask clauses", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
+        const neverSection = content.slice(content.indexOf("## Never"));
+
+        expect(neverSection).toMatch(/Never perform broad, generic repository exploration/);
+        expect(neverSection).toMatch(/Never\s*\n?\s*require a formal issue tracker or GitHub issue/);
+        expect(neverSection).toMatch(/Never ask when the task is already\s*\n?\s*reasonably clear/);
+      });
+    });
+
     it("documents the expected openspec subcommands: new change, list, context, status -- never invokes instructions/validate (those write/validate the schema-tracked proposal artifact, which is /propose's job now)", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
@@ -2625,6 +2674,44 @@ describe("ce start (integration)", () => {
 
       expect(content).toContain("CE_OPENSPEC_STORE");
       expect(content.toLowerCase()).toMatch(/if `ce_openspec_store` is empty or unset, stop/);
+    });
+
+    describe("real Oz E2E gap: completion must hand off a runnable `ce open --archived` command, never a bare filesystem path", () => {
+      it("the success output's Archived to line is a ready-to-run `ce open --archived` command, not a raw path", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+
+        expect(content).toMatch(/\*\*Archived to:\*\* `ce open --archived <project>\/<issue>`/);
+        // The old bare-path presentation must not have crept back in.
+        expect(content).not.toMatch(/\*\*Archived to:\*\* the archive path derived from/);
+      });
+
+      it("explicitly forbids printing the bare archive filesystem path, and explains why (terminal click-as-URL)", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+
+        expect(content).toMatch(/Never print the bare archive filesystem path/);
+        expect(content).toMatch(/attempts to open it\s*\n?\s*as a browser URL/);
+      });
+
+      it("instructs substituting the literal project/issue, never the raw $CE_PROJECT/$CE_ISSUE tokens", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+
+        expect(content).toMatch(/Substitute the\s*\n?\s*literal `<project>` and `<issue>`/);
+        expect(content).toMatch(/never\s*\n?\s*print the placeholder text or the raw/);
+      });
+
+      it("still ends with Next: /publish on its own line, unchanged by the handoff fix", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+
+        expect(content).toMatch(/\nNext: \/publish\n/);
+      });
     });
 
     it("passes --store \"$CE_OPENSPEC_STORE\" on every concrete openspec invocation (list, status)", async () => {

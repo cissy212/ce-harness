@@ -30,6 +30,7 @@ import {
 import { createPullRequest, findOpenPrForBranch, parseGithubSlug } from "../core/github.js";
 import { renderPublishBranchName, resolvePublishBranchPattern } from "../core/branchNaming.js";
 import { resolveArchivedChangeForWorkspace } from "../core/activeChange.js";
+import { detectBootstrapNeeds } from "../core/bootstrap.js";
 
 /**
  * `ce publish`: the deterministic half of shipping a completed,
@@ -147,6 +148,35 @@ async function resolveRepoSlug(worktreePath: string): Promise<{ owner: string; r
   return slug;
 }
 
+/**
+ * Refuses before showing a plan (or before committing on `--confirm`) if
+ * this worktree still needs local setup `git commit` itself would
+ * depend on -- e.g. a repository-managed Git hook (Husky) whose install
+ * step never ran in this exact worktree, discovered live rather than
+ * trusting the `ce start`-time snapshot on `workspace.bootstrap` (which
+ * can be stale: state can change over a workspace's life, and `ce
+ * publish` is often the first thing to actually run `git commit`).
+ * Read-only, exactly like `detectBootstrapNeeds` itself -- this only
+ * ever reports findings and their suggested commands; it never installs
+ * or fixes anything automatically, since an install can rewrite a
+ * lockfile and that must always be the user's own explicit decision.
+ */
+async function refuseIfBootstrapRequired(worktreePath: string): Promise<void> {
+  const { required, findings } = detectBootstrapNeeds(worktreePath);
+  if (!required) return;
+
+  const ecosystems = findings.map((finding) => finding.ecosystem).join(", ");
+  const steps = findings.map((finding) => {
+    const warning = finding.sideEffectWarning ? ` (${finding.sideEffectWarning})` : "";
+    return `- ${finding.message}\n  Run: \`${finding.suggestedCommand}\`${warning}`;
+  });
+
+  throw new CeError(
+    `This worktree needs local setup before \`ce publish\` can commit successfully (${ecosystems}).`,
+    ["Run the following in the worktree, then re-run `ce publish`:", "", ...steps].join("\n"),
+  );
+}
+
 async function refuseIfMidMergeOrRebase(worktreePath: string): Promise<void> {
   if (await hasInProgressMergeOrRebase(worktreePath)) {
     throw new CeError(
@@ -200,6 +230,7 @@ async function runPrepare(options: PublishCommandOptions): Promise<void> {
   const worktreePath = workspace.worktreePath;
 
   await refuseIfMidMergeOrRebase(worktreePath);
+  await refuseIfBootstrapRequired(worktreePath);
   const slug = await resolveRepoSlug(worktreePath);
   const repoSlugText = `${slug.owner}/${slug.repo}`;
 
@@ -290,6 +321,7 @@ async function runConfirm(options: PublishCommandOptions): Promise<void> {
   const worktreePath = workspace.worktreePath;
 
   await refuseIfMidMergeOrRebase(worktreePath);
+  await refuseIfBootstrapRequired(worktreePath);
 
   const currentHead = await resolveCommit(worktreePath, workspace.internalBranch);
   if (currentHead !== options.expectedHead) {
