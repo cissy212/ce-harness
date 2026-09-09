@@ -83,12 +83,34 @@ const HARNESS_BRANCH_PREFIX = "ce-harness/";
 /**
  * Resolves the publish-branch pattern configured for `repoPath` (via
  * `ce-harness.publish-branch-pattern`), falling back to one of the two
- * defaults above depending on whether a change name was resolved.
+ * defaults above depending on whether a *distinct* change name was
+ * resolved.
+ *
+ * "Distinct" deliberately excludes the case where `changeName` is
+ * exactly equal to `sanitizedIssue` (e.g. an issue slug of
+ * `case-studies-domain-model` whose OpenSpec change is also named
+ * `case-studies-domain-model`, a common outcome when a change is
+ * proposed straight from the issue slug with no separate naming step).
+ * Including `{change}` in that case would render the same text twice
+ * back-to-back (`feature/case-studies-domain-model-case-studies-domain-
+ * model`) for zero added information -- so this falls back to the
+ * without-change default instead, exactly as if no change had been
+ * resolved at all.
+ *
+ * This only affects which *default* is chosen when nothing is
+ * configured. An explicitly configured `ce-harness.publish-branch-
+ * pattern` is always honored exactly as written, including its own use
+ * of `{change}` -- this never second-guesses an explicit configuration.
  */
-export async function resolvePublishBranchPattern(repoPath: string, hasChange: boolean): Promise<string> {
+export async function resolvePublishBranchPattern(
+  repoPath: string,
+  sanitizedIssue: string,
+  changeName: string | null,
+): Promise<string> {
   const configured = await readGitConfig(repoPath, PUBLISH_BRANCH_PATTERN_CONFIG_KEY);
   if (configured) return configured;
-  return hasChange ? DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE : DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE;
+  const hasDistinctChange = changeName !== null && changeName !== sanitizedIssue;
+  return hasDistinctChange ? DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE : DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE;
 }
 
 /**

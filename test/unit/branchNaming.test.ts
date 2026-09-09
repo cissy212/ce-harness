@@ -90,27 +90,58 @@ describe("branch naming (configurable per repository via Git config)", () => {
   });
 
   describe("resolvePublishBranchPattern", () => {
-    it('defaults to "feature/{issue}-{change}" when a change is known and nothing is configured', async () => {
-      expect(await resolvePublishBranchPattern(repoDir, true)).toBe(DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE);
+    it('defaults to "feature/{issue}-{change}" when a distinct change is known and nothing is configured', async () => {
+      expect(await resolvePublishBranchPattern(repoDir, "130", "addressbook-email-notes")).toBe(
+        DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE,
+      );
     });
 
     it('defaults to "feature/{issue}" when no change is known and nothing is configured', async () => {
-      expect(await resolvePublishBranchPattern(repoDir, false)).toBe(
+      expect(await resolvePublishBranchPattern(repoDir, "130", null)).toBe(
         DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE,
+      );
+    });
+
+    it('defaults to "feature/{issue}" (not the with-change pattern) when the change name is identical to the sanitized issue', async () => {
+      // Real case from the Oz E2E: workspace issue/slug and OpenSpec
+      // change both "case-studies-domain-model" -- the with-change
+      // default would otherwise render the same text twice back-to-back.
+      expect(
+        await resolvePublishBranchPattern(repoDir, "case-studies-domain-model", "case-studies-domain-model"),
+      ).toBe(DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE);
+    });
+
+    it("still uses the with-change default when the change name merely resembles the issue but isn't identical", async () => {
+      expect(await resolvePublishBranchPattern(repoDir, "130", "130-addressbook-email-notes")).toBe(
+        DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE,
       );
     });
 
     it("uses the repository's local Git config override regardless of whether a change is known", async () => {
       await execa("git", ["-C", repoDir, "config", PUBLISH_BRANCH_PATTERN_CONFIG_KEY, "release/{issue}"]);
 
-      expect(await resolvePublishBranchPattern(repoDir, true)).toBe("release/{issue}");
-      expect(await resolvePublishBranchPattern(repoDir, false)).toBe("release/{issue}");
+      expect(await resolvePublishBranchPattern(repoDir, "130", "addressbook-email-notes")).toBe("release/{issue}");
+      expect(await resolvePublishBranchPattern(repoDir, "130", null)).toBe("release/{issue}");
+    });
+
+    it("honors an explicitly configured pattern verbatim even when the change name is identical to the issue -- never second-guesses an explicit configuration", async () => {
+      await execa("git", [
+        "-C",
+        repoDir,
+        "config",
+        PUBLISH_BRANCH_PATTERN_CONFIG_KEY,
+        "feature/{issue}-{change}",
+      ]);
+
+      expect(
+        await resolvePublishBranchPattern(repoDir, "case-studies-domain-model", "case-studies-domain-model"),
+      ).toBe("feature/{issue}-{change}");
     });
 
     it("is independent from ce-harness.branch-pattern -- setting one never affects the other", async () => {
       await execa("git", ["-C", repoDir, "config", BRANCH_PATTERN_CONFIG_KEY, "bugfix/{issue}"]);
 
-      expect(await resolvePublishBranchPattern(repoDir, false)).toBe(DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE);
+      expect(await resolvePublishBranchPattern(repoDir, "130", null)).toBe(DEFAULT_PUBLISH_BRANCH_PATTERN_WITHOUT_CHANGE);
       expect(await resolveBranchPattern(repoDir)).toBe("bugfix/{issue}");
     });
   });
@@ -131,6 +162,16 @@ describe("branch naming (configurable per repository via Git config)", () => {
     it("never uses ce-harness's internal branch naming for the published branch", () => {
       const rendered = renderPublishBranchName(DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE, "130", "add-auth");
       expect(rendered.startsWith("ce-harness/")).toBe(false);
+    });
+
+    it("stays purely mechanical: given the with-change pattern and an identical issue/change, it renders the literal duplicate -- collapsing to the without-change default is `resolvePublishBranchPattern`'s job, not this function's", () => {
+      expect(
+        renderPublishBranchName(
+          DEFAULT_PUBLISH_BRANCH_PATTERN_WITH_CHANGE,
+          "case-studies-domain-model",
+          "case-studies-domain-model",
+        ),
+      ).toBe("feature/case-studies-domain-model-case-studies-domain-model");
     });
 
     it("throws a clear, actionable CeError when the pattern uses {change} but no change name was resolved", () => {

@@ -536,9 +536,14 @@ itself). Prints a JSON plan: exact repository (`repoSlug`, derived from
 the `origin` remote — GitHub only), base branch, the branch name that
 will be exposed to the target repository (never `ce-harness/*` — a
 separate, independently configurable pattern from the workspace's own
-internal branch, defaulting to `feature/{issue}-{change}` or
-`feature/{issue}` — see below), included commits and files, and any
-uncommitted changes that will be committed on `--confirm`.
+internal branch, defaulting to `feature/{issue}-{change}` when a
+resolved OpenSpec change name adds information beyond the issue, or
+plain `feature/{issue}` otherwise — including when the change name
+happens to be identical to the issue itself, which would otherwise
+duplicate it (e.g. `feature/case-studies-domain-model`, never
+`feature/case-studies-domain-model-case-studies-domain-model`); see
+below), included commits and files, and any uncommitted changes that
+will be committed on `--confirm`.
 
 With `--confirm --title <text> --body-file <path> --expected-head <sha>
 --expected-fingerprint <hash>`: commits any still-uncommitted changes

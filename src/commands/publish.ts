@@ -232,7 +232,7 @@ async function runPrepare(options: PublishCommandOptions): Promise<void> {
   }
 
   const { changeName, changeRoot } = await resolveChangeForPublish(workspace, options.change);
-  const pattern = await resolvePublishBranchPattern(worktreePath, changeName !== null);
+  const pattern = await resolvePublishBranchPattern(worktreePath, workspace.sanitizedIssue, changeName);
   const publishBranch = renderPublishBranchName(pattern, workspace.sanitizedIssue, changeName);
 
   const includedCommits = await logRange(worktreePath, remoteBaseRef, workspace.internalBranch);
@@ -338,7 +338,7 @@ async function runConfirm(options: PublishCommandOptions): Promise<void> {
   const repoSlugText = `${slug.owner}/${slug.repo}`;
 
   const { changeName } = await resolveChangeForPublish(workspace, options.change);
-  const pattern = await resolvePublishBranchPattern(worktreePath, changeName !== null);
+  const pattern = await resolvePublishBranchPattern(worktreePath, workspace.sanitizedIssue, changeName);
   const publishBranch = renderPublishBranchName(pattern, workspace.sanitizedIssue, changeName);
 
   await pushBranch(worktreePath, REMOTE, workspace.internalBranch, publishBranch);

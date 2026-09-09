@@ -572,6 +572,34 @@ describe("ce publish (integration)", () => {
       expect(plan.publishBranch).toBe("feature/issue-130-addressbook-email-notes");
     });
 
+    it("does not duplicate the issue when the archived change's name is identical to the sanitized issue -- real Oz E2E case", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { publishCommand } = await import("../../src/commands/publish.js");
+      const { readWorkspace, resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "case-studies-domain-model" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "case-studies-domain-model");
+      await addProductCommit(workspace.worktreePath, "feature.txt", "x\n", "Add feature file");
+
+      const trusted = resolveTrustedOpenSpec(workspace);
+      const archiveDir = join(trusted!.root, "openspec", "changes", "archive", "2026-09-09-case-studies-domain-model");
+      await mkdir(archiveDir, { recursive: true });
+      await writeFile(
+        join(archiveDir, ".ce-workspace.yml"),
+        'project: "' + basenameOf(repoDir) + '"\nissue: "case-studies-domain-model"\n',
+        "utf8",
+      );
+
+      logSpy.mockClear();
+      await publishCommand({ workspace: `${basenameOf(repoDir)}/case-studies-domain-model` });
+      const plan = JSON.parse(logSpy.mock.calls[logSpy.mock.calls.length - 1][0]);
+
+      expect(plan.changeName).toBe("case-studies-domain-model");
+      expect(plan.publishBranch).toBe("feature/case-studies-domain-model");
+      expect(plan.publishBranch).not.toBe("feature/case-studies-domain-model-case-studies-domain-model");
+    });
+
     it("an explicit --change overrides auto-resolution", async () => {
       const { startCommand } = await import("../../src/commands/start.js");
       const { publishCommand } = await import("../../src/commands/publish.js");
