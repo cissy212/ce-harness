@@ -144,7 +144,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    Display:
    - Tasks completed this session
    - Overall progress: "N/M tasks complete"
-   - If all done: suggest `/verify` next, never `/archive` -- the worktree just changed, so any prior verify/adversarial-review evidence (if this was a re-run after realigning artifacts, or after fixing adversarial-review findings) is now stale regardless
+   - If all done: suggest `ce open` to review the implementation, then `/verify` next -- never `/archive` -- the worktree just changed, so any prior verify/adversarial-review evidence (if this was a re-run after realigning artifacts, or after fixing adversarial-review findings) is now stale regardless
    - If paused: explain why and wait for guidance
 
 **Output During Implementation**
@@ -175,7 +175,8 @@ Working on task 4/7: <task description>
 - [x] Task 2
 ...
 
-All tasks complete! Run `/verify` next -- the worktree just changed, so
+All tasks complete! Review the changes with `ce open` (opens the worktree
+in your editor), then run `/verify` next -- the worktree just changed, so
 any existing verify/adversarial-review evidence is now stale.
 `/archive` isn't available yet: it requires a fresh, clean `PASS` from
 both `/verify` and `/adversarial-review`.
@@ -213,6 +214,7 @@ What would you like to do?
 - Keep code changes minimal and scoped to each task
 - Update task checkbox immediately after completing each task
 - Never suggest `/archive` as the next step, for any reason -- completing implementation (whether from the normal task list, after realigning artifacts, or after fixing an adversarial-review finding) always means the next step is `/verify`, since the worktree just changed and any prior verify/adversarial-review evidence is now stale
+- On completion, always suggest `ce open` alongside `/verify` -- reviewing the implementation and moving to the next stage should both be immediately actionable from the same handoff, never `/verify` on its own
 - Pause on errors, blockers, or unclear requirements - don't guess
 - Use contextFiles from CLI output, don't assume specific file names
 - Every `openspec` command must include `--store "$CE_OPENSPEC_STORE"`

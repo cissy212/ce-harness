@@ -2486,7 +2486,7 @@ describe("ce start (integration)", () => {
         const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
 
         expect(content).toMatch(
-          /If all done: suggest `\/verify` next, never `\/archive`/,
+          /If all done: suggest `ce open` to review the implementation, then `\/verify` next -- never `\/archive`/,
         );
       });
 
@@ -2499,9 +2499,39 @@ describe("ce start (integration)", () => {
           content.indexOf("**Output On Completion**"),
           content.indexOf("**Output On Pause"),
         );
-        expect(outputOnCompletion).toMatch(/All tasks complete! Run `\/verify` next/);
+        expect(outputOnCompletion).toMatch(/run `\/verify` next/);
         expect(outputOnCompletion).toMatch(
           /`\/archive` isn't available yet: it requires a fresh, clean `PASS` from\s*\nboth `\/verify` and `\/adversarial-review`/,
+        );
+      });
+
+      it("real MAT #138 E2E gap: the completion handoff also gives a ready-to-run `ce open` command to review the implementation, not just the next workflow stage", async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+        // Step 7's own instruction.
+        expect(content).toMatch(
+          /If all done: suggest `ce open` to review the implementation, then `\/verify` next/,
+        );
+
+        // The actual rendered completion output.
+        const outputOnCompletion = content.slice(
+          content.indexOf("**Output On Completion**"),
+          content.indexOf("**Output On Pause"),
+        );
+        expect(outputOnCompletion).toMatch(
+          /Review the changes with `ce open` \(opens the worktree\s*\nin your editor\), then run `\/verify` next/,
+        );
+
+        // A guardrail locks this in, matching the same convention
+        // verify.md/adversarial-review.md use for their own report-open handoff.
+        const guardrailsSection = content.slice(
+          content.indexOf("**Guardrails**"),
+          content.indexOf("**Fluid Workflow Integration**"),
+        );
+        expect(guardrailsSection).toMatch(
+          /On completion, always suggest `ce open` alongside `\/verify`/,
         );
       });
 
