@@ -14,6 +14,20 @@ export function harnessHome(): string {
   return resolve(override && override.length > 0 ? override : join(homedir(), ".ce-harness"));
 }
 
+/**
+ * Root directory for Claude Code's own local state (session transcripts,
+ * settings, etc.) -- NOT a ce-harness runtime directory, and not owned by
+ * ce-harness. Defaults to ~/.claude, overridable with CE_CLAUDE_HOME so
+ * tests can point it at a fixture directory instead of the real one.
+ * Used only by core/claudeCodeUsage.ts (see that module's doc comment
+ * for why this is the one place ce-harness reads Claude-Code-internal,
+ * undocumented storage).
+ */
+export function claudeCodeHome(): string {
+  const override = process.env.CE_CLAUDE_HOME;
+  return resolve(override && override.length > 0 ? override : join(homedir(), ".claude"));
+}
+
 export function worktreesRoot(): string {
   return join(harnessHome(), "worktrees");
 }

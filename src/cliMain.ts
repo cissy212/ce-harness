@@ -9,6 +9,7 @@ import { openCommand } from "./commands/open.js";
 import { migrateOpenSpecCommand } from "./commands/migrateOpenSpec.js";
 import { retrieveCommand } from "./commands/retrieve.js";
 import { diffScopeCommand } from "./commands/diffScope.js";
+import { usageCommand } from "./commands/usage.js";
 import { libraryCommand } from "./commands/library.js";
 import { publishCommand } from "./commands/publish.js";
 import type { RetrievalSource } from "./core/retrieval.js";
@@ -252,6 +253,35 @@ export async function runCli(): Promise<void> {
     .option("--all", "show a compact, cross-project overview of everything ce-harness has durably retained")
     .action(async (workspace: string | undefined, options: { verbose?: boolean; all?: boolean }) => {
       await run(() => statusCommand({ workspace, verbose: options.verbose, all: options.all }));
+    });
+
+  program
+    .command("usage")
+    .summary("Best-effort token/cost baseline for a workspace, by workflow stage")
+    .description(
+      [
+        "Best-effort usage baseline for a workspace, combining two genuinely",
+        "different kinds of data and labeling each as such rather than blending",
+        "them into one number: real, measured Claude Code token usage and",
+        "session cost, read from Claude Code's own local session storage",
+        "(present only when the runner was Claude Code and its local session",
+        "data is still on disk) grouped by workflow stage (/explore, /verify,",
+        "/adversarial-review, etc.) wherever the installed Claude Code version",
+        "tags messages that way; and deterministic facts ce-harness itself",
+        "already wrote to this workspace's own reports (verdicts, applied",
+        "lenses, recorded warnings), which are always available regardless of",
+        "runner but are not a token/cost number. Read-only: never modifies",
+        "workspace.yml, the OpenSpec store, or any report. With no argument,",
+        "inspects the current default workspace; with [workspace] (as",
+        "<project>/<issue> -- see `ce status`), inspects that one instead.",
+        "This reads Claude Code's internal, undocumented local storage format,",
+        "so it degrades to \"no data\" rather than erroring when that data",
+        "isn't present or doesn't look as expected.",
+      ].join(" "),
+    )
+    .argument("[workspace]", "target a specific workspace as <project>/<issue> instead of the current default")
+    .action(async (workspace: string | undefined) => {
+      await run(() => usageCommand({ workspace }));
     });
 
   program

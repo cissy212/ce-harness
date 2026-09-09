@@ -369,6 +369,44 @@ Mutually exclusive with `[workspace]`. Never shells out to the
 view's health check), so it stays fast regardless of how many projects
 exist — it never prints raw storage paths or metadata either.
 
+## `ce usage [workspace]`
+
+A best-effort token/cost baseline for a workspace, by workflow stage:
+
+```bash
+ce usage
+ce usage market-audit-tool/138
+```
+
+Combines two genuinely different kinds of data, and labels each as
+such rather than blending them into one number:
+
+- **Real, measured Claude Code token usage and session cost** — read
+  directly from Claude Code's own local session storage
+  (`~/.claude/projects/...`), grouped by workflow stage (`/explore`,
+  `/verify`, `/adversarial-review`, etc.) wherever the installed Claude
+  Code version tags messages that way. Present only when the runner was
+  Claude Code and its local session data is still on disk — an
+  OpenCode-runner workspace, or one whose sessions predate this
+  tagging, shows no token data here, not a guessed one.
+- **Deterministic facts ce-harness itself already wrote** — each
+  `/verify`/`/adversarial-review` report's verdict, applied lenses, and
+  recorded warnings, read straight from the reports already sitting in
+  the durable store (active or archived change, either way). Always
+  available regardless of runner, but not a token/cost number.
+
+Read-only: never modifies `workspace.yml`, the OpenSpec store, or any
+report. With no argument, inspects the current default workspace; with
+`[workspace]` (as `<project>/<issue>` — see `ce status`), inspects that
+one instead.
+
+**This reads Claude Code's own internal, undocumented local storage
+format** (project-directory naming, per-message usage fields, and the
+session cost record) — not a published, stable API. It degrades to "no
+data" rather than erroring when that data isn't present or doesn't look
+as expected, and it never affects anything `ce start`/`ce resume`
+actually launches.
+
 ## `ce library`
 
 Rebuilds a human-readable, browsable directory of every known project's
