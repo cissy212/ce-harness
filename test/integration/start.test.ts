@@ -3307,6 +3307,64 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/only verifies and reports/i);
     });
 
+    describe("real MAT E2E gap: a command exiting 0 with warnings must not present as silent clean success", () => {
+      const readVerify = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+      };
+
+      it("'Handling large output' requires preserving tool-reported warnings even on a 0 exit code, and excludes them from the 'noise that may be omitted' allowance", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Always preserve\s*\*\*every warning the tool itself reported, even when the\s*command exits 0\*\*/,
+        );
+        expect(normalized).toMatch(
+          /Never fold\s*a tool-reported warning into this "noise" category just because the\s*command still exited 0/,
+        );
+      });
+
+      it("the 'Commands Executed and Outcomes' entry format has a Warnings line, and states it never by itself changes PASS/FAIL/BLOCKED", async () => {
+        const content = await readVerify();
+        const section = content.slice(
+          content.indexOf("## Commands Executed and Outcomes"),
+          content.indexOf("## Gaps and Blockers"),
+        );
+
+        expect(section).toMatch(/Warnings: <verbatim warning line\(s\)/);
+        expect(section.replace(/\s+/g, " ")).toMatch(
+          /A PASS with warnings listed here is still PASS: recording a warning here never by itself changes this command's own PASS\/FAIL\/BLOCKED status or the Overall Verdict below\./,
+        );
+      });
+
+      it("the PASS verdict definition explicitly says a command exiting 0 with recorded warnings still counts as PASS, and names the deferred (not-yet-built) classification work", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /A command that exits 0 but reported warnings \(see "Commands Executed\s*and Outcomes" above\) still counts as PASS here/,
+        );
+        expect(normalized).toMatch(
+          /classifying them \(e\.g\. distinguishing one\s*introduced by this change from a pre-existing one, or ever escalating\s*a warning to `PASS WITH GAPS`\/`FAIL` on its own\) is deliberately out\s*of scope for this version\./,
+        );
+      });
+
+      it("a guardrail reinforces that a 0 exit code is never license to drop warnings, without turning them into a blocking result", async () => {
+        const content = await readVerify();
+        const guardrailsSection = content.slice(content.indexOf("**Guardrails**"));
+        const normalized = guardrailsSection.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /An exit code of 0 is never license to drop a command's warnings --/,
+        );
+        expect(normalized).toMatch(
+          /Recording it there never by itself changes that\s*command's PASS\/FAIL\/BLOCKED status or the Overall Verdict/,
+        );
+      });
+    });
+
     it("carries no leading HTML comment, trailing provenance essay, or THIRD_PARTY_NOTICES.md pointer -- this is the author's own original work, confirmed to have no third-party source (see THIRD_PARTY_NOTICES.md's 'Provenance correction')", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");

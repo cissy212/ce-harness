@@ -595,9 +595,19 @@ define.
 - Always preserve **every failure/error line, and any surrounding context
   needed to diagnose it** (the failing test's name, the assertion that
   failed, the stack frame that points at your own code).
+- Always preserve **every warning the tool itself reported, even when the
+  command exits 0** (e.g. a compiler/linter warning, a deprecation
+  notice, a peer-dependency warning, a framework's own "you should fix
+  this" output). A clean exit code means the command did not fail -- it
+  never means its output had nothing worth recording. Quote the warning
+  verbatim in the report's "Commands Executed and Outcomes" entry for
+  that command (see below); do not paraphrase or summarize it away.
 - Passing-test noise and repetitive successful output (e.g. hundreds of
   identical "✓ passed" lines) may be omitted once the summary line and
-  exit code are preserved -- they add no additional evidence.
+  exit code are preserved -- they add no additional evidence. Never fold
+  a tool-reported warning into this "noise" category just because the
+  command still exited 0 -- a warning is evidence, the noise this bullet
+  allows omitting is not.
 - If the reduced output is ambiguous -- you cannot tell from the summary
   and preserved failure lines alone whether the command actually passed,
   or a failure's cause is unclear -- retrieve and inspect the full raw
@@ -745,6 +755,7 @@ Or, if none applied: "N/A -- no lens applied."
 ## Commands Executed and Outcomes
 
 - `<discovered command>` (scope: `<scope directory relative to $CE_WORKTREE, or "." for the root>`): PASS / FAIL / BLOCKED -- <reason if not PASS>
+  - Warnings: <verbatim warning line(s) the command itself reported, if any -- omit this line entirely for a command with none. A PASS with warnings listed here is still PASS: recording a warning here never by itself changes this command's own PASS/FAIL/BLOCKED status or the Overall Verdict below.>
 
 ## Gaps and Blockers
 
@@ -767,6 +778,13 @@ than one token on it.
 
 - `PASS` -- all requirements VERIFIED, all design commitments
   VERIFIED/N/A, all checked tasks VERIFIED, all executed commands PASS.
+  A command that exits 0 but reported warnings (see "Commands Executed
+  and Outcomes" above) still counts as PASS here -- this version only
+  guarantees those warnings are recorded and visible in the report,
+  never silently dropped; classifying them (e.g. distinguishing one
+  introduced by this change from a pre-existing one, or ever escalating
+  a warning to `PASS WITH GAPS`/`FAIL` on its own) is deliberately out
+  of scope for this version.
 - `PASS WITH GAPS` -- no NOT VERIFIED requirements, no UNVERIFIED
   CHECKBOX tasks, and no FAILed commands, but one or more items are
   BLOCKED or PARTIALLY VERIFIED. List the gaps above.
@@ -863,6 +881,14 @@ command either way, that is entirely `/archive`'s own gate to decide:
   runner, or CI/build configuration does either of those.
 - Never run every discovered script in every scope "just in case" --
   the smallest targeted set per scope, exactly as at the root.
+- An exit code of 0 is never license to drop a command's warnings --
+  quote any warning the tool itself reported (compiler, linter,
+  deprecation, peer-dependency, or similar) verbatim in that command's
+  "Commands Executed and Outcomes" entry, even though the command still
+  counts as PASS. Recording it there never by itself changes that
+  command's PASS/FAIL/BLOCKED status or the Overall Verdict -- treating
+  warnings as blocking, or distinguishing one introduced by this change
+  from a pre-existing one, is future work, not this version's scope.
 - Mutating database schema/data, infrastructure, external services, or
   developer configuration always requires either a proven disposable
   environment (established by concrete repo evidence, never inferred
