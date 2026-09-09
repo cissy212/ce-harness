@@ -63,7 +63,24 @@ export async function resolveTargetRepo(repoPath: string): Promise<string> {
   return resolveRepoRoot(canonicalRepoPath);
 }
 
-/** Returns porcelain status lines; empty array means a clean tree. */
+/**
+ * Returns porcelain status lines; empty array means a clean tree.
+ *
+ * Deliberately never `.trim()`s the raw stdout as a whole before
+ * splitting it: porcelain v1's 2-character `XY` status code legitimately
+ * *starts* with a literal space whenever a file is modified in the
+ * worktree but not staged (e.g. `" M path"`), and if that happens to be
+ * the first line of the output, `String.prototype.trim()` silently eats
+ * that leading space along with it -- shifting every downstream
+ * line-slicing consumer (see e.g. `porcelainLinePath` in
+ * core/worktreeArtifacts.ts, and `porcelainPaths` in
+ * commands/publish.ts, both of which assume a fixed 3-character `"XY "`
+ * prefix) by one character, silently truncating that one file's parsed
+ * path (a real case: `"apps/..."` became `"pps/..."`). Filtering out
+ * only genuinely empty lines -- a stray trailing newline, or no output
+ * at all for a clean tree -- avoids that without touching any line's
+ * real content.
+ */
 export async function statusPorcelain(repoPath: string): Promise<string[]> {
   const result = await git(repoPath, ["status", "--porcelain", "--untracked-files=all"]);
   if (result.exitCode !== 0) {
@@ -71,8 +88,7 @@ export async function statusPorcelain(repoPath: string): Promise<string[]> {
       `Failed to read Git status for "${repoPath}": ${result.stderr.trim()}`,
     );
   }
-  const trimmed = result.stdout.trim();
-  return trimmed.length === 0 ? [] : trimmed.split("\n");
+  return result.stdout.split("\n").filter((line) => line.length > 0);
 }
 
 export async function isDirty(repoPath: string): Promise<boolean> {

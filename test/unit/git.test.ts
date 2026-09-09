@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createBareRemote, cloneRepo, createTempRepo } from "../helpers/tempRepo.js";
@@ -33,6 +33,7 @@ import {
   resolveCommit,
   resolveMergeBase,
   resolveRootCommit,
+  statusPorcelain,
 } from "../../src/core/git.js";
 
 describe("resolveCommit / resolveMergeBase", () => {
@@ -991,4 +992,50 @@ describe("ce publish's git primitives", () => {
       expect(files.sort()).toEqual(["a.txt", "b.txt"]);
     });
   });
+
+  describe("statusPorcelain", () => {
+    it("preserves the leading space of an unstaged-only modification's status code when it is the *only* (and therefore first) line -- regression for a real bug where a whole-string .trim() ate that space, shifting every downstream line-slicing consumer by one character (e.g. \"apps/...\" parsed as \"pps/...\")", async () => {
+      await mkdirAndWrite(repoDir, "apps/dashboard/a.txt", "original\n");
+      await execa("git", ["-C", repoDir, "add", "apps/dashboard/a.txt"]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "add a.txt"]);
+      await writeFile(join(repoDir, "apps/dashboard/a.txt"), "modified\n", "utf8");
+
+      const lines = await statusPorcelain(repoDir);
+      expect(lines).toEqual([" M apps/dashboard/a.txt"]);
+      // The exact assumption every consumer (core/worktreeArtifacts.ts's
+      // porcelainLinePath, commands/publish.ts's porcelainPaths) makes:
+      // a fixed 3-character "XY " prefix, so the path itself must start
+      // at index 3, untouched.
+      expect(lines[0].slice(3)).toBe("apps/dashboard/a.txt");
+    });
+
+    it("preserves every line when an unstaged modification (leading space) sorts first, ahead of a staged addition and an untracked file", async () => {
+      await mkdirAndWrite(repoDir, "apps/dashboard/a.txt", "original\n");
+      await execa("git", ["-C", repoDir, "add", "apps/dashboard/a.txt"]);
+      await execa("git", ["-C", repoDir, "commit", "-m", "add a.txt"]);
+
+      await writeFile(join(repoDir, "apps/dashboard/a.txt"), "modified\n", "utf8");
+      await mkdirAndWrite(repoDir, "apps/new/b.txt", "new\n");
+      await execa("git", ["-C", repoDir, "add", "apps/new/b.txt"]);
+      await mkdirAndWrite(repoDir, "apps/dashboard/c.txt", "untracked\n");
+
+      const lines = await statusPorcelain(repoDir);
+      expect(lines.sort()).toEqual(
+        ["?? apps/dashboard/c.txt", " M apps/dashboard/a.txt", "A  apps/new/b.txt"].sort(),
+      );
+      for (const line of lines) {
+        expect(line.slice(3).length).toBeGreaterThan(0);
+      }
+    });
+
+    it("returns an empty array for a clean tree", async () => {
+      expect(await statusPorcelain(repoDir)).toEqual([]);
+    });
+  });
 });
+
+async function mkdirAndWrite(repoDir: string, relativePath: string, content: string): Promise<void> {
+  const full = join(repoDir, relativePath);
+  await mkdir(dirname(full), { recursive: true });
+  await writeFile(full, content, "utf8");
+}

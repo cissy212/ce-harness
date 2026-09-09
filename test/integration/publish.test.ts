@@ -135,6 +135,32 @@ describe("ce publish (integration)", () => {
       expect(remoteBranches).not.toContain("feature/issue-130");
     });
 
+    it("preserves the exact first character of an unstaged-modified file's path in the plan's uncommittedFiles -- regression: a whole-string .trim() previously ate the leading space of git status's \" M\" code whenever it was the first status line, silently truncating the path (a real case: \"apps/...\" was reported as \"pps/...\")", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { publishCommand } = await import("../../src/commands/publish.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-130" });
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-130");
+      // A tracked file, modified but never staged -- `git status
+      // --porcelain` reports this with a *leading-space* status code
+      // (" M"), which is exactly the condition the bug required (the
+      // leading space is only ever eaten when it starts the raw stdout,
+      // i.e. when this is the first -- here, only -- status line).
+      await mkdir(join(workspace.worktreePath, "apps", "dashboard"), { recursive: true });
+      await writeFile(join(workspace.worktreePath, "apps", "dashboard", "a.txt"), "original\n", "utf8");
+      await execa("git", ["-C", workspace.worktreePath, "add", "."]);
+      await execa("git", ["-C", workspace.worktreePath, "commit", "-m", "add a.txt"]);
+      await writeFile(join(workspace.worktreePath, "apps", "dashboard", "a.txt"), "modified\n", "utf8");
+
+      logSpy.mockClear();
+      await publishCommand({ workspace: `${basenameOf(repoDir)}/issue-130` });
+      const plan = JSON.parse(logSpy.mock.calls[logSpy.mock.calls.length - 1][0]);
+
+      expect(plan.uncommittedFiles).toEqual(["apps/dashboard/a.txt"]);
+    });
+
     it("safely merges an advanced remote base into the workspace branch (local-only, no push)", async () => {
       const { startCommand } = await import("../../src/commands/start.js");
       const { publishCommand } = await import("../../src/commands/publish.js");
