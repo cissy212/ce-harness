@@ -722,7 +722,7 @@ Or, if none applied: "N/A -- no lens applied."
 
 ## Gaps and Blockers
 
-- <unverified/blocked item, unchecked task, or scope limitation, and why>
+- <unverified/blocked item, unchecked task, or scope limitation, and why> -- **Merge impact:** Blocking / Non-blocking
 
 ---
 
@@ -739,6 +739,26 @@ machine-checkable field: `/archive` greps it verbatim to decide whether
 this evidence is good, so never rename it, reformat it, or leave more
 than one token on it.
 
+Every entry under "Gaps and Blockers" must end with an explicit
+**Merge impact:** `Blocking` or `Non-blocking` -- the same two labels
+`/adversarial-review` uses for its own findings, so `/archive`'s gate
+(see `templates/commands/archive.md`) can read both reports the same
+way. **`Blocking` is always the default.** Mark a gap `Non-blocking`
+only when you can state a concrete reason the requirement is still
+adequately supported despite it -- e.g. a live external check that
+couldn't run for a stated, verifiable reason (an unavailable
+credential/service outside this change's control), where the same
+behavior was otherwise confirmed through code inspection, a lower-level
+test, or an equivalent check that did run. A gap with no such reason,
+or where the missing check is itself the only evidence for the
+requirement, stays `Blocking`. An `UNVERIFIED CHECKBOX`, or a
+`PARTIALLY VERIFIED` item where what's missing could plausibly mean the
+requirement isn't actually met, is always `Blocking` -- never mark one
+`Non-blocking` merely to avoid re-running verification. This
+classification never changes the verdict token itself (below) -- it
+only tells `/archive` which gaps it may treat as accepted and which it
+must still block on.
+
 - `PASS` -- all requirements VERIFIED, all design commitments
   VERIFIED/N/A, all checked tasks VERIFIED, all executed commands PASS.
   A command that exits 0 but reported warnings (see "Commands Executed
@@ -750,7 +770,10 @@ than one token on it.
   of scope for this version.
 - `PASS WITH GAPS` -- no NOT VERIFIED requirements, no UNVERIFIED
   CHECKBOX tasks, and no FAILed commands, but one or more items are
-  BLOCKED or PARTIALLY VERIFIED. List the gaps above.
+  BLOCKED or PARTIALLY VERIFIED. List the gaps above, each with its
+  Merge impact. This verdict token alone does not determine archive
+  eligibility -- `/archive`'s own gate reads each gap's Merge impact
+  directly, not just this token (see the paragraph above).
 - `FAIL` -- one or more requirements NOT VERIFIED, tasks UNVERIFIED
   CHECKBOX, design commitments NOT VERIFIED, or executed commands
   FAILed. See findings above.
@@ -844,6 +867,12 @@ command either way, that is entirely `/archive`'s own gate to decide:
   runner, or CI/build configuration does either of those.
 - Never run every discovered script in every scope "just in case" --
   the smallest targeted set per scope, exactly as at the root.
+- Every "Gaps and Blockers" entry must end with an explicit **Merge
+  impact: Blocking** or **Non-blocking** tag -- `Blocking` by default;
+  `Non-blocking` only with a stated reason the requirement is still
+  adequately supported despite the gap. `/archive`'s gate treats any
+  entry with no tag at all (a legacy report predating this convention)
+  as `Blocking`, never as safe by omission.
 - An exit code of 0 is never license to drop a command's warnings --
   quote any warning the tool itself reported (compiler, linter,
   deprecation, peer-dependency, or similar) verbatim in that command's

@@ -2761,17 +2761,17 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/## Archive Failed/);
     });
 
-    it("gates archive on durable, fresh PASS evidence from /verify and /adversarial-review (Step 4, hard gate)", async () => {
+    it("gates archive on durable, fresh, non-blocking evidence from /verify and /adversarial-review (Step 4, hard gate)", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
       const normalized = content.replace(/\s+/g, " ");
 
       expect(content).toMatch(
-        /4\. \*\*Require durable, fresh `PASS` evidence from `\/verify` and `\/adversarial-review` \(hard gate\)\*\*/,
+        /4\. \*\*Require durable, fresh, non-blocking evidence from `\/verify` and `\/adversarial-review` \(hard gate\)\*\*/,
       );
       expect(normalized).toMatch(
-        /It never runs `\/verify` or `\/adversarial-review`\s*itself and never modifies a report/i,
+        /It never runs\s*`\/verify` or `\/adversarial-review` itself, never modifies a report,\s*and never reclassifies a finding's Merge impact itself/i,
       );
       expect(normalized).toMatch(/This applies only to OpenSpec implementation changes/i);
       expect(normalized).toMatch(
@@ -2786,15 +2786,19 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/for f in proposal\.md design\.md tasks\.md; do/);
       expect(content).toMatch(/find "<changeRoot>\/specs" -type f/);
 
-      // The four classifications, and that only Missing/Failing/Gapped/Stale block.
+      // The classifications, and that freshness is checked before merge-impact.
       expect(content).toMatch(/\*\*Missing\*\* -- no report of that kind exists at all\. Required, not/);
       expect(content).toMatch(/\*\*Failing\*\* -- its `\*\*Verdict:\*\*` line reads `FAIL`\./);
-      expect(content).toMatch(/\*\*Gapped\*\* -- its `\*\*Verdict:\*\*` line reads `PASS WITH GAPS`\./);
-      expect(content).toMatch(/\*\*Stale\*\* -- its `\*\*Verdict:\*\*` line reads `PASS`, but its/);
-      expect(content).toMatch(/\*\*Good\*\* -- its `\*\*Verdict:\*\*` line reads `PASS`, and both recorded/);
-      expect(normalized).toMatch(/\*\*If both are Good:\*\* proceed to step 5 -- no warning needed\./);
       expect(normalized).toMatch(
-        /\*\*If either is Missing, Failing, Gapped, or Stale: stop here\.\*\* Do\s*not proceed to step 5 or step 6\./,
+        /\*\*Stale\*\* -- its `\*\*Verdict:\*\*` line reads `PASS` or `PASS WITH\s*GAPS`, but its/,
+      );
+      expect(content).toMatch(/\*\*Fresh `PASS`\*\* -- its `\*\*Verdict:\*\*` line reads `PASS`, and both/);
+      expect(content).toMatch(/\*\*Fresh `PASS WITH GAPS`\*\* -- its `\*\*Verdict:\*\*` line reads `PASS/);
+      expect(normalized).toMatch(
+        /\*\*If both reports are Good\*\* \(whether from a clean `PASS`, or a\s*`PASS WITH GAPS` where every unresolved item is explicitly\s*`Non-blocking`\): proceed to step 5\./,
+      );
+      expect(normalized).toMatch(
+        /\*\*If either report is Missing, Failing, Stale, or Blocked by\s*findings: stop here\.\*\* Do not proceed to step 5 or step 6\./,
       );
     });
 
@@ -2805,10 +2809,10 @@ describe("ce start (integration)", () => {
       const normalized = content.replace(/\s+/g, " ");
 
       expect(normalized).toMatch(
-        /This is unconditional -- unlike\s*steps 2 and 3's warnings, there is no "confirm to continue anyway\."/i,
+        /This is unconditional -- unlike\s*steps 2 and 3's warnings, there is no "confirm to continue anyway,"/i,
       );
       expect(normalized).toMatch(
-        /This command requires a fresh, passing `\/verify` and `\/adversarial-review` report before archiving \(Step 4\): missing, `FAIL`, `PASS WITH GAPS`, or stale evidence/i,
+        /This command requires a fresh `\/verify` and `\/adversarial-review` report before archiving \(Step 4\), with nothing unresolved that either report itself classifies `Blocking`/i,
       );
       expect(normalized).toMatch(/no confirm-to-continue override, unlike the softer artifact\/task-completion warnings in steps 2-3/i);
       expect(normalized).toMatch(
@@ -2816,28 +2820,30 @@ describe("ce start (integration)", () => {
       );
     });
 
-    it('shows an "Archive Blocked" output naming both commands and telling the user exactly what to run next', async () => {
+    it('shows an "Archive Blocked" output naming both commands, quoting the specific blocking item, and telling the user exactly what to run next', async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
       const content = await readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
 
       expect(content).toMatch(/## Archive Blocked/);
       expect(content).toMatch(/\*\*verify:\*\* <one of:/);
-      expect(content).toMatch(/\*\*adversarial-review:\*\* <same shapes as above, for `\/adversarial-review <name>`>/);
+      expect(content).toMatch(/\*\*adversarial-review:\*\* <same shapes as above, for `\/adversarial-review <name>`/);
       expect(content).toMatch(/Missing -- run `\/verify <name>` first\./);
       expect(content).toMatch(
         /FAIL -- run `\/verify <name>` again after addressing its findings\./,
       );
       expect(content).toMatch(
-        /PASS WITH GAPS -- run `\/verify <name>` again; this gate requires a clean PASS\./,
+        /PASS WITH GAPS, but stale \(verified against a different commit\/tasks\.md than the current state\) -- run `\/verify <name>` again\./,
       );
       expect(content).toMatch(
-        /PASS, but stale \(verified against a different commit\/tasks\.md than the current state\) -- run `\/verify <name>` again\./,
+        /PASS WITH GAPS with an unresolved Blocking gap -- '<the gap's own text, verbatim>' -- resolve it/,
       );
       expect(content).toMatch(/Run whichever command\(s\) are needed above, then `\/archive <name>` again\./);
       // No more "unresolved review evidence" line in the success-path Warnings --
       // reaching Output On Success at all already implies Step 4 passed.
       expect(content).not.toMatch(/Unresolved review evidence: <report filename>/);
+      // The gate never claims to require a literal clean PASS anymore.
+      expect(content).not.toMatch(/this gate requires a clean PASS/);
     });
 
     it("resolves archive paths from OpenSpec JSON output, never hardcoded repo-local paths", async () => {
@@ -2893,6 +2899,96 @@ describe("ce start (integration)", () => {
       expect(existsSync(join(worktreePath, "archive.md"))).toBe(false);
       expect(readdirSync(repoDir).sort()).toEqual([".git", "README.md"]);
       expect(readdirSync(worktreePath).sort()).toEqual([".git", "README.md"]);
+    });
+
+    describe("real MAT E2E gap: archive eligibility must respect each report's Merge impact, not just its verdict token", () => {
+      const readArchive = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+      };
+
+      it("scenario 1 -- a fresh, clean PASS from both reports is still Good and archiveable, unchanged", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(/\*\*Fresh `PASS`\*\* -- its `\*\*Verdict:\*\*` line reads `PASS`, and both/);
+        expect(normalized).toMatch(
+          /Continue directly to \*\*Good\*\* below\s*-- a clean `PASS` has no findings\/gaps to inspect\./,
+        );
+      });
+
+      it("scenario 2 -- a fresh PASS WITH GAPS containing an unresolved Blocking finding/gap is Blocked, not Good", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*If any unresolved item is `Blocking` \(or untagged\):\*\* this report\s*counts as \*\*Blocked by findings\*\* -- see below\./,
+        );
+        expect(normalized).toMatch(
+          /\*\*If either report is Missing, Failing, Stale, or Blocked by\s*findings: stop here\.\*\*/,
+        );
+      });
+
+      it("scenario 3 -- a fresh PASS WITH GAPS containing only Non-blocking findings (e.g. a MINOR, high-confidence, non-blocking documentation finding) is Good and archiveable", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*If every unresolved item across both checks is explicitly\s*`Non-blocking`:\*\* this report counts as \*\*Good\*\*, same as a clean\s*`PASS`/,
+        );
+        // Explicitly checks adversarial-review's Findings table Merge impact column,
+        // not just its verdict token -- a Non-blocking MINOR finding must not block.
+        expect(normalized).toMatch(
+          /check every row of "Findings\s*Affecting This Change" for `Merge impact: Blocking`/,
+        );
+      });
+
+      it("scenario 4 -- a fresh PASS WITH GAPS caused only by an explicitly Non-blocking environment/credential limitation (verify's Gaps and Blockers, or adversarial-review's Scope limitations/Gaps or inaccessible evidence) is Good and archiveable", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /every entry under "Gaps and Blockers" must\s*carry an explicit `Merge impact: Blocking` or `Non-blocking` tag/,
+        );
+        expect(normalized).toMatch(
+          /every entry under \*\*Scope limitations\*\* and \*\*Gaps or inaccessible\s*evidence\*\* for an explicit `Merge impact` tag/,
+        );
+        // An accepted gap must be surfaced, never hidden as if the run were a clean PASS.
+        expect(content).toMatch(/\*\*Carried-forward gaps \(explicitly non-blocking, not required to be fixed before archiving\):\*\*/);
+        expect(normalized).toMatch(
+          /Never omit this\s*section, and never let the surrounding output read as if the result\s*were a clean `PASS`/,
+        );
+      });
+
+      it("scenario 5 -- staleness is checked unconditionally for both PASS and PASS WITH GAPS, before merge-impact is ever considered, and always blocks", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /freshness is checked\s*unconditionally, regardless of which verdict token is present, since\s*a stale report must block archive no matter how its findings are\s*classified/,
+        );
+        expect(normalized).toMatch(
+          /Checked identically for both verdict tokens --\s*a\s*`PASS WITH GAPS` report is exactly as capable of going stale as a\s*`PASS` one, and an accepted non-blocking gap from a stale report is\s*never trustworthy evidence about the current worktree\./,
+        );
+        // Stale is listed as an unconditional blocker alongside Missing/Failing, distinct from findings-based blocking.
+        expect(normalized).toMatch(
+          /\*\*If either report is Missing, Failing, Stale, or Blocked by\s*findings: stop here\.\*\*/,
+        );
+      });
+
+      it("never reclassifies a finding's Merge impact itself, and never lets a legacy/untagged item pass silently", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/never reclassifies a finding's Merge impact itself/);
+        expect(content).toMatch(
+          /Treat any\s*entry with \*\*no tag at all\*\* \(a legacy report predating this\s*convention\) as `Blocking` -- never assume an untagged gap is safe\./,
+        );
+        expect(normalized).toMatch(
+          /with the same\s*untagged-means-`Blocking` rule as above/,
+        );
+      });
     });
   });
 
@@ -3972,6 +4068,68 @@ describe("ce start (integration)", () => {
         );
       });
     });
+
+    describe("real MAT E2E gap: Gaps and Blockers need a Merge impact tag so archive eligibility isn't tied to a literal clean PASS", () => {
+      const readVerify = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+      };
+
+      it("the report template requires a Merge impact tag on every Gaps and Blockers entry", async () => {
+        const content = await readVerify();
+
+        expect(content).toMatch(
+          /- <unverified\/blocked item, unchecked task, or scope limitation, and why> -- \*\*Merge impact:\*\* Blocking \/ Non-blocking/,
+        );
+      });
+
+      it("Blocking is the stated default, and Non-blocking requires a concrete stated reason (e.g. an unavailable external credential the requirement was otherwise confirmed despite)", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/\*\*`Blocking` is always the default\.\*\*/);
+        expect(normalized).toMatch(
+          /Mark a gap `Non-blocking`\s*only when you can state a concrete reason the requirement is still\s*adequately supported despite it/,
+        );
+        expect(normalized).toMatch(
+          /an unavailable\s*credential\/service outside this change's control/,
+        );
+      });
+
+      it("an UNVERIFIED CHECKBOX or a genuinely unresolved PARTIALLY VERIFIED item is always Blocking -- never downgraded merely to avoid re-verifying", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /An `UNVERIFIED CHECKBOX`, or a\s*`PARTIALLY VERIFIED` item where what's missing could plausibly mean the\s*requirement isn't actually met, is always `Blocking` -- never mark one\s*`Non-blocking` merely to avoid re-running verification\./,
+        );
+      });
+
+      it("this classification never changes the verdict token itself, and the PASS WITH GAPS definition says archive eligibility depends on it, not the token alone", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /This\s*classification never changes the verdict token itself \(below\) -- it\s*only tells `\/archive` which gaps it may treat as accepted and which it\s*must still block on\./,
+        );
+        expect(normalized).toMatch(
+          /This verdict token alone does not determine archive\s*eligibility -- `\/archive`'s own gate reads each gap's Merge impact\s*directly, not just this token/,
+        );
+      });
+
+      it("a guardrail requires the tag on every entry and defaults an untagged (legacy) entry to Blocking", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Every "Gaps and Blockers" entry must end with an explicit \*\*Merge\s*impact: Blocking\*\* or \*\*Non-blocking\*\* tag/,
+        );
+        expect(normalized).toMatch(
+          /`\/archive`'s gate treats any\s*entry with no tag at all \(a legacy report predating this convention\)\s*as `Blocking`, never as safe by omission\./,
+        );
+      });
+    });
   });
 
   describe("/adversarial-review command template", () => {
@@ -4849,6 +5007,70 @@ describe("ce start (integration)", () => {
         );
         expect(normalized).toMatch(
           /Never substitute a directory, the\s*store root, or `ce open --change` for this -- the command must open\s*the exact report file just written\./,
+        );
+      });
+    });
+
+    describe("real MAT E2E gap: Scope limitations/Gaps or inaccessible evidence need a Merge impact tag, same as a finding's", () => {
+      const readAdversarialReview = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8");
+      };
+
+      it("the report header's Scope limitations field and Baseline Review Coverage's Gaps or inaccessible evidence field both require a Merge impact tag", async () => {
+        const content = await readAdversarialReview();
+
+        expect(content).toMatch(
+          /\*\*Scope limitations:\*\* <limitations, each ending with \*\*Merge impact:\*\* Blocking or Non-blocking, or "None declared">/,
+        );
+        expect(content).toMatch(
+          /- \*\*Gaps or inaccessible evidence:\*\* <anything that could not be checked and why, each ending with \*\*Merge impact:\*\* Blocking or Non-blocking, or "None">/,
+        );
+      });
+
+      it("the verdict is derived from the Findings table plus these two limitation fields, each requiring its own explicit Merge impact tag with the same Blocking-by-default discipline as a finding", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /The verdict is derived \*\*only\*\* from the "Findings Affecting This Change"\s*table plus the \*\*Scope limitations\*\* and \*\*Gaps or inaccessible\s*evidence\*\* fields/,
+        );
+        expect(normalized).toMatch(
+          /using the exact same discipline as a finding's\s*Merge impact.*: `Blocking` by\s*default; `Non-blocking` only when you can state a concrete reason/,
+        );
+      });
+
+      it("PASS WITH GAPS can arise from a limitation field alone, and explicitly says this doesn't by itself determine archive eligibility", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`PASS WITH GAPS` -- no `Blocking` findings affecting this change, but\s*at least one `Non-blocking` finding, or at least one \*\*Scope\s*limitations\*\*\/\*\*Gaps or inaccessible evidence\*\* entry, remains\./,
+        );
+        expect(normalized).toMatch(
+          /This\s*verdict token alone does not determine archive eligibility --\s*`\/archive`'s own gate reads each finding's and each limitation's Merge\s*impact directly, not just this token\./,
+        );
+      });
+
+      it("a clean PASS requires both limitation fields to be empty, not just an empty Findings table", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`PASS` \(adversarial\) -- no `Blocking` or `Non-blocking` findings\s*affecting this change; \*\*Scope limitations\*\* and \*\*Gaps or\s*inaccessible evidence\*\* are both empty/,
+        );
+      });
+
+      it("a guardrail requires the tag on every limitation entry and defaults an untagged (legacy) entry to Blocking", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Every \*\*Scope limitations\*\* and \*\*Gaps or inaccessible evidence\*\* entry\s*must end with an explicit \*\*Merge impact: Blocking\*\* or \*\*Non-blocking\*\*\s*tag/,
+        );
+        expect(normalized).toMatch(
+          /`\/archive`'s gate\s*treats an untagged entry \(a legacy report predating this convention\) as\s*`Blocking`, never as safe by omission\./,
         );
       });
     });

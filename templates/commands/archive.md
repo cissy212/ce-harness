@@ -49,17 +49,23 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    **If no tasks file exists:** Proceed without task-related warning.
 
-4. **Require durable, fresh `PASS` evidence from `/verify` and `/adversarial-review` (hard gate)**
+4. **Require durable, fresh, non-blocking evidence from `/verify` and `/adversarial-review` (hard gate)**
 
    A change cannot be archived as successfully completed unless both
-   have produced durable passing evidence -- this step enforces that,
+   have produced durable, fresh evidence with nothing unresolved that
+   the report itself classifies as `Blocking` -- this step enforces that,
    deterministically, rather than relying on remembering whether an
-   earlier command failed. It never runs `/verify` or `/adversarial-review`
-   itself and never modifies a report -- it only reads whichever reports
-   already exist and gates on what they already say. This applies only
-   to OpenSpec implementation changes (the only kind `/archive` ever
-   operates on); an Existing PR review's reports live at a different,
-   unrelated location and are not part of this gate.
+   earlier command failed. A clean `PASS` always qualifies; a `PASS WITH
+   GAPS` report qualifies too, but only when every one of its unresolved
+   findings/gaps is explicitly tagged `Merge impact: Non-blocking` --
+   never merely because the verdict token isn't `FAIL`. It never runs
+   `/verify` or `/adversarial-review` itself, never modifies a report,
+   and never reclassifies a finding's Merge impact itself -- it only
+   reads whichever reports already exist and gates on what they already
+   say. This applies only to OpenSpec implementation changes (the only
+   kind `/archive` ever operates on); an Existing PR review's reports
+   live at a different, unrelated location and are not part of this
+   gate.
 
    Resolve the current state to compare evidence against -- the same
    two computations `/verify`/`/adversarial-review` themselves run
@@ -93,37 +99,83 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    lets a passing rerun overturn an earlier failure without deleting the
    history of either.
 
-   Classify each as exactly one of:
+   Classify each first by verdict token and freshness, **before** ever
+   looking at individual findings/gaps -- freshness is checked
+   unconditionally, regardless of which verdict token is present, since
+   a stale report must block archive no matter how its findings are
+   classified:
    - **Missing** -- no report of that kind exists at all. Required, not
      optional.
    - **Failing** -- its `**Verdict:**` line reads `FAIL`.
-   - **Gapped** -- its `**Verdict:**` line reads `PASS WITH GAPS`. This
-     gate only accepts a clean `PASS`.
-   - **Stale** -- its `**Verdict:**` line reads `PASS`, but its
-     `**Verified worktree fingerprint:**`/`**Reviewed worktree
-     fingerprint:**` or `**Verified artifacts hash:**`/`**Reviewed
-     artifacts hash:**` doesn't match the current values resolved above
-     (or it predates those fields existing, so has none to compare).
-     The worktree fingerprint changes on **any** implementation change
-     since the report was written -- committed or not, tracked or
-     untracked -- so this catches uncommitted work-in-progress just as
-     reliably as a new commit. The `**Verified/Reviewed worktree
-     commit:**` field is never compared here -- it's for human reference
-     only, since two different fingerprints can share the same commit
-     (uncommitted changes) while an unchanged fingerprint always implies
-     an unchanged commit too.
-   - **Good** -- its `**Verdict:**` line reads `PASS`, and both recorded
-     values (fingerprint and artifacts hash) match current.
+   - **Stale** -- its `**Verdict:**` line reads `PASS` or `PASS WITH
+     GAPS`, but its `**Verified worktree fingerprint:**`/`**Reviewed
+     worktree fingerprint:**` or `**Verified artifacts hash:**`/
+     `**Reviewed artifacts hash:**` doesn't match the current values
+     resolved above (or it predates those fields existing, so has none
+     to compare). Checked identically for both verdict tokens -- a
+     `PASS WITH GAPS` report is exactly as capable of going stale as a
+     `PASS` one, and an accepted non-blocking gap from a stale report is
+     never trustworthy evidence about the current worktree. The
+     worktree fingerprint changes on **any** implementation change since
+     the report was written -- committed or not, tracked or untracked --
+     so this catches uncommitted work-in-progress just as reliably as a
+     new commit. The `**Verified/Reviewed worktree commit:**` field is
+     never compared here -- it's for human reference only, since two
+     different fingerprints can share the same commit (uncommitted
+     changes) while an unchanged fingerprint always implies an unchanged
+     commit too.
+   - **Fresh `PASS`** -- its `**Verdict:**` line reads `PASS`, and both
+     recorded values match current. Continue directly to **Good** below
+     -- a clean `PASS` has no findings/gaps to inspect.
+   - **Fresh `PASS WITH GAPS`** -- its `**Verdict:**` line reads `PASS
+     WITH GAPS`, and both recorded values match current. Do not treat
+     this as blocking or as safe by itself -- inspect its actual
+     findings/gaps next, below.
 
-   **If both are Good:** proceed to step 5 -- no warning needed.
+   **For a Fresh `PASS WITH GAPS` report, read it in full and check
+   every unresolved item's own Merge impact** -- never the verdict token
+   alone (a `PASS WITH GAPS` verdict, by itself, tells you only that
+   *something* remains open, not whether it's safe to archive past):
+   - **`/verify`'s report:** every entry under "Gaps and Blockers" must
+     carry an explicit `Merge impact: Blocking` or `Non-blocking` tag
+     (see that command's own report-writing instructions). Treat any
+     entry with **no tag at all** (a legacy report predating this
+     convention) as `Blocking` -- never assume an untagged gap is safe.
+   - **`/adversarial-review`'s report:** check every row of "Findings
+     Affecting This Change" for `Merge impact: Blocking` (its own
+     verdict rules already force `FAIL` when one exists, but re-check
+     directly here rather than trusting that computation blindly), and
+     every entry under **Scope limitations** and **Gaps or inaccessible
+     evidence** for an explicit `Merge impact` tag, with the same
+     untagged-means-`Blocking` rule as above. "Pre-Existing or Adjacent
+     Issues" is never part of this check -- that table never gates
+     archive, by that command's own design.
+   - **If every unresolved item across both checks is explicitly
+     `Non-blocking`:** this report counts as **Good**, same as a clean
+     `PASS` -- but record which items were carried forward (report
+     name, kind, and the item's own text) for the "Output On Success"
+     template's **Carried-forward gaps** section below. Never silently
+     present this as if the report had been a clean `PASS`.
+   - **If any unresolved item is `Blocking` (or untagged):** this report
+     counts as **Blocked by findings** -- see below.
 
-   **If either is Missing, Failing, Gapped, or Stale: stop here.** Do
-   not proceed to step 5 or step 6. This is unconditional -- unlike
-   steps 2 and 3's warnings, there is no "confirm to continue anyway."
+   **If both reports are Good** (whether from a clean `PASS`, or a
+   `PASS WITH GAPS` where every unresolved item is explicitly
+   `Non-blocking`): proceed to step 5. If either report contributed
+   carried-forward gaps, remember them for step 7's output -- do not
+   drop this information once the gate passes.
+
+   **If either report is Missing, Failing, Stale, or Blocked by
+   findings: stop here.** Do not proceed to step 5 or step 6. This is
+   unconditional -- unlike steps 2 and 3's warnings, there is no
+   "confirm to continue anyway," and reclassifying a finding's Merge
+   impact to force a pass is never this command's decision to make (that
+   belongs to `/verify`/`/adversarial-review` themselves, on a rerun).
    Show the "Output On Blocked" template below, telling the user exactly
-   what's wrong with each blocking one (missing / failing / gapped /
-   stale, its report path if it has one) and the exact command to run
-   next (`/verify <name>` and/or `/adversarial-review <name>`).
+   what's wrong with each blocking one (missing / failing / stale /
+   which specific finding(s) are `Blocking`, its report path if it has
+   one) and the exact command to run next (`/verify <name>` and/or
+   `/adversarial-review <name>`).
 
 5. **Assess delta spec sync state**
 
@@ -176,6 +228,8 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    - A ready-to-run `ce open --archived <project>/<issue>` command to view the archived artifacts -- never a bare filesystem path (see below)
    - Spec sync status (synced / sync skipped / no delta specs)
    - Note about any warnings (incomplete artifacts/tasks)
+   - Any carried-forward, explicitly non-blocking gaps from step 4 -- never
+     silently omitted just because they didn't block archiving
 
 **Output On Success**
 
@@ -192,18 +246,24 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 - Archived with N incomplete tasks
 - Delta spec sync was skipped (user chose to skip)
 
+**Carried-forward gaps (explicitly non-blocking, not required to be fixed before archiving):**
+- [/verify] <the gap's own text, verbatim> -- reports/<file>
+- [/adversarial-review] <the finding/limitation's own text, verbatim> -- reports/<file>
+
 All artifacts complete. All tasks complete.
 
 Next: /publish
 ```
 
 Reaching this template at all already means step 4's gate passed --
-both `/verify` and `/adversarial-review` evidence was Good -- so it
-never has a review-evidence warning to show; a blocked archive shows
-the "Output On Blocked" template below instead and never reaches this
-point. Show whichever single **Specs** value actually applies -- never
-all three. Include the **Warnings** section, listing only the specific
-warnings that actually apply, only when at least one holds (incomplete
+both `/verify` and `/adversarial-review` evidence was Good, meaning
+either a clean `PASS` or a `PASS WITH GAPS` whose every unresolved item
+was explicitly `Non-blocking` -- so this never has a *blocking*
+review-evidence warning to show; a blocked archive shows the "Output On
+Blocked" template below instead and never reaches this point. Show
+whichever single **Specs** value actually applies -- never all three.
+Include the **Warnings** section, listing only the specific warnings
+that actually apply, only when at least one holds (incomplete
 artifacts, incomplete tasks, or a skipped sync); omit the section
 entirely when none apply. When the **Warnings** section is present,
 change the heading to `## Archive Complete (with warnings)` and use
@@ -214,6 +274,22 @@ closes the development contract, it never pushes or opens a pull
 request itself -- `/publish` is the separate, explicit step for that
 (see templates/commands/publish.md), and this pointer is what tells the
 user it exists.
+
+**Include the "Carried-forward gaps" section whenever step 4 found at
+least one explicitly `Non-blocking` item in either report** -- quote
+each one's own text verbatim (never paraphrase it into something
+vaguer) alongside which command's report it came from and that report's
+filename, so a human skimming this output can immediately tell this
+wasn't a clean run without opening either report. Omit the section
+entirely when both reports were a clean `PASS` with nothing carried
+forward. This section is independent of the **Warnings** section above
+(artifact/task completeness) and of the heading/closing-line choice --
+its presence never changes which heading or closing line is used; it is
+simply always shown, on its own, whenever it applies. **Never omit this
+section, and never let the surrounding output read as if the result
+were a clean `PASS`** when a non-blocking gap was actually carried
+forward -- the whole point of this gate change is that the human stays
+able to see exactly what was accepted and why.
 
 **Never print the bare archive filesystem path** (e.g.
 `openspec/changes/archive/2026-09-09-case-studies-domain-model/`) as
@@ -226,27 +302,34 @@ studies-domain-model`) into the **Archived to** line above -- never
 print the placeholder text or the raw `$CE_PROJECT`/`$CE_ISSUE` tokens
 themselves, and never the internal store path.
 
-**Output On Blocked (Missing/Failing/Gapped/Stale Verification Evidence)**
+**Output On Blocked (Missing/Failing/Stale/Blocking-Finding Verification Evidence)**
 
 ```
 ## Archive Blocked
 
 **Change:** <change-name>
 
-Archiving requires a fresh, passing `/verify` and `/adversarial-review`
-report for the current worktree and tasks.md. This change doesn't have
-both yet:
+Archiving requires a fresh `/verify` and `/adversarial-review` report
+for the current worktree and tasks.md, with nothing unresolved that
+either report itself classifies as blocking. This change doesn't have
+that yet:
 
-- **verify:** <one of: "Missing -- run `/verify <name>` first." | "reports/<file>: FAIL -- run `/verify <name>` again after addressing its findings." | "reports/<file>: PASS WITH GAPS -- run `/verify <name>` again; this gate requires a clean PASS." | "reports/<file>: PASS, but stale (verified against a different commit/tasks.md than the current state) -- run `/verify <name>` again.">
-- **adversarial-review:** <same shapes as above, for `/adversarial-review <name>`>
+- **verify:** <one of: "Missing -- run `/verify <name>` first." | "reports/<file>: FAIL -- run `/verify <name>` again after addressing its findings." | "reports/<file>: PASS WITH GAPS, but stale (verified against a different commit/tasks.md than the current state) -- run `/verify <name>` again." | "reports/<file>: PASS WITH GAPS with an unresolved Blocking gap -- '<the gap's own text, verbatim>' -- resolve it (or, if this was misclassified, have /verify explicitly mark it Non-blocking with a stated reason on a rerun), then run `/verify <name>` again.">
+- **adversarial-review:** <same shapes as above, for `/adversarial-review <name>`, substituting "finding" for "gap" where natural>
 
 Run whichever command(s) are needed above, then `/archive <name>` again.
 ```
 
 Show a line for both `/verify` and `/adversarial-review` even when only
-one is the actual problem -- state plainly that the other is Good so
-the user isn't left guessing. This gate is unconditional: there is no
-option here to proceed anyway, unlike the artifact/task warnings above.
+one is the actual problem -- state plainly that the other is Good
+(including whether it carried forward any accepted non-blocking gaps)
+so the user isn't left guessing. This gate is unconditional: there is
+no option here to proceed anyway, unlike the artifact/task warnings
+above, and this command never reclassifies a finding's Merge impact
+itself to force a pass -- quote the blocking item's own text so the
+user can judge whether it's genuinely blocking or was simply
+under-classified, and resolve that on the next `/verify`/
+`/adversarial-review` run, not here.
 
 **Output On Error (Archive Exists)**
 
@@ -277,6 +360,6 @@ Target archive directory already exists.
 - Never assume repo-local `openspec/` paths -- always use `planningHome`, `changeRoot`, and `artifactPaths` resolved from the CLI's JSON output, which point inside the external store
 - Never modify product/application code during `/archive` -- this command only moves OpenSpec planning artifacts within the external store
 - Never create `openspec/`, `.opencode/`, reports, or any other harness/config file or directory inside the target repository or its Git worktree -- archiving happens only inside the external store at `$CE_OPENSPEC_STORE`
-- This command requires a fresh, passing `/verify` and `/adversarial-review` report before archiving (Step 4): missing, `FAIL`, `PASS WITH GAPS`, or stale evidence (verified against a different worktree commit or tasks.md than the current state) unconditionally blocks archive -- no confirm-to-continue override, unlike the softer artifact/task-completion warnings in steps 2-3. A later passing rerun always supersedes an earlier failure, since the gate only ever looks at the most recent report of each kind. It never reruns `/verify` or `/adversarial-review` itself and never modifies a report -- it only reads the most recent report of each kind and gates on what it already says.
+- This command requires a fresh `/verify` and `/adversarial-review` report before archiving (Step 4), with nothing unresolved that either report itself classifies `Blocking`: missing, `FAIL`, stale evidence (verified against a different worktree commit or tasks.md than the current state), or a `PASS WITH GAPS` report containing any unresolved `Blocking` (or untagged) item unconditionally blocks archive -- no confirm-to-continue override, unlike the softer artifact/task-completion warnings in steps 2-3. A `PASS WITH GAPS` report whose every unresolved item is explicitly tagged `Merge impact: Non-blocking` does **not** block -- but its carried-forward gaps must always be surfaced in Step 7's output (never presented as a clean `PASS`). A later passing rerun always supersedes an earlier failure, since the gate only ever looks at the most recent report of each kind. It never reruns `/verify` or `/adversarial-review` itself, never modifies a report, and never reclassifies a finding's Merge impact itself -- it only reads the most recent report of each kind and gates on what it already says.
 
 _See `THIRD_PARTY_NOTICES.md` for this command's provenance and licensing._

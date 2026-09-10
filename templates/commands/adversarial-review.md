@@ -554,7 +554,7 @@ this workspace's type -- never both, and never invent a third variant.
 **Baseline sources:** <artifact paths read (Implementation workspace), or PR description + repository docs actually read (Existing PR review workspace)>
 **Implementation sources:** <worktree diff range examined>
 **Verify report reviewed:** <path inside changeRoot/reports/, or "None found" (Implementation workspace); "N/A -- /verify does not run in an Existing PR review workspace" (Existing PR review workspace)>
-**Scope limitations:** <limitations or "None declared">
+**Scope limitations:** <limitations, each ending with **Merge impact:** Blocking or Non-blocking, or "None declared">
 
 > This is an AI-generated review draft. A human reviewer must validate the findings before acting on them or publishing them externally.
 
@@ -583,7 +583,7 @@ either way. -->
 - **Equivalent call sites checked:** <what else does the same thing, and whether it needed the same treatment, or "N/A -- no equivalent call sites found">
 - **Tests inspected:** <which tests were read, and whether they prove the user-visible behavior or only an intermediate value>
 - **Integration boundaries traced:** <what wiring/integration points were traced end to end>
-- **Gaps or inaccessible evidence:** <anything that could not be checked and why, or "None">
+- **Gaps or inaccessible evidence:** <anything that could not be checked and why, each ending with **Merge impact:** Blocking or Non-blocking, or "None">
 
 ---
 
@@ -650,20 +650,32 @@ this evidence is good, so never rename it, reformat it, or leave more
 than one token on it.
 
 The verdict is derived **only** from the "Findings Affecting This Change"
-table -- pre-existing/adjacent issues never determine it on their own.
-Use exactly one of these three verdict tokens, with a `**Reason:**` line
-after it:
+table plus the **Scope limitations** and **Gaps or inaccessible
+evidence** fields -- pre-existing/adjacent issues never determine it on
+their own. Every **Scope limitations**/**Gaps or inaccessible evidence**
+entry must carry its own explicit **Merge impact: Blocking** or
+**Non-blocking** tag, using the exact same discipline as a finding's
+Merge impact (see the classification section above): `Blocking` by
+default; `Non-blocking` only when you can state a concrete reason the
+review's overall conclusion is still adequately supported despite it
+(e.g. a check that couldn't run for a stated, verifiable reason, where
+the same concern was otherwise addressed some other way). Use exactly
+one of these three verdict tokens, with a `**Reason:**` line after it:
 - `FAIL` -- at least one finding affecting this change has Merge impact
   `Blocking`, or the change's central behavior is not safe or correct
   (this can be true even without a single finding individually tagged
   `Blocking`, if the accumulated evidence shows the core behavior fails).
 - `PASS WITH GAPS` -- no `Blocking` findings affecting this change, but
-  one or more `Non-blocking` findings, incomplete verification, or
-  meaningful limitations remain.
+  at least one `Non-blocking` finding, or at least one **Scope
+  limitations**/**Gaps or inaccessible evidence** entry, remains. This
+  verdict token alone does not determine archive eligibility --
+  `/archive`'s own gate reads each finding's and each limitation's Merge
+  impact directly, not just this token.
 - `PASS` (adversarial) -- no `Blocking` or `Non-blocking` findings
-  affecting this change; any pre-existing/adjacent issues are listed
-  with Merge impact `Follow-up` only; the review was completed with
-  adequate evidence.
+  affecting this change; **Scope limitations** and **Gaps or
+  inaccessible evidence** are both empty; any pre-existing/adjacent
+  issues are listed with Merge impact `Follow-up` only; the review was
+  completed with adequate evidence.
 
 Pre-existing or adjacent issues, on their own, must never cause `FAIL` --
 if every finding lives only in the "Pre-Existing or Adjacent Issues"
@@ -806,6 +818,12 @@ report to be a fresh, clean `PASS`:
   `proposal.md` or `tasks.md`) -- never spawned as a subagent and never
   delegated to as a separate conversation. A lens is an additional
   reasoning layer, never a filter that narrows the review to one domain.
+- Every **Scope limitations** and **Gaps or inaccessible evidence** entry
+  must end with an explicit **Merge impact: Blocking** or **Non-blocking**
+  tag, using the same discipline as a finding's Merge impact -- `Blocking`
+  by default; `Non-blocking` only with a stated reason. `/archive`'s gate
+  treats an untagged entry (a legacy report predating this convention) as
+  `Blocking`, never as safe by omission.
 - Do not praise the implementation to "balance" criticism unless a strength
   directly mitigates a documented risk (use the optional Risk-Mitigating
   Observations section for that, never as filler in Findings).
