@@ -2647,6 +2647,79 @@ describe("ce start (integration)", () => {
         );
       });
     });
+
+    describe("real PR-support E2E gap: records a deterministic implementation-base marker, the sole evidence /verify's review-transition detection trusts", () => {
+      const readApply = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+      };
+
+      it("records the implementation base in Step 4, after the freshness gate passes and before any task's code changes", async () => {
+        const content = await readApply();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(/\*\*Record the implementation base, once, if not already recorded\.\*\*/);
+        expect(content).toMatch(
+          /BASE_COMMIT=\$\(git -C "\$CE_WORKTREE" rev-parse HEAD\)/,
+        );
+        expect(content).toMatch(
+          /printf 'baseCommit: "%s"\\nrecordedAt: "%s"\\n' "\$BASE_COMMIT" "\$RECORDED_AT" \\\s*\n\s*> "<changeRoot>\/\.ce-implementation-base\.yml"/,
+        );
+
+        // Positioned inside step 4 (after the freshness gate), before step 5.
+        const step4Idx = content.search(/4\. \*\*Gate on the plan's freshness/);
+        const markerIdx = content.search(/Record the implementation base, once, if not already recorded/);
+        const step5Idx = content.search(/^5\. \*\*Show current progress\*\*/m);
+        expect(step4Idx).toBeGreaterThan(-1);
+        expect(markerIdx).toBeGreaterThan(-1);
+        expect(step5Idx).toBeGreaterThan(-1);
+        expect(step4Idx).toBeLessThan(markerIdx);
+        expect(markerIdx).toBeLessThan(step5Idx);
+      });
+
+      it("never overwrites an existing marker on a later resume -- it records the true, one-time implementation starting point", async () => {
+        const content = await readApply();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*If it already exists\*\*, leave it completely untouched -- it\s*records this change's true implementation starting point from the very\s*first time `\/apply` reached this step\./,
+        );
+        expect(normalized).toMatch(
+          /Never overwrite it on\s*a later resume: doing so would silently narrow what a later\s*`\/verify`\/`\/adversarial-review` reviews/,
+        );
+      });
+
+      it("records the worktree's current HEAD, never the workspace's original CE_DIFF_BASE -- correct even when /apply started from a fresh branch off a different point in history", async () => {
+        const content = await readApply();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /This is exactly `\$CE_WORKTREE`'s own current commit at this\s*moment -- never the workspace's original `\$CE_DIFF_BASE`/,
+        );
+        expect(normalized).toMatch(
+          /the worktree may\s*already be on a completely different branch\/history by the time\s*`\/apply` runs/,
+        );
+      });
+
+      it("a guardrail states this is the only deterministic evidence a transition can be trusted on -- never inferred from an OpenSpec change, a validated plan, or generic worktree divergence alone", async () => {
+        const content = await readApply();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /This is the only deterministic evidence a later `\/verify`\/`\/adversarial-review` can trust that this change actually entered implementation through `\/apply` itself -- never infer implementation from an OpenSpec change merely existing, from `\/propose` having validated a plan, or from the worktree merely differing from some earlier state\./,
+        );
+      });
+
+      it("never mentioned in this command's own user-facing output, matching the other ce-harness-owned sidecars", async () => {
+        const content = await readApply();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /A small,\s*ce-harness-owned sidecar -- never one of the `artifacts` OpenSpec\s*tracks, never part of `applyRequires`, and never mentioned in this\s*command's own output\./,
+        );
+      });
+    });
   });
 
   describe("/archive command template", () => {
@@ -3297,48 +3370,109 @@ describe("ce start (integration)", () => {
       );
     });
 
-    describe("refuses to run in an existing-PR-review workspace", () => {
-      it("checks CE_DIFF_BASE/CE_DIFF_HEAD before the store/worktree guard, and stops entirely", async () => {
+    describe("refuses to run in an existing-PR-review workspace that has NOT transitioned to implementation", () => {
+      it("checks the store/worktree guard first, then CE_DIFF_BASE/CE_DIFF_HEAD via a `ce diff-scope` reviewTransition check, and stops entirely when not detected", async () => {
         const { readFile } = await import("node:fs/promises");
         const { templatesRoot } = await import("../../src/core/templates.js");
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
-        const normalized = content.replace(/^>\s?/gm, "").replace(/\s+/g, " ");
+        const normalized = content.replace(/^\s*>\s?/gm, "").replace(/\s+/g, " ");
 
-        const reviewGuardIndex = content.search(
-          /If `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set/,
-        );
         const storeGuardIndex = content.search(
           /if `CE_OPENSPEC_STORE` or `CE_WORKTREE` is empty or unset, stop/i,
         );
-        expect(reviewGuardIndex).toBeGreaterThan(-1);
+        const reviewGuardIndex = content.search(
+          /If `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set/,
+        );
         expect(storeGuardIndex).toBeGreaterThan(-1);
-        expect(reviewGuardIndex).toBeLessThan(storeGuardIndex);
+        expect(reviewGuardIndex).toBeGreaterThan(-1);
+        expect(storeGuardIndex).toBeLessThan(reviewGuardIndex);
 
+        expect(normalized).toMatch(/ce diff-scope/);
+        expect(normalized).toMatch(/reviewTransition/);
         expect(normalized).toMatch(/Do not attempt any partial verification/i);
         expect(normalized).toMatch(/Stop entirely and take no further action/i);
       });
 
-      it("explains this workspace reviews an existing commit range, not an OpenSpec implementation", async () => {
+      it("explains this workspace reviews an existing commit range, not an OpenSpec implementation, when no transition is detected", async () => {
         const { readFile } = await import("node:fs/promises");
         const { templatesRoot } = await import("../../src/core/templates.js");
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
-        const normalized = content.replace(/^>\s?/gm, "").replace(/\s+/g, " ");
+        const normalized = content.replace(/^\s*>\s?/gm, "").replace(/\s+/g, " ");
 
         expect(normalized).toMatch(/reviewing an existing commit range/i);
         expect(normalized).toMatch(
           /`\/verify` checks conformance against the artifacts of an OpenSpec change/i,
         );
-        expect(normalized).toMatch(/auxiliary OpenSpec change this workspace generated/i);
+        expect(normalized).toMatch(/only, at most,\s*auxiliary exploration\/review artifacts/i);
+        expect(normalized).toMatch(
+          /If you've started repairing\s*this PR via `\/propose` and `\/apply` inside this workspace, run\s*`\/apply` to completion first, then re-run `\/verify`/,
+        );
       });
 
       it("points the user at /adversarial-review as the correct command", async () => {
         const { readFile } = await import("node:fs/promises");
         const { templatesRoot } = await import("../../src/core/templates.js");
         const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
-        const normalized = content.replace(/^>\s?/gm, "").replace(/\s+/g, " ");
+        const normalized = content.replace(/^\s*>\s?/gm, "").replace(/\s+/g, " ");
 
         expect(normalized).toMatch(
-          /`\/adversarial-review` is the correct command for reviewing an external commit range/i,
+          /`\/adversarial-review` is the correct command for reviewing the\s*external commit range directly/i,
+        );
+      });
+    });
+
+    describe("real PR-support E2E gap: a review workspace that transitions into implementation must not be permanently locked out of /verify", () => {
+      const readVerify = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+      };
+
+      it("a detected transition continues as an ordinary Implementation workspace, reusing the Guard's own diff-scope result", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*`\{"detected": true, "changeName": "<name>", \.\.\.\}`\*\* -- deterministic/,
+        );
+        expect(normalized).toMatch(
+          /Continue exactly as an\s*ordinary Implementation workspace for the rest of this command,\s*verifying `<name>`\./,
+        );
+        expect(normalized).toMatch(
+          /You already have this invocation's diff-scope\s*result from the call above -- reuse it directly in Step 3 rather than\s*calling `ce diff-scope` again\./,
+        );
+      });
+
+      it("never infers a transition merely from artifacts/plan/worktree divergence -- requires the dedicated /apply-recorded implementation-base marker", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /an implementation-base marker `\/apply` itself recorded for\s*`<name>` the first time it began implementing -- something only\s*`\/apply`, and nothing else in the workflow, ever writes/,
+        );
+        expect(normalized).toMatch(
+          /no active change owned by\s*this workspace has an implementation-base marker recorded by `\/apply`/,
+        );
+      });
+
+      it("the report's Scope must disclose the transition, never leaving it indistinguishable from a workspace that started as Implementation", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /If the Guard \(Step 0\) detected a review-to-implementation transition, say so explicitly here/,
+        );
+        expect(normalized).toMatch(
+          /never let this look indistinguishable from a workspace that started as an\s*Implementation workspace\./,
+        );
+      });
+
+      it("Step 3 also notes reusing Step 0's diff-scope result instead of recomputing it", async () => {
+        const content = await readVerify();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /If Step 0 already called `ce diff-scope`\s*to detect a review-to-implementation transition, you already have this\s*exact JSON output -- reuse it directly instead of calling it again/,
         );
       });
     });
@@ -4739,12 +4873,20 @@ describe("ce start (integration)", () => {
     });
 
     describe("Existing PR review mode (first-class support)", () => {
-      it("detects the workspace type from CE_DIFF_BASE/CE_DIFF_HEAD before resolving anything", async () => {
+      it("detects the workspace type from CE_DIFF_BASE/CE_DIFF_HEAD before resolving anything, but only after checking for a review-to-implementation transition", async () => {
         const content = await readTemplate();
         const normalized = content.replace(/\s+/g, " ");
 
+        expect(normalized).toMatch(/Detect the workspace type before anything else\./);
         expect(normalized).toMatch(
-          /Detect the workspace type before anything else.*if `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set, this is an.*Existing PR review.*workspace/i,
+          /If `CE_DIFF_BASE` and `CE_DIFF_HEAD`\s*\*are\* both set, this workspace was\s*created to review an existing, already-given commit range -- but that\s*alone never decides the type/,
+        );
+        expect(normalized).toMatch(/ce diff-scope/);
+        expect(normalized).toMatch(
+          /\*\*`null` or `\{"detected": false, \.\.\.\}`\*\* -- no active change owned by\s*this workspace has an implementation-base marker recorded by `\/apply`\s*\(see below\)\. This is an \*\*Existing PR review\*\* workspace/,
+        );
+        expect(normalized).toMatch(
+          /\*\*`\{"detected": true, "changeName": "<name>", \.\.\.\}`\*\* -- deterministic\s*evidence.*shows this workspace has\s*transitioned from review into implementation\. Treat this as an\s*\*\*Implementation workspace\*\* for the rest of this command/,
         );
         // The detection guidance appears before "## 1. Resolve the review scope".
         const guardIndex = content.search(/Detect the workspace type before anything else/i);
@@ -4752,6 +4894,39 @@ describe("ce start (integration)", () => {
         expect(guardIndex).toBeGreaterThan(-1);
         expect(step1Index).toBeGreaterThan(-1);
         expect(guardIndex).toBeLessThan(step1Index);
+      });
+
+      it("never infers a transition merely from artifacts/plan/worktree divergence -- requires the dedicated /apply-recorded implementation-base marker", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Never infer the type any other way -- in particular, never treat the mere\s*existence of an OpenSpec change, a validated `\/propose` plan, or a\s*worktree that merely differs from the original PR head as implementation\s*on its own/,
+        );
+        expect(normalized).toMatch(
+          /`reviewTransition` requires the dedicated implementation-base marker\s*`\/apply` itself writes/,
+        );
+      });
+
+      it("Step 5 notes reusing Step 0's diff-scope result instead of recomputing it", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /If Step 0 already called `ce diff-scope`\s*to detect a review-to-implementation transition, you already have this\s*exact JSON output -- reuse it directly instead of calling it again/,
+        );
+      });
+
+      it("the report's Scope must disclose a detected transition, never leaving it indistinguishable from a workspace that started as Implementation", async () => {
+        const content = await readTemplate();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /if Step 0 detected a review-to-implementation transition, say so explicitly here/,
+        );
+        expect(normalized).toMatch(
+          /never leaving this indistinguishable from a workspace that started as an\s*Implementation workspace/,
+        );
       });
 
       it("never resolves, requires, or invents an OpenSpec change in an Existing PR review workspace", async () => {

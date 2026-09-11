@@ -97,6 +97,41 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    - **spec-driven**: proposal, specs, design, tasks
    - Other schemas: follow the contextFiles from CLI output
 
+   **Record the implementation base, once, if not already recorded.**
+   This is the *only* deterministic evidence that this change actually
+   entered implementation through the harness -- something
+   `/verify`/`/adversarial-review` rely on to tell a real `/apply` run
+   apart from, say, a hand-edited file after `/propose` (see
+   `templates/commands/verify.md`'s Guard). Check whether
+   `<changeRoot>/.ce-implementation-base.yml` already exists:
+   - **If it already exists**, leave it completely untouched -- it
+     records this change's true implementation starting point from the
+     very first time `/apply` reached this step. Never overwrite it on
+     a later resume: doing so would silently narrow what a later
+     `/verify`/`/adversarial-review` reviews, hiding tasks already
+     implemented in an earlier session.
+   - **If it does not exist yet**, this is the first time `/apply` has
+     reached this point for this change. Record the worktree's current
+     `HEAD` -- **before implementing a single task below** -- as the
+     implementation base:
+     ```bash
+     BASE_COMMIT=$(git -C "$CE_WORKTREE" rev-parse HEAD)
+     RECORDED_AT=$(date -u +%Y-%m-%d)
+     printf 'baseCommit: "%s"\nrecordedAt: "%s"\n' "$BASE_COMMIT" "$RECORDED_AT" \
+       > "<changeRoot>/.ce-implementation-base.yml"
+     ```
+     This is exactly `$CE_WORKTREE`'s own current commit at this
+     moment -- never the workspace's original `$CE_DIFF_BASE` (if this
+     workspace started as a review of an external PR): the worktree may
+     already be on a completely different branch/history by the time
+     `/apply` runs (e.g. reset to a fresh branch off the target
+     repository's current trunk before implementing), and a later
+     transitioned-workspace diff must be scoped from *here*, not from
+     wherever the original review happened to start. A small,
+     ce-harness-owned sidecar -- never one of the `artifacts` OpenSpec
+     tracks, never part of `applyRequires`, and never mentioned in this
+     command's own output.
+
 5. **Show current progress**
 
    Display:
@@ -207,6 +242,7 @@ What would you like to do?
 - Keep going through tasks until done or blocked
 - Always read context files before starting (from the apply instructions output)
 - Always check `.ce-provenance-propose.yml`'s freshness in step 4, before reading any context file or implementing -- and never merely warn on a stale or unrecorded (legacy) result: **stop this command** and direct the user to rerun `/propose` first. A missing provenance sidecar is never treated as fresh.
+- Record `<changeRoot>/.ce-implementation-base.yml` once, in step 4, the first time it's reached for a given change (the worktree's current `HEAD`, before any task's code changes) -- never write it if step 4's freshness gate didn't pass, and never overwrite it on a later resume. This is the only deterministic evidence a later `/verify`/`/adversarial-review` can trust that this change actually entered implementation through `/apply` itself -- never infer implementation from an OpenSpec change merely existing, from `/propose` having validated a plan, or from the worktree merely differing from some earlier state.
 - If task is ambiguous, pause and ask before implementing
 - If a task obviously bundles multiple independently completable responsibilities (more than one separately checkable success criterion), pause instead of silently implementing it as one lump -- judge this semantically, never by mechanically splitting on "and" -- and recommend re-running `/propose` to split it
 - Never implement against a known-stale agreed contract: if the human changes or adds to the requirement/scope (not an implementation detail, a spec-conforming bug fix, or a non-material clarification), stop before coding the changed/new part and recommend `/enrich` then `/propose` to realign the artifacts before resuming `/apply`

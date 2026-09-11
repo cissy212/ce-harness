@@ -1,8 +1,9 @@
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execa } from "execa";
-import { resolveDiffScope } from "../../src/core/diffScope.js";
+import { detectReviewTransition, resolveDiffScope } from "../../src/core/diffScope.js";
 import { createBareRemote, cloneRepo, createTempRepo } from "../helpers/tempRepo.js";
 
 /**
@@ -224,5 +225,249 @@ describe("resolveDiffScope: $CE_BASE_BRANCH vs origin/$CE_BASE_BRANCH divergence
     expect(result.diffRange).toBe("abc123...def456");
     expect(result.logRange).toBe("abc123..def456");
     expect(result.base).toBe("abc123");
+  });
+
+
+  it("a detected review transition overrides the explicit range, using the RECORDED IMPLEMENTATION BASE as the merge-base reference -- never the original review's diffBase", async () => {
+    const repoDir = await createTempRepo();
+    cleanupDirs.push(repoDir);
+    const originalReviewBase = await rev(repoDir, "main"); // "B" -- what the review's own diffBase would be
+
+    // "C" -- an unrelated commit that landed on the trunk after the
+    // original review base but before /apply started implementing.
+    await writeFile(join(repoDir, "unrelated-pr-123.txt"), "unrelated change\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "unrelated PR #123"]);
+
+    // "D" -- the trunk's tip at the moment /apply actually started
+    // implementing (recorded as the implementation base).
+    await writeFile(join(repoDir, "unrelated-pr-126.txt"), "another unrelated change\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "unrelated PR #126"]);
+    const implementationBase = await rev(repoDir, "main"); // "D"
+
+    // "E" -- the repaired implementation, built from current trunk.
+    await writeFile(join(repoDir, "about-us.html"), "<h1>About us</h1>\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "Add about-us page"]);
+
+    const result = await resolveDiffScope(repoDir, {
+      diffBase: originalReviewBase, // "B" -- must NOT be used once transitioned
+      diffHead: originalReviewBase, // the original PR's own head -- irrelevant once transitioned
+      reviewTransition: {
+        detected: true,
+        changeName: "about-us-page",
+        implementationBase,
+        reason: "test",
+      },
+    });
+
+    expect(result.mode).toBe("merge-base");
+    expect(result.base).toBe(implementationBase); // "D", never "B"
+    expect(result.base).not.toBe(originalReviewBase);
+    expect(result.baseSource).toMatch(/recorded implementation base/);
+    expect(result.diffRange).toBe(`${implementationBase}...HEAD`);
+
+    // Prove it in terms of actual content, not just SHAs: the resolved
+    // range must exclude both unrelated commits ("C" and "D"'s own
+    // content) and include only "E"'s real change.
+    const filesInRange = (
+      await execa("git", ["-C", repoDir, "diff", "--name-only", result.diffRange!])
+    ).stdout.trim();
+    expect(filesInRange).toBe("about-us.html");
+    expect(filesInRange).not.toContain("unrelated-pr-123.txt");
+    expect(filesInRange).not.toContain("unrelated-pr-126.txt");
+  });
+
+  it("reviewTransition is passed through unchanged on every branch (explicit, merge-base without a transition, and no-base)", async () => {
+    const explicit = await resolveDiffScope("/nonexistent/path/never/touched", {
+      diffBase: "abc",
+      diffHead: "def",
+      reviewTransition: null,
+    });
+    expect(explicit.mode).toBe("explicit");
+    expect(explicit.reviewTransition).toBeNull();
+
+    const repoDir = await createTempRepo();
+    cleanupDirs.push(repoDir);
+    const noTransition = await resolveDiffScope(repoDir, {});
+    expect(noTransition.reviewTransition).toBeNull();
+  });
+
+  it("falls back to no-base if the recorded implementation base doesn't resolve to a real merge base (defensive -- should not happen in practice)", async () => {
+    const repoDir = await createTempRepo();
+    cleanupDirs.push(repoDir);
+    await execa("git", ["-C", repoDir, "checkout", "-b", "feature"]);
+    await execa("git", ["-C", repoDir, "branch", "-D", "main"]);
+
+    const result = await resolveDiffScope(repoDir, {
+      diffBase: "irrelevant",
+      diffHead: "irrelevant",
+      reviewTransition: {
+        detected: true,
+        changeName: "x",
+        implementationBase: "0000000000000000000000000000000000000000",
+        reason: "test",
+      },
+    });
+
+    expect(result.mode).toBe("no-base");
+    expect(result.scopeLimitation).toMatch(/recorded implementation base/);
+  });
+});
+
+describe("detectReviewTransition (review workspace -> implementation transition, via /apply's implementation-base marker)", () => {
+  const cleanupDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(cleanupDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+    cleanupDirs.length = 0;
+  });
+
+  async function setupDurableRoot(): Promise<string> {
+    return mkdtemp(join(tmpdir(), "ce-harness-durable-"));
+  }
+
+  async function writeOwnedChange(
+    durableRoot: string,
+    changeName: string,
+    project: string,
+    issue: string,
+    options: { proposeProvenance?: boolean; implementationBase?: string; malformedMarker?: boolean } = {},
+  ): Promise<void> {
+    const changeRoot = join(durableRoot, "openspec", "changes", changeName);
+    await mkdir(changeRoot, { recursive: true });
+    await writeFile(join(changeRoot, ".ce-workspace.yml"), `project: "${project}"\nissue: "${issue}"\n`, "utf8");
+    if (options.proposeProvenance) {
+      await writeFile(
+        join(changeRoot, ".ce-provenance-propose.yml"),
+        'commit: "deadbeef"\nfingerprint: "abc123456789"\nrecordedAt: "2026-01-01"\n',
+        "utf8",
+      );
+    }
+    if (options.implementationBase) {
+      await writeFile(
+        join(changeRoot, ".ce-implementation-base.yml"),
+        `baseCommit: "${options.implementationBase}"\nrecordedAt: "2026-01-02"\n`,
+        "utf8",
+      );
+    }
+    if (options.malformedMarker) {
+      await writeFile(join(changeRoot, ".ce-implementation-base.yml"), "not: valid\nfor: this shape\n", "utf8");
+    }
+  }
+
+  it("no active change owned by this workspace: not detected", async () => {
+    const durableRoot = await setupDurableRoot();
+    cleanupDirs.push(durableRoot);
+
+    const result = await detectReviewTransition(durableRoot, "proj", "124");
+
+    expect(result.detected).toBe(false);
+    expect(result.changeName).toBeNull();
+    expect(result.implementationBase).toBeNull();
+    expect(result.reason).toMatch(/no active OpenSpec change is owned/);
+  });
+
+  it("an active change exists with no implementation-base marker at all: not detected", async () => {
+    const durableRoot = await setupDurableRoot();
+    cleanupDirs.push(durableRoot);
+    await writeOwnedChange(durableRoot, "fix-the-thing", "proj", "124", {});
+
+    const result = await detectReviewTransition(durableRoot, "proj", "124");
+
+    expect(result.detected).toBe(false);
+    expect(result.implementationBase).toBeNull();
+    expect(result.reason).toMatch(/no active change has an\s*\n?\s*\/apply-recorded implementation-base marker/);
+  });
+
+  it("FALSE POSITIVE regression: a validated /propose plan plus a worktree/history change (e.g. a hand-edit after /propose) is NOT detected without the dedicated marker -- generic divergence must never unlock /verify", async () => {
+    const repoDir = await createTempRepo();
+    const durableRoot = await setupDurableRoot();
+    cleanupDirs.push(repoDir, durableRoot);
+
+    // /propose ran and validated a plan...
+    await writeOwnedChange(durableRoot, "fix-the-thing", "proj", "124", { proposeProvenance: true });
+
+    // ...then the user (or anything other than /apply) hand-edited a
+    // file and committed it -- exactly the false-positive scenario the
+    // old (worktree-divergence-based) model would have wrongly accepted.
+    await writeFile(join(repoDir, "hand-edited.txt"), "not through /apply\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", "manual edit, not /apply"]);
+
+    const result = await detectReviewTransition(durableRoot, "proj", "124");
+
+    expect(result.detected).toBe(false);
+    expect(result.changeName).toBeNull();
+    expect(result.implementationBase).toBeNull();
+  });
+
+  it("FALSE POSITIVE regression: /propose provenance plus an untouched worktree is still NOT detected (no implementation has been produced yet, and no marker exists)", async () => {
+    const durableRoot = await setupDurableRoot();
+    cleanupDirs.push(durableRoot);
+    await writeOwnedChange(durableRoot, "fix-the-thing", "proj", "124", { proposeProvenance: true });
+
+    const result = await detectReviewTransition(durableRoot, "proj", "124");
+
+    expect(result.detected).toBe(false);
+  });
+
+  it("an implementation-base marker exists: detected, with implementationBase set to exactly the recorded baseCommit", async () => {
+    const durableRoot = await setupDurableRoot();
+    cleanupDirs.push(durableRoot);
+    const recordedBase = "9096e1e0000000000000000000000000000000";
+    await writeOwnedChange(durableRoot, "about-us-page", "proj", "124", {
+      proposeProvenance: true,
+      implementationBase: recordedBase,
+    });
+
+    const result = await detectReviewTransition(durableRoot, "proj", "124");
+
+    expect(result.detected).toBe(true);
+    expect(result.changeName).toBe("about-us-page");
+    expect(result.implementationBase).toBe(recordedBase);
+    expect(result.reason).toMatch(/implementation-base marker recorded by \/apply/);
+  });
+
+  it("a malformed marker (missing baseCommit) is treated as absent, never as a crash or a false positive", async () => {
+    const durableRoot = await setupDurableRoot();
+    cleanupDirs.push(durableRoot);
+    await writeOwnedChange(durableRoot, "fix-the-thing", "proj", "124", { malformedMarker: true });
+
+    const result = await detectReviewTransition(durableRoot, "proj", "124");
+
+    expect(result.detected).toBe(false);
+    expect(result.implementationBase).toBeNull();
+  });
+
+  it("multiple active changes, only one with an implementation-base marker: detects that specific one", async () => {
+    const durableRoot = await setupDurableRoot();
+    cleanupDirs.push(durableRoot);
+    await writeOwnedChange(durableRoot, "exploring-alternative", "proj", "124", { proposeProvenance: true });
+    await writeOwnedChange(durableRoot, "fix-the-thing", "proj", "124", {
+      proposeProvenance: true,
+      implementationBase: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    });
+
+    const result = await detectReviewTransition(durableRoot, "proj", "124");
+
+    expect(result.detected).toBe(true);
+    expect(result.changeName).toBe("fix-the-thing");
+    expect(result.implementationBase).toBe("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+  });
+
+  it("a change with an implementation-base marker exists but is owned by a different project/issue: not detected -- never guesses across workspaces", async () => {
+    const durableRoot = await setupDurableRoot();
+    cleanupDirs.push(durableRoot);
+    await writeOwnedChange(durableRoot, "someone-elses-fix", "other-project", "999", {
+      proposeProvenance: true,
+      implementationBase: "cafebabecafebabecafebabecafebabecafebabe",
+    });
+
+    const result = await detectReviewTransition(durableRoot, "proj", "124");
+
+    expect(result.detected).toBe(false);
+    expect(result.changeName).toBeNull();
   });
 });

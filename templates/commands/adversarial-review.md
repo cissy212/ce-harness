@@ -51,21 +51,60 @@ against. Every `openspec` command below includes
 `--store "$CE_OPENSPEC_STORE"`. All code inspection happens only inside
 `$CE_WORKTREE`.
 
-**Detect the workspace type before anything else**: if `CE_DIFF_BASE` and
-`CE_DIFF_HEAD` are both set, this is an **Existing PR review** workspace
--- use every "Existing PR review workspace" branch below. Otherwise it is
-an **Implementation workspace** -- use every "Implementation workspace"
-branch below. These two environment variables are the single source of
-truth for this (the same ones `ce status`/`/workspace` already report the
-workspace type from) -- never infer the type any other way, e.g. by
-guessing from whether OpenSpec changes happen to exist.
+**Detect the workspace type before anything else.** If `CE_DIFF_BASE` and
+`CE_DIFF_HEAD` are *not* both set, this is an **Implementation
+workspace** -- use every "Implementation workspace" branch below; skip
+straight to **Input** below.
 
-**Input** (Implementation workspaces only): Optionally specify a change
-name (e.g., `/adversarial-review add-auth`). If omitted, infer it from
-conversation context or auto-select if exactly one active change exists;
-if ambiguous, list changes and ask the user to choose. Never guess. An
-Existing PR review workspace has no change to name -- this input does not
-apply there; proceed directly to Step 1.
+If `CE_DIFF_BASE` and `CE_DIFF_HEAD` *are* both set, this workspace was
+created to review an existing, already-given commit range -- but that
+alone never decides the type: a review workspace can legitimately
+transition into real implementation (the reviewer discovers the PR needs
+repair, then runs `/explore` -> `/enrich` -> `/propose` -> `/apply`
+inside this same workspace). Run:
+
+```bash
+ce diff-scope
+```
+
+and read its `reviewTransition` field:
+
+- **`null` or `{"detected": false, ...}`** -- no active change owned by
+  this workspace has an implementation-base marker recorded by `/apply`
+  (see below). This is an **Existing PR review** workspace -- use every
+  "Existing PR review workspace" branch below.
+- **`{"detected": true, "changeName": "<name>", ...}`** -- deterministic
+  evidence (an implementation-base marker `/apply` itself recorded for
+  `<name>` the first time it began implementing -- something only
+  `/apply`, and nothing else in the workflow, ever writes) shows this
+  workspace has transitioned from review into implementation. Treat this as an
+  **Implementation workspace** for the rest of this command, reviewing
+  `<name>`'s implementation -- use every "Implementation workspace"
+  branch below. **You already have this invocation's diff-scope result
+  from the call above -- reuse it directly in Step 5 rather than calling
+  `ce diff-scope` again.** Record in the report (Step 9) that this
+  workspace originated as a review of an external commit range and
+  transitioned into implementation -- never let this look
+  indistinguishable from a workspace that started as an Implementation
+  workspace from the beginning.
+
+Never infer the type any other way -- in particular, never treat the mere
+existence of an OpenSpec change, a validated `/propose` plan, or a
+worktree that merely differs from the original PR head as implementation
+on its own: a user could run `/propose` and then hand-edit any file,
+satisfying all three without `/apply` ever running, which would
+incorrectly unlock treating this as an Implementation workspace.
+`reviewTransition` requires the dedicated implementation-base marker
+`/apply` itself writes (see `templates/commands/apply.md`), the one
+signal nothing else in the workflow ever produces.
+
+**Input** (Implementation workspaces only, including a transitioned
+review workspace): Optionally specify a change name (e.g.,
+`/adversarial-review add-auth`). If omitted, infer it from conversation
+context or auto-select if exactly one active change exists; if
+ambiguous, list changes and ask the user to choose. Never guess. A
+non-transitioned Existing PR review workspace has no change to name --
+this input does not apply there; proceed directly to Step 1.
 
 ## 1. Resolve the review scope
 
@@ -207,7 +246,9 @@ git -C "$CE_WORKTREE" status --porcelain
 git -C "$CE_WORKTREE" log --oneline -20
 ```
 
-Resolve the diff range to review:
+Resolve the diff range to review. If Step 0 already called `ce diff-scope`
+to detect a review-to-implementation transition, you already have this
+exact JSON output -- reuse it directly instead of calling it again:
 
 ```bash
 ce diff-scope
@@ -550,7 +591,7 @@ this workspace's type -- never both, and never invent a third variant.
 **Reviewed worktree commit:** <full SHA -- human reference only> -- Implementation workspaces only
 **Reviewed worktree fingerprint:** <12-char hash covering the commit plus any uncommitted tracked/untracked implementation changes> -- Implementation workspaces only
 **Reviewed artifacts hash:** <12-char hash covering proposal.md/design.md/tasks.md/specs/, or "N/A -- no artifacts to hash"> -- Implementation workspaces only
-**Scope:** <what this review covers>
+**Scope:** <what this review covers -- if Step 0 detected a review-to-implementation transition, say so explicitly here (e.g. "This workspace was created via `ce review` for an external PR and transitioned to implementation of change `<name>` -- reviewed as the resulting diff, not the original PR range."), never leaving this indistinguishable from a workspace that started as an Implementation workspace>
 **Baseline sources:** <artifact paths read (Implementation workspace), or PR description + repository docs actually read (Existing PR review workspace)>
 **Implementation sources:** <worktree diff range examined>
 **Verify report reviewed:** <path inside changeRoot/reports/, or "None found" (Implementation workspace); "N/A -- /verify does not run in an Existing PR review workspace" (Existing PR review workspace)>

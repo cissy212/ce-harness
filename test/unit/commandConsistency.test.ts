@@ -153,7 +153,7 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
       const verify = await readVerify();
       const adversarial = await readAdversarialReview();
 
-      const start = "Resolve the diff range to review:";
+      const start = "Resolve the diff range to review.";
       const end =
         'Use `diffRange`\n  (three-dot) for the diff and `logRange` (two-dot) for the commit log:\n  ```bash\n  git -C "$CE_WORKTREE" log --oneline "<logRange>"\n  git -C "$CE_WORKTREE" diff "<diffRange>"\n  ```\n- `"mode": "merge-base"` -- a base was found (`base`, resolved from\n  `baseSource`).';
 

@@ -23,29 +23,58 @@ OpenSpec store.
 
 ## 0. Guard
 
-If `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set, this workspace was
-created with `ce start --base --head` to review an existing, already-given
-commit range (e.g. an external pull request) -- it is not implementing an
-OpenSpec change. Stop immediately, before running any command, and tell
-the user:
-
-> This workspace is reviewing an existing commit range
-> (`$CE_DIFF_BASE`..`$CE_DIFF_HEAD`), not an implementation produced from
-> an OpenSpec change. `/verify` checks conformance against the artifacts
-> of an OpenSpec change (proposal, design, specs, tasks) -- there is no
-> such implementation here to verify, only the auxiliary OpenSpec change
-> this workspace generated for its own exploration. `/adversarial-review`
-> is the correct command for reviewing an external commit range directly.
-
-Do not attempt any partial verification in this case -- no `openspec`
-command, no diff inspection, no report. Stop entirely and take no further
-action.
-
-Otherwise, if `CE_OPENSPEC_STORE` or `CE_WORKTREE` is empty or unset, stop
-and tell the user to run `ce start` first -- there is no store or worktree
-to verify against. Every `openspec` command below includes
+If `CE_OPENSPEC_STORE` or `CE_WORKTREE` is empty or unset, stop and tell
+the user to run `ce start` first -- there is no store or worktree to
+verify against. Every `openspec` command below includes
 `--store "$CE_OPENSPEC_STORE"`. All code inspection happens only inside
 `$CE_WORKTREE`.
+
+If `CE_DIFF_BASE` and `CE_DIFF_HEAD` are both set, this workspace was
+created with `ce start --base --head` to review an existing, already-given
+commit range (e.g. an external pull request) -- but that alone never
+decides whether `/verify` may run: a review workspace can legitimately
+transition into real implementation (the reviewer discovers the PR needs
+repair, then runs `/explore` -> `/enrich` -> `/propose` -> `/apply`
+inside this same workspace). Never guess this from the two environment
+variables alone -- run:
+
+```bash
+ce diff-scope
+```
+
+and read its `reviewTransition` field:
+
+- **`null` or `{"detected": false, ...}`** -- no active change owned by
+  this workspace has an implementation-base marker recorded by `/apply`
+  (see below). This workspace is still a pure review of the original
+  external range, with no implementation to verify. **Stop immediately,
+  before running any other command**, and tell the user:
+
+  > This workspace is reviewing an existing commit range
+  > (`$CE_DIFF_BASE`..`$CE_DIFF_HEAD`), not an implementation produced
+  > from an OpenSpec change. `/verify` checks conformance against the
+  > artifacts of an OpenSpec change (proposal, design, specs, tasks) --
+  > there is no such implementation here yet to verify (only, at most,
+  > auxiliary exploration/review artifacts). If you've started repairing
+  > this PR via `/propose` and `/apply` inside this workspace, run
+  > `/apply` to completion first, then re-run `/verify`. Otherwise,
+  > `/adversarial-review` is the correct command for reviewing the
+  > external commit range directly.
+
+  Do not attempt any partial verification in this case -- no `openspec`
+  command beyond the check above, no diff inspection, no report. Stop
+  entirely and take no further action.
+- **`{"detected": true, "changeName": "<name>", ...}`** -- deterministic
+  evidence (an implementation-base marker `/apply` itself recorded for
+  `<name>` the first time it began implementing -- something only
+  `/apply`, and nothing else in the workflow, ever writes) shows this
+  workspace has transitioned from review into implementation. Continue exactly as an
+  ordinary Implementation workspace for the rest of this command,
+  verifying `<name>`. **You already have this invocation's diff-scope
+  result from the call above -- reuse it directly in Step 3 rather than
+  calling `ce diff-scope` again.** Note the transition in the report's
+  Scope (Step 9), so this never looks indistinguishable from a workspace
+  that started as an Implementation workspace from the beginning.
 
 **Input**: Optionally specify a change name (e.g., `/verify add-auth`). If
 omitted, infer it from conversation context or auto-select if exactly one
@@ -121,7 +150,9 @@ git -C "$CE_WORKTREE" status --porcelain
 git -C "$CE_WORKTREE" log --oneline -20
 ```
 
-Resolve the diff range to review:
+Resolve the diff range to review. If Step 0 already called `ce diff-scope`
+to detect a review-to-implementation transition, you already have this
+exact JSON output -- reuse it directly instead of calling it again:
 
 ```bash
 ce diff-scope
@@ -680,7 +711,7 @@ command.
 
 ## Scope
 
-<what this verification covers: change name, schema, worktree path, commit/diff range examined>
+<what this verification covers: change name, schema, worktree path, commit/diff range examined. If the Guard (Step 0) detected a review-to-implementation transition, say so explicitly here (e.g. "This workspace was created via `ce review` for an external PR and transitioned to implementation of change `<name>` -- verified against the resulting diff, not the original PR range.") -- never let this look indistinguishable from a workspace that started as an Implementation workspace.>
 
 ## Evidence Examined
 
