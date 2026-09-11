@@ -19,9 +19,15 @@ describe("lens templates (templates/lenses/*.md)", () => {
     "security-reviewer.md",
   ];
 
-  it("templates/lenses/ contains exactly the six shipped lenses", async () => {
+  it("templates/lenses/ contains exactly the six native lenses plus vendored external Agent Skill lenses", async () => {
     const entries = await readdir(join(templatesRoot(), "lenses"));
-    expect(entries.sort()).toEqual([...lensFiles].sort());
+    // Native lenses are flat *.md files (checked below). External Agent
+    // Skills are vendored as their own subdirectory (name matching the
+    // skill's own `name:` frontmatter, per the Agent Skills spec) --
+    // e.g. "comment-cleanup" -- and are exempt from the native-lens
+    // content checks below, since they are vendored unmodified rather
+    // than authored by ce-harness.
+    expect(entries.sort()).toEqual([...lensFiles, "comment-cleanup"].sort());
   });
 
   for (const filename of lensFiles) {
@@ -219,5 +225,42 @@ describe("lens templates (templates/lenses/*.md)", () => {
       expect(content).not.toMatch(/Apollo/);
       expect(content).not.toMatch(/enrich-companies/);
     }
+  });
+});
+
+/**
+ * Vendored external Agent Skills consumed as lenses -- distinct from
+ * ce-harness's own native lenses above: each lives in its own
+ * subdirectory (per the Agent Skills spec, named identically to its own
+ * `name:` frontmatter) and is vendored unmodified rather than authored
+ * by ce-harness, so it is exempt from the native-lens structural checks
+ * (Phase 0-4, "## Lens checks", no runner-specific metadata) above.
+ */
+describe("external Agent Skill lenses (templates/lenses/<skill>/SKILL.md)", () => {
+  describe("comment-cleanup", () => {
+    it("has YAML frontmatter whose name matches its own directory name, and a description", async () => {
+      const content = await readFile(join(templatesRoot(), "lenses", "comment-cleanup", "SKILL.md"), "utf8");
+      expect(content.startsWith("---\n")).toBe(true);
+
+      const frontmatterEnd = content.indexOf("\n---", 4);
+      expect(frontmatterEnd).toBeGreaterThan(-1);
+      const frontmatter = content.slice(0, frontmatterEnd);
+
+      expect(frontmatter).toMatch(/^name:\s*comment-cleanup\s*$/m);
+      expect(frontmatter).toMatch(/^description:\s*.+/m);
+    });
+
+    it("carries its known content: diff-only-by-default scope, clutter removal, and preservation rules", async () => {
+      const content = await readFile(join(templatesRoot(), "lenses", "comment-cleanup", "SKILL.md"), "utf8");
+      expect(content).toMatch(/Default to \*\*diff-only cleanup\*\*/);
+      expect(content).toMatch(/Delete commented-out code\./);
+      expect(content).toMatch(/Preserve TODO, FIXME, and similar work markers\./);
+      expect(content).toMatch(/Do not use end-of-line comments\./);
+    });
+
+    it("points to THIRD_PARTY_NOTICES.md for provenance", async () => {
+      const content = await readFile(join(templatesRoot(), "lenses", "comment-cleanup", "SKILL.md"), "utf8");
+      expect(content).toMatch(/See `THIRD_PARTY_NOTICES\.md`/);
+    });
   });
 });

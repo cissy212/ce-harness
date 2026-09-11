@@ -1104,6 +1104,28 @@ describe("ce start (integration)", () => {
       }
     });
 
+    it("populates <workspace>/lenses/comment-cleanup/SKILL.md from the vendored external Agent Skill, byte-for-byte", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await startCommand({ repo: repoDir, issue: "issue-1" });
+
+      const workspace = await readWorkspace(basenameOf(repoDir), "issue-1");
+      const { readFile } = await import("node:fs/promises");
+
+      const copiedPath = join(workspace.workspacePath, "lenses", "comment-cleanup", "SKILL.md");
+      const sourcePath = join(templatesRoot(), "lenses", "comment-cleanup", "SKILL.md");
+      expect(existsSync(copiedPath)).toBe(true);
+      expect(await readFile(copiedPath, "utf8")).toBe(await readFile(sourcePath, "utf8"));
+
+      // Mirrored under opencode/agents/ too, via the same generic copy mechanism.
+      const mirrorPath = join(workspace.workspacePath, "opencode", "agents", "comment-cleanup", "SKILL.md");
+      expect(existsSync(mirrorPath)).toBe(true);
+      expect(await readFile(mirrorPath, "utf8")).toBe(await readFile(sourcePath, "utf8"));
+    });
+
     it("mirrors the same lens files under opencode/agents/, byte-identical to the canonical copy", async () => {
       const { startCommand } = await import("../../src/commands/start.js");
       const { readWorkspace } = await import("../../src/core/workspace.js");

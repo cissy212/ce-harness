@@ -73,11 +73,25 @@ The lenses shipped today:
 | `accessibility-reviewer` | User-facing markup/UI for accessibility: semantic structure, ARIA usage, keyboard operability, focus management, color/contrast. |
 | `security-reviewer` | Security: trust boundaries, input validation, injection, authentication/authorization, secrets handling, dependency/supply-chain risk. |
 | `pipeline-data-engineer` | Data pipelines, ingestion jobs, scheduled tasks, ETL/ELT workflows, scraping or enrichment pipelines, synchronization processes, or long-running operational scripts where execution behavior under failure, retry, or concurrency matters. |
+| `comment-cleanup` (external Agent Skill) | Comment hygiene: redundant/stale/commented-out comments, edit-history narration, misplaced end-of-line comments — vendored unmodified from [motlin/claude-code-plugins](https://github.com/motlin/claude-code-plugins), see `THIRD_PARTY_NOTICES.md`. |
 
-They're discovered from `$CE_LENSES_DIR` (a plain directory of `.md`
-files inside the workspace — never a runner-specific path), so a
-different runner adapter could point its own discovery mechanism at the
-same files without ce-harness duplicating anything.
+They're discovered from `$CE_LENSES_DIR` (a plain directory inside the
+workspace — never a runner-specific path): either a `.md` file directly
+inside it (a native ce-harness lens), or an immediate subdirectory's own
+`SKILL.md` — a vendored or user-provided [Agent
+Skill](https://agentskills.io/specification), consumed as external
+expertise rather than something ce-harness has to author and maintain
+itself. Both are discovered and selected the same way, by the same
+description-matching algorithm. A different runner adapter could point
+its own discovery mechanism at the same files without ce-harness
+duplicating anything.
+
+Because an Agent Skill may be written in an instructive, editing voice
+(it wasn't authored for a read-only review), `/verify` and
+`/adversarial-review` apply one for identification only — recognizing
+and recording findings exactly like any other lens, never as license to
+edit or fix anything. Each command's own reviews-only guardrail always
+wins over what a loaded skill's own instructions say.
 
 **CodeGraph** (referenced elsewhere as "semantic code navigation") is an
 entirely optional, separate tool for faster codebase exploration during a

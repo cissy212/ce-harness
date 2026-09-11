@@ -124,6 +124,59 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
     //   equivalent of).
   });
 
+  describe("External Agent Skill lenses", () => {
+    it("both templates widen lens discovery to include an immediate subdirectory's own SKILL.md", async () => {
+      const verify = await readVerify();
+      const adversarial = await readAdversarialReview();
+
+      for (const [label, content] of [
+        ["verify.md", verify],
+        ["adversarial-review.md", adversarial],
+      ] as const) {
+        expect(content, `${label} discovery step`).toMatch(
+          /every immediate subdirectory's own\s*`SKILL\.md`/,
+        );
+        expect(content, `${label} skip condition`).toMatch(
+          /nor any immediate subdirectory's own\s*`SKILL\.md`/,
+        );
+      }
+    });
+
+    it("both templates instruct applying an external Agent Skill lens for identification only, never as license to edit or fix", async () => {
+      const verify = await readVerify();
+      const adversarial = await readAdversarialReview();
+
+      for (const [label, content] of [
+        ["verify.md", verify],
+        ["adversarial-review.md", adversarial],
+      ] as const) {
+        expect(content, `${label} external-skill clause`).toMatch(
+          /When a loaded lens is an external Agent Skill/,
+        );
+        expect(content, `${label} identification-only instruction`).toMatch(
+          /apply its guidance for\s*identification only/,
+        );
+        expect(content, `${label} never-edit guardrail`).toMatch(
+          /never as\s*license to edit, fix, or otherwise modify anything/,
+        );
+      }
+    });
+
+    it("both templates' Lens Coverage table falls back to a lens's own description when it has no '## Lens checks' section", async () => {
+      const verify = await readVerify();
+      const adversarial = await readAdversarialReview();
+
+      for (const [label, content] of [
+        ["verify.md", verify],
+        ["adversarial-review.md", adversarial],
+      ] as const) {
+        expect(content, `${label} Lens Coverage fallback`).toMatch(
+          /when the lens has no such section, as with an external Agent Skill/,
+        );
+      }
+    });
+  });
+
   describe("Diff-scope resolution (both commands delegate to `ce diff-scope`)", () => {
     // The merge-base/base-branch-fallback algorithm itself no longer lives
     // here as prose kept in sync by this test -- it is a single
