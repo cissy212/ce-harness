@@ -6,6 +6,7 @@ import { CeError } from "../core/errors.js";
 import { parseWorkspaceSelector } from "../core/sanitize.js";
 import {
   describeAvailableWorkspaces,
+  inferPrNumberFromIssue,
   listWorkspaces,
   readActivePointer,
   readWorkspace,
@@ -15,6 +16,7 @@ import {
   type Workspace,
   type ActivePointer,
 } from "../core/workspace.js";
+import { resolveLivePrHead } from "../core/github.js";
 import { isOpenSpecAvailable, storeDoctor } from "../core/openspec.js";
 import { readIdentityRecord } from "../core/projectIdentity.js";
 import {
@@ -33,7 +35,7 @@ import {
   latestReportFile,
   type ReportVerdict,
 } from "../core/workflowStatus.js";
-import { latestReviewVerdict } from "../core/reviewReports.js";
+import { latestReviewForPr, latestReviewVerdict } from "../core/reviewReports.js";
 import { expectedOpenCodeConfigDir, openCodeConfigExists } from "../core/opencodeConfig.js";
 import { expectedLensesDir, lensesDirExists } from "../core/lenses.js";
 import { filterHarnessManagedChanges } from "../core/worktreeArtifacts.js";
@@ -171,6 +173,48 @@ async function readLatestVerdict(changeRoot: string, reports: string[], suffix: 
   }
 }
 
+/**
+ * Resolves an Existing PR review workspace's verdict plus, best-effort,
+ * whether that review is now stale (the pull request has new commits
+ * since it ran). Never throws, and never makes a network call at all
+ * unless a PR number can actually be identified for this workspace
+ * (structured `workspace.prReview`, or -- for a workspace created before
+ * that field existed -- `inferPrNumberFromIssue`'s legacy bridge): a
+ * plain `ce start --base --head` workspace (never went through `ce
+ * review`) always resolves with `staleness: undefined`, exactly as
+ * before this feature existed.
+ */
+async function resolvePrReviewStatus(
+  workspace: Workspace,
+  durableRoot: string,
+): Promise<{ verdict: ReportVerdict | null; staleness?: { reviewedHead: string | null; currentHead: string; reviewedHeadInferred: boolean } }> {
+  const prNumber = workspace.prReview?.number ?? inferPrNumberFromIssue(workspace.issue);
+  if (prNumber === null) {
+    return { verdict: await latestReviewVerdict(durableRoot) };
+  }
+
+  const lookup = await latestReviewForPr(durableRoot, prNumber);
+  const verdict = lookup?.verdict ?? null;
+  if (verdict === null) {
+    // Nothing has been reviewed yet -- "stale" is meaningless until a
+    // first review exists, so never attempt (or need) the live check.
+    return { verdict: null };
+  }
+
+  const reviewedHead = lookup?.reviewedHead ?? workspace.diffHead ?? null;
+  const reviewedHeadInferred = (lookup?.reviewedHead ?? null) === null;
+
+  const currentHead = await resolveLivePrHead(workspace.repositoryPath, prNumber);
+  if (!currentHead) {
+    // `gh` unavailable/unauthenticated, offline, or the PR couldn't be
+    // resolved live -- degrade to exactly today's behavior (verdict
+    // shown, no staleness claim made either way).
+    return { verdict };
+  }
+
+  return { verdict, staleness: { reviewedHead, currentHead, reviewedHeadInferred } };
+}
+
 // ---------------------------------------------------------------------
 // Concise (default) rendering
 // ---------------------------------------------------------------------
@@ -209,9 +253,15 @@ async function renderConcise(workspace: Workspace): Promise<void> {
   console.log();
 
   if (workspaceType(workspace) === "Existing PR review") {
-    const verdict = await latestReviewVerdict(trusted.root);
-    const review = deriveReviewWorkflowStatus({ reviewVerdict: verdict });
+    const { verdict, staleness } = await resolvePrReviewStatus(workspace, trusted.root);
+
+    const review = deriveReviewWorkflowStatus({ reviewVerdict: verdict, staleness });
     console.log(`Review:           ${review.summaryLine}`);
+    if (review.staleness) {
+      console.log(`Previous verdict: ${verdict}`);
+      console.log(`Reviewed HEAD:    ${review.staleness.reviewedHead ?? "unknown"}`);
+      console.log(`Current HEAD:     ${review.staleness.currentHead}`);
+    }
     attention.push(...review.attention);
     printAttentionAndNextStep(attention, review.nextStep);
     printBootstrapFindings(workspace);

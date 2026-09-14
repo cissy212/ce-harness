@@ -63,6 +63,17 @@ export function buildLaunchEnv(workspace: Workspace): Record<string, string> {
     launchEnv.CE_BASE_BRANCH = workspace.baseBranch;
   }
 
+  // Only present for an Existing PR review workspace created (or
+  // refreshed) by `ce review` -- lets `/adversarial-review` write its
+  // report under the PR-scoped filename convention (see
+  // core/reviewReports.ts's `prScopedReportSuffix`) and detect a
+  // follow-up review, without hardcoding or re-deriving the PR number
+  // itself. Absent for a plain `ce start --base --head` workspace and
+  // for a review workspace created before this field existed.
+  if (workspace.prReview) {
+    launchEnv.CE_PR_NUMBER = String(workspace.prReview.number);
+  }
+
   // Generic, provider-agnostic capability signal for templates -- never a
   // CodeGraph-specific variable name. Only present when a semantic code
   // navigation index was actually provisioned and wired up for this exact

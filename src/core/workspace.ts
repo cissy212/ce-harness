@@ -140,6 +140,24 @@ export const RunnerWorktreeArtifactsSchema = z.object({
 
 export type RunnerWorktreeArtifacts = z.infer<typeof RunnerWorktreeArtifactsSchema>;
 
+/**
+ * Structured GitHub PR identity for an Existing PR review workspace,
+ * persisted by `ce review` so a later `ce status`/`ce review` can tell
+ * which pull request this workspace reviews without parsing `issue`
+ * (see `inferPrNumberFromIssue` below for the legacy bridge that exists
+ * only because older workspaces predate this field). Deliberately just
+ * the number -- never a repository slug -- since the slug is cheaply and
+ * reliably re-derived live from the repository's own `origin` remote
+ * (see `core/github.ts`'s `parseGithubSlug`, already used identically by
+ * `ce publish`) rather than persisted and risking drifting stale if the
+ * remote ever changes.
+ */
+export const PrReviewMetadataSchema = z.object({
+  number: z.number().int().positive(),
+});
+
+export type PrReviewMetadata = z.infer<typeof PrReviewMetadataSchema>;
+
 export const WorkspaceSchema = z
   .object({
     project: z.string().min(1),
@@ -208,6 +226,14 @@ export const WorkspaceSchema = z
     // the CLI level already, so this is a defensive invariant, never a
     // real code path.
     baseRefExplicit: z.boolean().optional(),
+    // Optional: only ever present for an Existing PR review workspace
+    // created (or refreshed -- see `ce review`'s follow-up path) by `ce
+    // review` itself. Absent for a plain `ce start --base --head`
+    // workspace (never went through `ce review`, so there is no GitHub
+    // PR to name) and for every review workspace created before this
+    // field existed -- see `inferPrNumberFromIssue` for how `ce
+    // status`/`ce review` recover a best-effort PR number for those.
+    prReview: PrReviewMetadataSchema.optional(),
   })
   .refine((w) => (w.diffBase === undefined) === (w.diffHead === undefined), {
     message: "diffBase and diffHead must both be present or both be absent",
@@ -220,6 +246,9 @@ export const WorkspaceSchema = z
   })
   .refine((w) => w.baseBranchCommit === undefined || w.diffBase === undefined, {
     message: "baseBranchCommit and diffBase must not both be present -- diffBase/diffHead already capture the exact commits for an explicit review range",
+  })
+  .refine((w) => w.prReview === undefined || (w.diffBase !== undefined && w.diffHead !== undefined), {
+    message: "prReview requires diffBase and diffHead to also be present -- it only applies to an Existing PR review workspace",
   });
 
 export type Workspace = z.infer<typeof WorkspaceSchema>;
@@ -473,4 +502,35 @@ export type WorkspaceType = "Implementation" | "Existing PR review";
  */
 export function workspaceType(workspace: Workspace): WorkspaceType {
   return workspace.diffBase && workspace.diffHead ? "Existing PR review" : "Implementation";
+}
+
+const REVIEW_ISSUE_PATTERN = /^review-pr-(\d+)$/;
+
+/**
+ * The deterministic issue name `ce review` gives a PR review workspace
+ * for pull request `prNumber` -- centralized here (rather than inlined
+ * in `reviewCommand`) so `inferPrNumberFromIssue` below can never drift
+ * out of sync with it.
+ */
+export function reviewIssueName(prNumber: number): string {
+  return `review-pr-${prNumber}`;
+}
+
+/**
+ * Best-effort recovery of a PR number from an issue name matching `ce
+ * review`'s own deterministic naming convention above -- the legacy
+ * bridge for a workspace created before `PrReviewMetadataSchema`
+ * existed, so `ce status`'s stale-PR-review check and `ce review`'s
+ * refresh path can still identify *which* pull request an old workspace
+ * reviews. This parses ce-harness's own, self-generated identifier, not
+ * external command output -- callers that need an authoritative PR
+ * number still always prefer `workspace.prReview.number` first, falling
+ * back to this only when that structured field is absent. Returns
+ * `null` for any issue name that doesn't match exactly (a plain `ce
+ * start --base --head` workspace, or one whose issue was renamed) --
+ * never guessed or invented.
+ */
+export function inferPrNumberFromIssue(issue: string): number | null {
+  const match = REVIEW_ISSUE_PATTERN.exec(issue);
+  return match ? Number(match[1]) : null;
 }

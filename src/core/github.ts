@@ -5,10 +5,12 @@ import { commitExists, fetchRefspec } from "./git.js";
 
 /**
  * GitHub integration module: the only place in ce-harness that shells
- * out to the `gh` (GitHub CLI) executable. Used exclusively by
- * `ce review` -- `ce start` (including its `--base`/`--head` review
- * range) remains entirely GitHub-independent and never imports this
- * module.
+ * out to the `gh` (GitHub CLI) executable. Used by `ce review` (creating
+ * and refreshing an Existing PR review workspace) and, read-only, by `ce
+ * status` (best-effort live PR-head staleness check for an existing
+ * review workspace -- see `resolvePrSnapshot`'s callers there). `ce
+ * start` remains entirely GitHub-independent and never imports this
+ * module, even for its `--base`/`--head` review range.
  *
  * This is deliberately a thin wrapper around the `gh` CLI, never a
  * GitHub API client: every function here shells out to `gh` and lets it
@@ -257,6 +259,27 @@ export async function createPullRequest(repoRoot: string, options: CreatePullReq
     );
   }
   return url;
+}
+
+/**
+ * Best-effort live lookup of pull request `prNumber`'s current head SHA,
+ * for `ce status`'s stale-review check -- entirely read-only (unlike
+ * `resolvePrSnapshot`'s other callers, never followed by a fetch). Never
+ * throws: `gh` missing, unauthenticated, offline, or unable to resolve
+ * the PR (e.g. `repoRoot`'s remote isn't actually this pull request's
+ * repository) all degrade to `null`, which callers treat exactly like
+ * "the check could not be attempted" -- `ce status` must never fail, or
+ * even look different, just because this optional check couldn't run.
+ */
+export async function resolveLivePrHead(repoRoot: string, prNumber: number): Promise<string | null> {
+  if (!(await isGhAvailable())) return null;
+  if (!(await isGhAuthenticated())) return null;
+  try {
+    const pr = await resolvePrSnapshot(repoRoot, prNumber);
+    return pr.headRefOid;
+  } catch {
+    return null;
+  }
 }
 
 export async function verifyPrCommitsFetched(repoRoot: string, pr: PrSnapshot): Promise<void> {

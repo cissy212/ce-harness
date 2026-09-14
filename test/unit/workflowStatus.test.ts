@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveImplementationWorkflowStatus,
   deriveReviewWorkflowStatus,
+  extractReviewedHead,
   extractVerdict,
   formatProgressLine,
   latestReportFile,
@@ -50,6 +51,21 @@ describe("extractVerdict", () => {
 
   it("returns null when no verdict line is present", () => {
     expect(extractVerdict("# Report\nNo verdict here.")).toBeNull();
+  });
+});
+
+describe("extractReviewedHead", () => {
+  it("extracts a full 40-char SHA", () => {
+    const sha = "a".repeat(40);
+    expect(extractReviewedHead(`**Reviewed PR head:** ${sha}\n`)).toBe(sha);
+  });
+
+  it("extracts a short SHA", () => {
+    expect(extractReviewedHead("**Reviewed PR head:** abc1234\n")).toBe("abc1234");
+  });
+
+  it("returns null when the field is absent (a legacy report)", () => {
+    expect(extractReviewedHead("# Adversarial Review\n\n**Verdict:** PASS\n")).toBeNull();
   });
 });
 
@@ -242,5 +258,42 @@ describe("deriveReviewWorkflowStatus", () => {
     expect(result.summaryLine).toBe("done -- verdict FAIL");
     expect(result.attention[0]).toMatch(/verdict was FAIL/);
     expect(result.nextStep).toMatch(/re-run \/adversarial-review/);
+  });
+
+  it("reports stale when the current head differs from the reviewed head", () => {
+    const result = deriveReviewWorkflowStatus({
+      reviewVerdict: "PASS WITH GAPS",
+      staleness: { reviewedHead: "abc123", currentHead: "def456", reviewedHeadInferred: false },
+    });
+    expect(result.summaryLine).toBe("stale -- PR updated since last review");
+    expect(result.nextStep).toMatch(/follow-up review/);
+    expect(result.attention[0]).toMatch(/new commits since the last review/);
+    expect(result.attention[0]).not.toMatch(/inferred/);
+    expect(result.staleness).toEqual({ reviewedHead: "abc123", currentHead: "def456" });
+  });
+
+  it("notes when the reviewed head was inferred (a legacy report)", () => {
+    const result = deriveReviewWorkflowStatus({
+      reviewVerdict: "PASS",
+      staleness: { reviewedHead: "abc123", currentHead: "def456", reviewedHeadInferred: true },
+    });
+    expect(result.summaryLine).toBe("stale -- PR updated since last review");
+    expect(result.attention[0]).toMatch(/inferred/);
+  });
+
+  it("is not stale when the current head matches the reviewed head -- behaves exactly like no staleness check at all", () => {
+    const result = deriveReviewWorkflowStatus({
+      reviewVerdict: "PASS",
+      staleness: { reviewedHead: "abc123", currentHead: "abc123", reviewedHeadInferred: false },
+    });
+    expect(result.summaryLine).toBe("done -- verdict PASS");
+    expect(result.nextStep).toBe("none -- review complete");
+    expect(result.staleness).toBeUndefined();
+  });
+
+  it("with staleness undefined (the check wasn't attempted), behaves exactly as before this feature existed", () => {
+    const result = deriveReviewWorkflowStatus({ reviewVerdict: "PASS WITH GAPS" });
+    expect(result.summaryLine).toBe("done -- verdict PASS WITH GAPS");
+    expect(result.staleness).toBeUndefined();
   });
 });

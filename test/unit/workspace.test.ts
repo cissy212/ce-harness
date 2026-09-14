@@ -636,6 +636,94 @@ describe("workspace serialization and validation", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("accepts prReview alongside diffBase/diffHead, but rejects it without them", async () => {
+    const { WorkspaceSchema } = await import("../../src/core/workspace.js");
+    const base = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "review-pr-127",
+      sanitizedIssue: "review-pr-127",
+      baseBranch: "b".repeat(40),
+      internalBranch: "ce-harness/review-pr-127",
+      worktreePath: "/tmp/wt",
+      workspacePath: "/tmp/ws",
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(WorkspaceSchema.safeParse({ ...base, prReview: { number: 127 } }).success).toBe(false);
+    expect(
+      WorkspaceSchema.safeParse({
+        ...base,
+        diffBase: "a".repeat(40),
+        diffHead: "b".repeat(40),
+        prReview: { number: 127 },
+      }).success,
+    ).toBe(true);
+    expect(WorkspaceSchema.safeParse({ ...base, prReview: { number: 0 } }).success).toBe(false);
+    expect(WorkspaceSchema.safeParse({ ...base, prReview: { number: -1 } }).success).toBe(false);
+  });
+
+  it("round-trips prReview through writeWorkspace/readWorkspace", async () => {
+    const { writeWorkspace, readWorkspace } = await import("../../src/core/workspace.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "review-pr-127",
+      sanitizedIssue: "review-pr-127",
+      baseBranch: "b".repeat(40),
+      internalBranch: "ce-harness/review-pr-127",
+      worktreePath: "/tmp/wt",
+      workspacePath: join(tempHome, "workspaces", "demo", "review-pr-127"),
+      createdAt: new Date().toISOString(),
+      diffBase: "a".repeat(40),
+      diffHead: "b".repeat(40),
+      prReview: { number: 127 },
+    };
+    await writeWorkspace(workspace);
+    const loaded = await readWorkspace("demo", "review-pr-127");
+    expect(loaded.prReview).toEqual({ number: 127 });
+  });
+
+  it("reads a legacy workspace file with no prReview field as valid, left undefined", async () => {
+    const { writeWorkspace, readWorkspace } = await import("../../src/core/workspace.js");
+    const workspace = {
+      project: "demo",
+      repositoryPath: "/tmp/demo",
+      issue: "review-pr-127",
+      sanitizedIssue: "review-pr-127",
+      baseBranch: "b".repeat(40),
+      internalBranch: "ce-harness/review-pr-127",
+      worktreePath: "/tmp/wt",
+      workspacePath: join(tempHome, "workspaces", "demo", "review-pr-127"),
+      createdAt: new Date().toISOString(),
+      diffBase: "a".repeat(40),
+      diffHead: "b".repeat(40),
+    };
+    await writeWorkspace(workspace);
+    const loaded = await readWorkspace("demo", "review-pr-127");
+    expect(loaded.prReview).toBeUndefined();
+  });
+});
+
+describe("reviewIssueName / inferPrNumberFromIssue", () => {
+  it("builds the deterministic issue name ce review uses", async () => {
+    const { reviewIssueName } = await import("../../src/core/workspace.js");
+    expect(reviewIssueName(127)).toBe("review-pr-127");
+  });
+
+  it("recovers the PR number from that same naming convention", async () => {
+    const { inferPrNumberFromIssue } = await import("../../src/core/workspace.js");
+    expect(inferPrNumberFromIssue("review-pr-127")).toBe(127);
+  });
+
+  it("returns null for anything that doesn't match exactly", async () => {
+    const { inferPrNumberFromIssue } = await import("../../src/core/workspace.js");
+    expect(inferPrNumberFromIssue("review-1")).toBeNull();
+    expect(inferPrNumberFromIssue("review-pr-")).toBeNull();
+    expect(inferPrNumberFromIssue("review-pr-127-extra")).toBeNull();
+    expect(inferPrNumberFromIssue("my-issue")).toBeNull();
+  });
 });
 
 describe("workspaceType", () => {

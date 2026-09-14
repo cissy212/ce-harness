@@ -1347,6 +1347,287 @@ describe("ce status --verbose (integration)", () => {
         expect(output).toMatch(/Next step:\s+none -- review complete/);
       });
     });
+
+    describe("Existing PR review workspace: stale detection (live gh check)", () => {
+      let remoteDir: string;
+
+      beforeEach(async () => {
+        const { execa } = await import("execa");
+        remoteDir = await mkdtemp(join(tmpdir(), "ce-harness-remote-"));
+        await execa("git", ["clone", "--bare", repoDir, remoteDir]);
+        await execa("git", ["-C", repoDir, "remote", "add", "origin", remoteDir]);
+        const { setupFakeGh } = await import("../helpers/fakeGh.js");
+        setupFakeGh();
+      });
+
+      afterEach(async () => {
+        const { teardownFakeGh } = await import("../helpers/fakeGh.js");
+        teardownFakeGh();
+        await rm(remoteDir, { recursive: true, force: true });
+      });
+
+      /** Same-repo PR setup, mirroring review.test.ts's helper of the same shape. */
+      async function setupSameRepoPr(prNumber: number, branchName = `feature-${prNumber}`) {
+        const { execa } = await import("execa");
+        const baseSha = (await execa("git", ["-C", repoDir, "rev-parse", "main"])).stdout.trim();
+        await execa("git", ["-C", repoDir, "checkout", "-b", branchName]);
+        await writeFile(join(repoDir, `${branchName}.txt`), "change\n", "utf8");
+        await execa("git", ["-C", repoDir, "add", "."]);
+        await execa("git", ["-C", repoDir, "commit", "-m", `${branchName} commit`]);
+        const headSha = (await execa("git", ["-C", repoDir, "rev-parse", branchName])).stdout.trim();
+        await execa("git", ["-C", repoDir, "push", "origin", `${branchName}:refs/heads/${branchName}`]);
+        await execa("git", ["-C", repoDir, "push", "origin", `${branchName}:refs/pull/${prNumber}/head`]);
+        await execa("git", ["-C", repoDir, "checkout", "main"]);
+        return { baseSha, headSha, baseRefName: "main", headRefName: branchName };
+      }
+
+      async function pushFollowupCommit(prNumber: number, branchName: string): Promise<string> {
+        const { execa } = await import("execa");
+        await execa("git", ["-C", repoDir, "checkout", branchName]);
+        await writeFile(join(repoDir, `${branchName}-followup.txt`), "followup\n", "utf8");
+        await execa("git", ["-C", repoDir, "add", "."]);
+        await execa("git", ["-C", repoDir, "commit", "-m", "followup"]);
+        const headSha = (await execa("git", ["-C", repoDir, "rev-parse", branchName])).stdout.trim();
+        await execa("git", ["-C", repoDir, "push", "origin", `${branchName}:refs/heads/${branchName}`]);
+        await execa("git", ["-C", repoDir, "push", "origin", `${branchName}:refs/pull/${prNumber}/head`]);
+        await execa("git", ["-C", repoDir, "checkout", "main"]);
+        return headSha;
+      }
+
+      it("reports stale when the PR has new commits since the last completed review", async () => {
+        const { reviewCommand } = await import("../../src/commands/review.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readWorkspace, resolveTrustedOpenSpec, readActivePointer } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { setFakePrSnapshot } = await import("../helpers/fakeGh.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(400);
+        setFakePrSnapshot({
+          number: 400,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headSha,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "400" });
+
+        const pointer = await readActivePointer();
+        const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+        const trusted = resolveTrustedOpenSpec(workspace)!;
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+        await writeFile(
+          join(trusted.root, "reviews", `2026-06-01-pr-400-adversarial-review.md`),
+          `# Adversarial Review\n\n**Verdict:** PASS WITH GAPS\n**Reviewed PR head:** ${headSha}\n`,
+          "utf8",
+        );
+
+        // The PR author pushes a new commit -- gh now reports a different
+        // head than the one the report above covered.
+        const newHeadSha = await pushFollowupCommit(400, headRefName);
+        setFakePrSnapshot({
+          number: 400,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: newHeadSha,
+          isCrossRepository: false,
+        });
+
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        await statusCommand();
+
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+stale -- PR updated since last review/);
+        expect(output).toMatch(/Previous verdict:\s+PASS WITH GAPS/);
+        expect(output).toMatch(new RegExp(`Reviewed HEAD:\\s+${headSha}`));
+        expect(output).toMatch(new RegExp(`Current HEAD:\\s+${newHeadSha}`));
+        expect(output).toMatch(/Next step:\s+follow-up review/);
+      });
+
+      it("reports the review as done, with no staleness claim, when the PR head matches what was reviewed", async () => {
+        const { reviewCommand } = await import("../../src/commands/review.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readWorkspace, resolveTrustedOpenSpec, readActivePointer } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { setFakePrSnapshot } = await import("../helpers/fakeGh.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(401);
+        setFakePrSnapshot({
+          number: 401,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headSha,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "401" });
+
+        const pointer = await readActivePointer();
+        const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+        const trusted = resolveTrustedOpenSpec(workspace)!;
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+        await writeFile(
+          join(trusted.root, "reviews", `2026-06-01-pr-401-adversarial-review.md`),
+          `# Adversarial Review\n\n**Verdict:** PASS\n**Reviewed PR head:** ${headSha}\n`,
+          "utf8",
+        );
+
+        // gh still reports the exact same head -- nothing has changed.
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        await statusCommand();
+
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+done -- verdict PASS/);
+        expect(output).not.toMatch(/stale/);
+        expect(output).toMatch(/Next step:\s+none -- review complete/);
+      });
+
+      it("degrades to the existing, non-live behavior when gh is unavailable -- never fails ce status", async () => {
+        const { reviewCommand } = await import("../../src/commands/review.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readWorkspace, resolveTrustedOpenSpec, readActivePointer } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { setFakePrSnapshot } = await import("../helpers/fakeGh.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(402);
+        setFakePrSnapshot({
+          number: 402,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headSha,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "402" });
+
+        const pointer = await readActivePointer();
+        const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+        const trusted = resolveTrustedOpenSpec(workspace)!;
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+        await writeFile(
+          join(trusted.root, "reviews", `2026-06-01-pr-402-adversarial-review.md`),
+          `# Adversarial Review\n\n**Verdict:** PASS WITH GAPS\n**Reviewed PR head:** ${headSha}\n`,
+          "utf8",
+        );
+
+        // gh becomes unavailable after the workspace was already created.
+        const { nonExistentGhBin } = await import("../helpers/fakeGh.js");
+        const dir = await mkdtemp(join(tmpdir(), "ce-harness-nogh-"));
+        process.env.CE_GH_BIN = nonExistentGhBin(dir);
+        try {
+          const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+          await expect(statusCommand()).resolves.not.toThrow();
+
+          const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+          expect(output).toMatch(/Review:\s+done -- verdict PASS WITH GAPS/);
+          expect(output).not.toMatch(/stale/);
+          expect(output).not.toMatch(/Current HEAD:/);
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      });
+
+      it("legacy report with no Reviewed PR head field: falls back to the workspace's configured head, and still detects staleness", async () => {
+        const { reviewCommand } = await import("../../src/commands/review.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readWorkspace, resolveTrustedOpenSpec, readActivePointer } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { setFakePrSnapshot } = await import("../helpers/fakeGh.js");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(403);
+        setFakePrSnapshot({
+          number: 403,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headSha,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "403" });
+
+        const pointer = await readActivePointer();
+        const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+        const trusted = resolveTrustedOpenSpec(workspace)!;
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+        // A legacy-shaped report: no PR-scoped filename, no "Reviewed PR
+        // head" field -- exactly what a report written before this
+        // feature shipped looks like.
+        await writeFile(
+          join(trusted.root, "reviews", "2026-05-01-adversarial-review.md"),
+          "# Adversarial Review\n\n**Verdict:** PASS WITH GAPS\n",
+          "utf8",
+        );
+
+        const newHeadSha = await pushFollowupCommit(403, headRefName);
+        setFakePrSnapshot({
+          number: 403,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: newHeadSha,
+          isCrossRepository: false,
+        });
+
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        await statusCommand();
+
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+stale -- PR updated since last review/);
+        expect(output).toMatch(new RegExp(`Reviewed HEAD:\\s+${headSha}`));
+        expect(output).toMatch(/inferred/);
+      });
+
+      it("a plain ce start --base --head workspace (never went through ce review) never attempts a live check", async () => {
+        const { startCommand } = await import("../../src/commands/start.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { execa } = await import("execa");
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const base = await execa("git", ["-C", repoDir, "rev-parse", "HEAD"]).then((r) => r.stdout.trim());
+        await writeFile(join(repoDir, "feature.txt"), "x\n", "utf8");
+        await execa("git", ["-C", repoDir, "add", "."]);
+        await execa("git", ["-C", repoDir, "commit", "-m", "feature"]);
+        const head = await execa("git", ["-C", repoDir, "rev-parse", "HEAD"]).then((r) => r.stdout.trim());
+
+        await startCommand({ repo: repoDir, issue: "review-1", base, head });
+
+        const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+          "../../src/core/workspace.js"
+        );
+        const pointer = await readActivePointer();
+        const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+        const trusted = resolveTrustedOpenSpec(workspace)!;
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+        await writeFile(
+          join(trusted.root, "reviews", "2026-06-01-adversarial-review.md"),
+          "# Adversarial Review\n\n**Verdict:** PASS\n",
+          "utf8",
+        );
+
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        await statusCommand();
+
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+done -- verdict PASS/);
+        expect(output).not.toMatch(/stale/);
+        expect(output).not.toMatch(/Current HEAD:/);
+      });
+    });
   });
 
   describe("ce status --all", () => {

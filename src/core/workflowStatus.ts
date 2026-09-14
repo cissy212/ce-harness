@@ -31,6 +31,23 @@ export function extractVerdict(reportContent: string): ReportVerdict | null {
   return (match?.[1] as ReportVerdict | undefined) ?? null;
 }
 
+const REVIEWED_PR_HEAD_PATTERN = /\*\*Reviewed PR head:\*\*\s*([0-9a-f]{7,40})\b/i;
+
+/**
+ * Extracts an Existing PR review workspace's `**Reviewed PR head:**`
+ * line -- the exact PR head SHA `/adversarial-review` actually reviewed
+ * (see `templates/commands/adversarial-review.md`'s Step 9). `null` when
+ * absent: every report written before this field existed, and every
+ * report for an Implementation workspace (which never has this field at
+ * all -- it has its own "Reviewed worktree commit"/fingerprint instead).
+ * Mirrors `extractVerdict`'s exact convention -- a durable, git-tracked,
+ * machine-checkable sentinel line, never free-form prose parsing.
+ */
+export function extractReviewedHead(reportContent: string): string | null {
+  const match = REVIEWED_PR_HEAD_PATTERN.exec(reportContent);
+  return match?.[1] ?? null;
+}
+
 export interface TaskProgress {
   completed: number;
   total: number;
@@ -162,15 +179,38 @@ export function deriveImplementationWorkflowStatus(input: ImplementationWorkflow
   return { progressLine, attention, nextStep: "/archive" };
 }
 
+/**
+ * Best-effort signal of whether a completed review is stale -- the pull
+ * request has moved since the review that produced `reviewVerdict` last
+ * ran. Entirely optional on `ReviewWorkflowInput`: absent whenever `ce
+ * status` couldn't attempt (or didn't need) the live GitHub check (a
+ * legacy `--base/--head` workspace with no recoverable PR number, `gh`
+ * unavailable/unauthenticated, offline, or no completed review to even
+ * compare against yet) -- `deriveReviewWorkflowStatus` then behaves
+ * exactly as it always has, with no staleness claim made either way.
+ */
+export interface PrReviewStaleness {
+  /** The PR head SHA the most recent completed review actually reviewed, or `null` if it could not be recovered at all (see `extractReviewedHead`'s doc comment). */
+  reviewedHead: string | null;
+  /** The pull request's current head SHA, live from GitHub. */
+  currentHead: string;
+  /** True only when `reviewedHead` was recovered from a legacy fallback (the workspace's own configured diff head) rather than a report's own structured field -- surfaced so `ce status` can caveat it rather than presenting it as equally authoritative. */
+  reviewedHeadInferred: boolean;
+}
+
 export interface ReviewWorkflowInput {
   reviewVerdict: ReportVerdict | null;
+  /** See `PrReviewStaleness`. Only ever meaningful when `reviewVerdict` is non-null -- a review that hasn't run yet can't be "stale". */
+  staleness?: PrReviewStaleness | null;
 }
 
 export interface ReviewWorkflowStatus {
   attention: string[];
   nextStep: string;
-  /** e.g. "not yet done" or "done -- verdict PASS". */
+  /** e.g. "not yet done", "done -- verdict PASS", or "stale -- PR updated since last review". */
   summaryLine: string;
+  /** Present only when `summaryLine` reports staleness -- the exact heads to show (`ce status` prints these as their own labeled lines). */
+  staleness?: { reviewedHead: string | null; currentHead: string };
 }
 
 /** Same idea as `deriveImplementationWorkflowStatus`, for an Existing PR review workspace, whose entire workflow is a single `/adversarial-review` run. */
@@ -178,6 +218,24 @@ export function deriveReviewWorkflowStatus(input: ReviewWorkflowInput): ReviewWo
   if (input.reviewVerdict === null) {
     return { attention: [], nextStep: "/adversarial-review", summaryLine: "not yet done" };
   }
+
+  const staleness = input.staleness;
+  if (staleness && staleness.currentHead !== staleness.reviewedHead) {
+    return {
+      attention: [
+        `This pull request has new commits since the last review${
+          staleness.reviewedHeadInferred
+            ? " (reviewed head inferred from this workspace's configured PR head -- the report itself predates head-tracking)"
+            : ""
+        } -- the previous verdict (${input.reviewVerdict}) no longer reflects the current code.`,
+      ],
+      nextStep:
+        "follow-up review -- run `ce review <repo> <pr-number>` to pull the new commits, then re-run /adversarial-review",
+      summaryLine: "stale -- PR updated since last review",
+      staleness: { reviewedHead: staleness.reviewedHead, currentHead: staleness.currentHead },
+    };
+  }
+
   if (input.reviewVerdict !== "PASS") {
     return {
       attention: [`The review verdict was ${input.reviewVerdict} -- see the report for findings.`],

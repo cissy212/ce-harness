@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -102,6 +102,26 @@ describe("ce review (integration)", () => {
     await execa("git", ["-C", forkDir, "push", remoteDir, `${branchName}:refs/pull/${prNumber}/head`]);
     await rm(forkDir, { recursive: true, force: true });
     return { baseSha, headSha, baseRefName: "main", headRefName: branchName };
+  }
+
+  /**
+   * Simulates the PR author pushing another commit after the initial
+   * review: adds one more commit to `branchName` and force-updates both
+   * `refs/heads/<branchName>` and GitHub's own `refs/pull/<n>/head` to
+   * point at it -- exactly what a real force-push-free follow-up commit
+   * on an already-reviewed PR looks like from `ce review`'s point of
+   * view. Returns the new head SHA.
+   */
+  async function pushFollowupCommit(prNumber: number, branchName: string): Promise<string> {
+    await execa("git", ["-C", repoDir, "checkout", branchName]);
+    await writeFile(join(repoDir, `${branchName}-followup.txt`), "followup change\n", "utf8");
+    await execa("git", ["-C", repoDir, "add", "."]);
+    await execa("git", ["-C", repoDir, "commit", "-m", `${branchName} followup commit`]);
+    const headSha = (await execa("git", ["-C", repoDir, "rev-parse", branchName])).stdout.trim();
+    await execa("git", ["-C", repoDir, "push", "origin", `${branchName}:refs/heads/${branchName}`]);
+    await execa("git", ["-C", repoDir, "push", "origin", `${branchName}:refs/pull/${prNumber}/head`]);
+    await execa("git", ["-C", repoDir, "checkout", "main"]);
+    return headSha;
   }
 
   it("resolves a same-repo PR end-to-end: exact SHAs persisted, workspace type Existing PR review, default issue name", async () => {
@@ -470,6 +490,237 @@ describe("ce review (integration)", () => {
     expect(resumeLaunch.env).toEqual(reviewLaunch.env);
     expect(resumeLaunch.env.CE_DIFF_BASE).toBe(baseSha);
     expect(resumeLaunch.env.CE_DIFF_HEAD).toBe(headSha);
+  });
+
+  it("persists structured PR identity and injects CE_PR_NUMBER into the launch environment", async () => {
+    const { reviewCommand } = await import("../../src/commands/review.js");
+    const { readWorkspace } = await import("../../src/core/workspace.js");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(88);
+    setFakePrSnapshot({
+      number: 88,
+      title: "t",
+      baseRefName,
+      baseRefOid: baseSha,
+      headRefName,
+      headRefOid: headSha,
+      isCrossRepository: false,
+    });
+
+    await reviewCommand({ repo: repoDir, prNumber: "88" });
+
+    const workspace = await readWorkspace(basenameOf(repoDir), "review-pr-88");
+    expect(workspace.prReview).toEqual({ number: 88 });
+
+    const launch = JSON.parse(await readFile(fakeOpenCode.outputFile, "utf8"));
+    expect(launch.env.CE_PR_NUMBER).toBe("88");
+  });
+
+  describe("follow-up refresh (re-entering a review workspace whose PR has new commits)", () => {
+    it("refreshes the workspace in place instead of erroring: fetches the new commits, moves the worktree, and updates workspace.yml", async () => {
+      const { reviewCommand } = await import("../../src/commands/review.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(300);
+      setFakePrSnapshot({
+        number: 300,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: headSha,
+        isCrossRepository: false,
+      });
+      await reviewCommand({ repo: repoDir, prNumber: "300" });
+
+      const project = basenameOf(repoDir);
+      const before = await readWorkspace(project, "review-pr-300");
+      expect(before.diffHead).toBe(headSha);
+
+      const newHeadSha = await pushFollowupCommit(300, headRefName);
+      setFakePrSnapshot({
+        number: 300,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: newHeadSha,
+        isCrossRepository: false,
+      });
+
+      await expect(reviewCommand({ repo: repoDir, prNumber: "300" })).resolves.not.toThrow();
+
+      const after = await readWorkspace(project, "review-pr-300");
+      expect(after.diffHead).toBe(newHeadSha);
+      expect(after.diffBase).toBe(baseSha);
+      expect(after.prReview).toEqual({ number: 300 });
+
+      const worktreeHead = (
+        await execa("git", ["-C", after.worktreePath, "rev-parse", "HEAD"])
+      ).stdout.trim();
+      expect(worktreeHead).toBe(newHeadSha);
+    });
+
+    it("backfills prReview.number onto a legacy workspace lacking it, using the CLI's own <pr-number> argument", async () => {
+      const { reviewCommand } = await import("../../src/commands/review.js");
+      const { readWorkspace, writeWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(301);
+      setFakePrSnapshot({
+        number: 301,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: headSha,
+        isCrossRepository: false,
+      });
+      await reviewCommand({ repo: repoDir, prNumber: "301" });
+
+      const project = basenameOf(repoDir);
+      const created = await readWorkspace(project, "review-pr-301");
+      const { prReview: _dropped, ...legacyShape } = created;
+      await writeWorkspace(legacyShape);
+      expect((await readWorkspace(project, "review-pr-301")).prReview).toBeUndefined();
+
+      const newHeadSha = await pushFollowupCommit(301, headRefName);
+      setFakePrSnapshot({
+        number: 301,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: newHeadSha,
+        isCrossRepository: false,
+      });
+
+      await reviewCommand({ repo: repoDir, prNumber: "301" });
+
+      const after = await readWorkspace(project, "review-pr-301");
+      expect(after.prReview).toEqual({ number: 301 });
+      expect(after.diffHead).toBe(newHeadSha);
+    });
+
+    it("refuses to refresh a workspace that has already transitioned into implementation", async () => {
+      const { reviewCommand } = await import("../../src/commands/review.js");
+      const { readWorkspace, resolveTrustedOpenSpec } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(302);
+      setFakePrSnapshot({
+        number: 302,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: headSha,
+        isCrossRepository: false,
+      });
+      await reviewCommand({ repo: repoDir, prNumber: "302" });
+
+      const project = basenameOf(repoDir);
+      const workspace = await readWorkspace(project, "review-pr-302");
+      const trusted = resolveTrustedOpenSpec(workspace)!;
+      const changeRoot = join(trusted.root, "openspec", "changes", "fix-it");
+      await mkdir(changeRoot, { recursive: true });
+      await writeFile(
+        join(changeRoot, ".ce-workspace.yml"),
+        `project: "${project}"\nissue: "${workspace.issue}"\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(changeRoot, ".ce-implementation-base.yml"),
+        `baseCommit: "${workspace.diffHead}"\nrecordedAt: "2026-01-01"\n`,
+        "utf8",
+      );
+
+      const newHeadSha = await pushFollowupCommit(302, headRefName);
+      setFakePrSnapshot({
+        number: 302,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: newHeadSha,
+        isCrossRepository: false,
+      });
+
+      await expect(reviewCommand({ repo: repoDir, prNumber: "302" })).rejects.toThrow(
+        /already transitioned into implementation/i,
+      );
+
+      // The workspace must be left exactly as it was -- still reviewing
+      // the original head, nothing fetched or reset.
+      const unchanged = await readWorkspace(project, "review-pr-302");
+      expect(unchanged.diffHead).toBe(headSha);
+    });
+
+    it("refuses to refresh a workspace whose worktree has uncommitted changes", async () => {
+      const { reviewCommand } = await import("../../src/commands/review.js");
+      const { readWorkspace } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(303);
+      setFakePrSnapshot({
+        number: 303,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: headSha,
+        isCrossRepository: false,
+      });
+      await reviewCommand({ repo: repoDir, prNumber: "303" });
+
+      const project = basenameOf(repoDir);
+      const workspace = await readWorkspace(project, "review-pr-303");
+      await writeFile(join(workspace.worktreePath, "dirty.txt"), "uncommitted\n", "utf8");
+
+      const newHeadSha = await pushFollowupCommit(303, headRefName);
+      setFakePrSnapshot({
+        number: 303,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: newHeadSha,
+        isCrossRepository: false,
+      });
+
+      await expect(reviewCommand({ repo: repoDir, prNumber: "303" })).rejects.toThrow(
+        /uncommitted or untracked changes/i,
+      );
+
+      const unchanged = await readWorkspace(project, "review-pr-303");
+      expect(unchanged.diffHead).toBe(headSha);
+    });
+
+    it("same PR head as before (no new commits): still surfaces the original collision error, unchanged", async () => {
+      // Regression guard for the pre-existing "does not invent a
+      // suffixed name on collision" behavior -- refresh must only ever
+      // kick in when the PR's head has actually moved.
+      const { reviewCommand } = await import("../../src/commands/review.js");
+      const { clearActivePointer } = await import("../../src/core/workspace.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const { baseSha, headSha, baseRefName, headRefName } = await setupSameRepoPr(304);
+      setFakePrSnapshot({
+        number: 304,
+        title: "t",
+        baseRefName,
+        baseRefOid: baseSha,
+        headRefName,
+        headRefOid: headSha,
+        isCrossRepository: false,
+      });
+      await reviewCommand({ repo: repoDir, prNumber: "304" });
+      await clearActivePointer();
+
+      await expect(reviewCommand({ repo: repoDir, prNumber: "304" })).rejects.toThrow(/already exists/i);
+    });
   });
 });
 

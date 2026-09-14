@@ -29,6 +29,7 @@ import {
   workspaceType,
   writeActivePointer,
   writeWorkspace,
+  type PrReviewMetadata,
   type Workspace,
 } from "../core/workspace.js";
 import { expectedDurableOpenSpecRoot, generateProjectStoreId } from "../core/openspecId.js";
@@ -97,6 +98,18 @@ export interface StartOptions {
    * `projectId`.
    */
   newProject?: boolean;
+  /**
+   * Structured GitHub PR identity to persist alongside an explicit
+   * --base/--head review range -- passed through verbatim from `ce
+   * review` (see `core/workspace.ts`'s `PrReviewMetadataSchema`).
+   * `startCommand` never fetches or validates anything about it; it only
+   * writes what it's handed, which is what keeps this command entirely
+   * GitHub-independent (see the module doc comment on `../commands/review.js`
+   * -- `ce review` and `ce status` are the only callers that ever touch
+   * `core/github.js`, not this one). Ignored (never persisted) unless
+   * `base`/`head` are also given -- see `WorkspaceSchema`'s own refine.
+   */
+  prReview?: PrReviewMetadata;
 }
 
 export async function startCommand({
@@ -108,6 +121,7 @@ export async function startCommand({
   runner,
   projectId: projectIdOption,
   newProject,
+  prReview,
 }: StartOptions): Promise<void> {
   // Pure input-shape validation, checked before touching the filesystem
   // at all: an explicit review range requires both --base and --head,
@@ -478,6 +492,7 @@ export async function startCommand({
       ...(baseBranchCommit ? { baseBranchCommit } : {}),
       ...(baseRefExplicit ? { baseRefExplicit } : {}),
       ...(diffBase && diffHead ? { diffBase, diffHead, diffMergeBase } : {}),
+      ...(diffBase && diffHead && prReview ? { prReview } : {}),
       codeGraph: codeGraphResult,
       bootstrap: bootstrapResult,
       runner: selectedRunner.id,

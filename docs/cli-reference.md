@@ -116,8 +116,11 @@ Implementation-workspace one —
   conventions/documentation, and the commit range itself, instead of
   OpenSpec artifacts;
 - its report is written to an official, dedicated location inside the
-  OpenSpec store (`<store root>/reviews/<date>-adversarial-review.md`)
-  rather than a change's `reports/` directory, since there is no change.
+  OpenSpec store (`<store root>/reviews/<date>-pr-<number>-adversarial-review.md`
+  when the workspace came from `ce review`, or the older
+  `<store root>/reviews/<date>-adversarial-review.md` for a plain `ce
+  start --base --head` workspace) rather than a change's `reports/`
+  directory, since there is no change.
 
 Everything else about the review — the mindset, the mandatory baseline
 pass, lens selection, the four-axis finding classification, and the
@@ -178,6 +181,77 @@ nothing to clean up afterward.
 `ce review` is the convenient, GitHub-specific path. For any other exact
 commit range — not from GitHub, or already fetched by some other means —
 use `ce start --base --head` directly instead.
+
+## Follow-up PR reviews
+
+A completed review can go stale: the PR author pushes a fix (or more
+changes) after `/adversarial-review` already produced a verdict. Re-run
+the exact same command to pick that up:
+
+```bash
+ce review /path/to/repo 119
+```
+
+If the PR's head still matches what this workspace last reviewed,
+nothing has changed — you get the same "already exists" message as
+always, pointing you at `ce resume`. If the PR has moved, `ce review`
+instead **refreshes the existing workspace in place** rather than
+erroring or creating a second one for the same PR:
+
+```
+Pull request #119 has new commits since workspace "my-project/review-pr-119" was last reviewed.
+
+Previously reviewed head: 9392fe9
+New head:                 8fb7148
+
+Workspace refreshed for a follow-up review.
+```
+
+It fetches exactly the new commits (same mechanism as the initial
+review), moves the workspace's worktree forward to the PR's current
+head, updates `workspace.yml`, and relaunches the runner — never
+switching your original repository's branch or touching its working
+tree, exactly like the initial review. It refuses, before touching
+anything, when refreshing wouldn't be safe:
+
+- the workspace already **transitioned into implementation** (you ran
+  `/explore`/`/propose`/`/apply` inside it) — it's no longer a pure
+  review of the original PR range, so refreshing the range out from
+  under real implementation work would be surprising. Keep working in it
+  normally with `ce resume`, or start a separate review workspace if you
+  specifically want to review the newest commits.
+- the worktree has **uncommitted or untracked changes**, or its `HEAD`
+  no longer matches the head this workspace was configured to review —
+  either means something touched the worktree outside ce-harness's own
+  pipeline, and refreshing would silently discard it.
+
+Once refreshed, `/adversarial-review` detects on its own that this is a
+**follow-up review**: it recovers the previous review's findings,
+computes the delta since the head it last reviewed, verifies each
+previous finding against the new code (classifying it `RESOLVED`,
+`PARTIALLY RESOLVED`, `NOT RESOLVED`, or `NO LONGER APPLICABLE`), looks
+for regressions or new issues in the delta, and produces a fresh verdict
+for the PR's current head — without discarding or overwriting the
+previous report, which stays exactly where it was.
+
+`ce status` surfaces staleness too, best-effort (it needs `gh` installed
+and authenticated, and only checks a workspace `ce review` created):
+
+```
+Review:           stale -- PR updated since last review
+Previous verdict: PASS WITH GAPS
+Reviewed HEAD:    9392fe9
+Current HEAD:     8fb7148
+
+Next step:        follow-up review -- run `ce review <repo> <pr-number>` to pull the new commits, then re-run /adversarial-review
+```
+
+If `gh` can't be reached (offline, unauthenticated, or not installed),
+`ce status` degrades to exactly the same output it always gave — the
+verdict shown, no staleness claim made either way. A review workspace
+created before this feature existed still works: `ce status`/`ce review`
+recover its PR number from its `review-pr-<number>` issue name, and `ce
+review`'s first refresh backfills the structured PR identity onto it.
 
 ## `ce resume [workspace]`
 
@@ -272,11 +346,15 @@ Answers four questions at a glance, with no internal/debug detail:
   progress line (`explore ✓  enrich ✓ (ready)  proposal ✓  design ✓
   tasks 3/7`) — numeric task progress once `tasks.md` exists, an
   artifact checkmark otherwise. For an Existing PR review workspace,
-  whether `/adversarial-review` has run yet and its verdict instead.
+  whether `/adversarial-review` has run yet and its verdict instead —
+  and, best-effort, whether that review is now **stale** because the
+  pull request has new commits since (see [Follow-up PR
+  reviews](#follow-up-pr-reviews)).
 - **Does anything need my attention?** A `Needs attention:` list,
   covering: stale or unrecorded provenance on a planning artifact
   (naming the exact stage to rerun); a non-`PASS` `/verify` or
-  `/adversarial-review` verdict; repository bootstrap still required;
+  `/adversarial-review` verdict; a stale PR review (the pull request has
+  moved since it was last reviewed); repository bootstrap still required;
   or invalid/corrupted OpenSpec metadata. Omitted entirely when there's
   nothing to flag.
 - **What should I do next?** A single `Next step:` line — the same

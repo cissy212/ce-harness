@@ -942,6 +942,10 @@ describe("ce start (integration)", () => {
         CE_DIFF_BASE: null,
         CE_DIFF_HEAD: null,
         CE_BASE_BRANCH: "main",
+        // Only present for an Existing PR review workspace (see
+        // core/workspace.ts's `prReview`) -- a plain `ce start` workspace
+        // like this one never has it.
+        CE_PR_NUMBER: null,
         // CodeGraph is forced unavailable for this suite (see beforeEach);
         // its availability/env-injection behavior is covered in
         // test/integration/codeGraph.test.ts.

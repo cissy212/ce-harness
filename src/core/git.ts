@@ -755,6 +755,30 @@ export async function addWorktree(
 }
 
 /**
+ * Moves an already-created worktree's checked-out branch straight to
+ * `commit` (`git reset --hard`) -- used only by `ce review`'s follow-up
+ * refresh path to pull a pull request's newest commits into a review
+ * workspace that was already reviewing an earlier head of the same PR.
+ * Never a merge, rebase, or fast-forward-only update: an Existing PR
+ * review workspace's internal branch is never shared with anything else
+ * (see `addWorktree` above -- it exists solely to hold this one review's
+ * commits), so unconditionally moving its tip is safe and matches
+ * exactly how it was first created (a branch pointed directly at a
+ * commit, never merged into). Callers are responsible for confirming the
+ * worktree is clean and at the exact commit they expect *before* calling
+ * this -- it does not check either itself, and will happily discard
+ * whatever the branch pointed at before.
+ */
+export async function resetWorktreeToCommit(worktreePath: string, commit: string): Promise<void> {
+  const result = await git(worktreePath, ["reset", "--hard", commit]);
+  if (result.exitCode !== 0) {
+    throw new CeError(
+      `Failed to move the worktree at "${worktreePath}" to commit "${commit}": ${result.stderr.trim()}`,
+    );
+  }
+}
+
+/**
  * True if `worktreePath` is still one of `repoPath`'s registered
  * worktrees, per `git worktree list --porcelain` -- Git's own
  * structured, locale-independent bookkeeping, never a human-readable

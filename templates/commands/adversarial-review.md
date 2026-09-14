@@ -98,6 +98,49 @@ incorrectly unlock treating this as an Implementation workspace.
 `/apply` itself writes (see `templates/commands/apply.md`), the one
 signal nothing else in the workflow ever produces.
 
+**Detect a follow-up review (Existing PR review workspace only, never
+transitioned).** A user re-runs `ce review <repo> <pr-number>` when the
+pull request has new commits since it was last reviewed here; `ce
+review` itself fetches those commits and moves this workspace's worktree
+forward before relaunching, so by the time you are reading this, `git
+log`/`git diff` already reflect the new code -- this step is only about
+recognizing that a *previous* review of this same workspace exists, so
+you treat it as a follow-up instead of a from-scratch review.
+
+If `CE_PR_NUMBER` is set, look for an existing report in this order
+(never write anything yet -- this is discovery only):
+
+```bash
+ls "<root.path>/reviews/"*"-pr-${CE_PR_NUMBER}-adversarial-review.md" 2>/dev/null | sort
+```
+
+(`<root.path>` is read from `openspec list --store "$CE_OPENSPEC_STORE" --json`
+in Step 1 below -- if you haven't run Step 1 yet, do that first.)
+
+- **One or more files found** -- this is a **follow-up review**. Take the
+  last one (sorted, so the most recent). Read it in full now -- its
+  Findings tables are what Step 8 below verifies against the new code.
+  Also extract its `**Reviewed PR head:**` field (the exact SHA it
+  covered) -- this is the base of the delta you'll diff in Step 5.
+- **None found**, but `CE_PR_NUMBER` is set -- also check the legacy,
+  pre-PR-scoping filename convention as a fallback:
+  ```bash
+  ls "<root.path>/reviews/"*"-adversarial-review.md" 2>/dev/null | grep -v -- '-pr-[0-9]*-adversarial-review\.md$' | sort
+  ```
+  If that finds a file, this is still a **follow-up review**, but treat
+  it as a **legacy previous review**: read it the same way, but note in
+  Step 9 that it predates PR-number scoping and, if this project has ever
+  reviewed more than one pull request, may not be specific to this PR. If
+  it has no `**Reviewed PR head:**` field either (almost certainly true
+  for a report this old), you cannot compute a precise delta -- fall back
+  to reviewing the full `$CE_DIFF_BASE..$CE_DIFF_HEAD` range in Step 5
+  exactly as a first-time review would, and say so explicitly in Step 9's
+  **Follow-up review** field rather than guessing a delta.
+- **Nothing found either way, or `CE_PR_NUMBER` is unset** -- this is a
+  **first-time review** of this pull request. Proceed exactly as the rest
+  of this command already describes; there is nothing follow-up-specific
+  to do.
+
 **Input** (Implementation workspaces only, including a transitioned
 review workspace): Optionally specify a change name (e.g.,
 `/adversarial-review add-auth`). If omitted, infer it from conversation
@@ -189,19 +232,56 @@ Establish the review baseline from these instead:
 3. **The commit range itself** (`$CE_DIFF_BASE`..`$CE_DIFF_HEAD`, loaded
    in Step 5) -- what actually changed is as much a part of the baseline
    as the PR description's claims are.
+4. **A follow-up review only:** the previous review report identified in
+   Step 0 -- its Findings tables are an additional baseline, since Step 8
+   below must verify each of them against the new code, not just review
+   the delta in isolation.
 
 Extract the same things the other branch extracts -- what must be true
 for this PR to be correct, and what's underspecified -- just sourced from
 the PR description and repository conventions instead of OpenSpec
 artifacts.
 
-## 4. Check for an existing verify report -- and challenge it (Implementation workspaces only)
+## 4. Check for an existing verify report -- and challenge it (Implementation workspaces only) -- or, for an Existing PR review follow-up, the previous review report
 
-`/verify` refuses to run in an Existing PR review workspace (see its own
-guard) -- so there is never a verify report to look for there. Skip this
-step entirely in that workspace type and proceed directly to Step 5;
-record `**Verify report reviewed:** N/A -- /verify does not run in an
-Existing PR review workspace.` in the report (Step 9) instead.
+**Existing PR review workspace, first-time review (Step 0 found no
+previous report):** `/verify` refuses to run in an Existing PR review
+workspace (see its own guard) -- so there is never a verify report to
+look for there. Skip this step entirely in that workspace type and
+proceed directly to Step 5; record `**Verify report reviewed:** N/A --
+/verify does not run in an Existing PR review workspace.` in the report
+(Step 9) instead.
+
+**Existing PR review workspace, follow-up review (Step 0 found a previous
+review report):** there is still no verify report -- but the previous
+`/adversarial-review` report itself now plays this step's role. You
+already read it in full in Step 0/3. For each finding in its "Findings
+Affecting This Change" and "Pre-Existing or Adjacent Issues" tables,
+check it against the new code (the delta identified in Step 5) and
+classify it into exactly one of:
+
+- **RESOLVED** -- the code the finding pointed at has changed in a way
+  that fixes it; cite the new evidence (file:line, diff hunk) that shows
+  it's fixed.
+- **PARTIALLY RESOLVED** -- some but not all of the finding's concern was
+  addressed; state precisely what remains.
+- **NOT RESOLVED** -- the code the finding pointed at is unchanged, or
+  changed in a way that doesn't address it.
+- **NO LONGER APPLICABLE** -- the code the finding pointed at was removed
+  or restructured such that the finding's premise no longer holds (this
+  is not the same as RESOLVED -- say why the concern itself is now moot,
+  not just fixed).
+
+Do this for *every* finding in the previous report, not only the ones
+that look interesting -- a finding you don't mention is not the same as
+one you checked and found unresolved. Record the full table in the
+"Follow-up Review" section of the report (Step 9). This classification
+pass is this step's entire job for a follow-up review; Step 8 below still
+separately reviews the delta itself for regressions and new issues -- the
+two are complementary, never a substitute for each other.
+
+**Implementation workspace (including a transitioned review workspace,
+per Step 0):**
 
 Look for the most recent `<changeRoot>/reports/*-verify.md` file (written by
 a prior `/verify` run), if any.
@@ -283,6 +363,26 @@ have diverged in both directions. Parse its JSON output:
 tasks. **Existing PR review workspace:** map files and changes to the PR
 description's stated scope and to any repository conventions noted in
 Step 3 instead -- there are no spec sections or tasks to map to.
+
+**Existing PR review workspace, follow-up review only:** in addition to
+the full range above, also compute the *delta since the last review* --
+the specific commits that are new since the previous report. Using the
+previously-reviewed head extracted in Step 0 (call it `<previousHead>`):
+
+```bash
+git -C "$CE_WORKTREE" log --oneline "<previousHead>..$CE_DIFF_HEAD"
+git -C "$CE_WORKTREE" diff "<previousHead>...$CE_DIFF_HEAD"
+```
+
+If Step 0 could not recover a previously-reviewed head at all (the legacy
+fallback with no `**Reviewed PR head:**` field), skip this delta -- you
+already noted that limitation in Step 0/3, and Step 8's regression/new-
+issue pass below instead covers the full `$CE_DIFF_BASE..$CE_DIFF_HEAD`
+range, exactly like a first-time review. The full-range diff above always
+remains the baseline for whether the PR *as a whole* is now correct; the
+delta is additional, narrower context specifically for "what actually
+changed since I last looked," so Step 8's regression pass can focus its
+attention there first before it's satisfied nothing new was missed.
 
 ## 6. Baseline adversarial pass (runner- and lens-independent)
 
@@ -445,6 +545,14 @@ each PR-description claim (Existing PR review workspace):
 6. Fold in whatever the Step 6 baseline pass and the Step 7 lens (if any)
    surfaced -- this step is where every finding from every source gets
    classified, not just what's found fresh here.
+7. **Follow-up review only:** look specifically for regressions or new
+   issues introduced by the delta identified in Step 5 (`<previousHead>..
+   $CE_DIFF_HEAD`) -- new findings that weren't in the previous report at
+   all, not the previously-known findings Step 4 already classified.
+   Every finding Step 4 classified `NOT RESOLVED` or `PARTIALLY RESOLVED`
+   is carried forward into this report's Findings tables below (Step 9)
+   with its classification noted, not dropped just because it was
+   already known -- a finding that's still there is still a finding.
 
 ### Classify each finding
 
@@ -582,8 +690,22 @@ it from the `root.path` read in Step 1, and never invent a different one:
 
 ```bash
 mkdir -p "<root.path>/reviews"
+# CE_PR_NUMBER set (this workspace was created/refreshed by `ce review` --
+# true for every review from now on, including every follow-up):
+# write to: <root.path>/reviews/<YYYY-MM-DD>-pr-$CE_PR_NUMBER-adversarial-review.md
+#
+# CE_PR_NUMBER unset (a legacy workspace, or a plain `ce start --base
+# --head` never resolved from a GitHub PR at all) -- the original,
+# unscoped convention:
 # write to: <root.path>/reviews/<YYYY-MM-DD>-adversarial-review.md
 ```
+
+Never write to the unscoped, legacy filename when `CE_PR_NUMBER` is set --
+every review from a `CE_PR_NUMBER`-bearing workspace must use the
+PR-scoped name, so a later `ce status`/follow-up review can find it
+without ambiguity against any other pull request this project has ever
+reviewed (see the module's own `reviews/` directory being shared across
+every PR review workspace of the same project).
 
 Either way, this directory and file live **only** inside the external
 OpenSpec store at `$CE_OPENSPEC_STORE` -- never create a `reports/`
@@ -603,6 +725,8 @@ this workspace's type -- never both, and never invent a third variant.
 **Date:** YYYY-MM-DD
 **Change:** <changeRoot> -- Implementation workspaces only
 **Pull request:** <PR number/URL if known, else the head branch name> -- Existing PR review workspaces only
+**Reviewed PR head:** <full SHA of $CE_DIFF_HEAD at the moment this review ran> -- Existing PR review workspaces only. This exact line is a durable, machine-checkable sentinel -- `ce status`'s stale-review check and a later follow-up review both read it verbatim -- so write it exactly this way, with the real full SHA, never a placeholder or a short SHA.
+**Follow-up review:** <"No -- first review of this pull request", or "Yes -- previous review: <path to the previous report>, previously reviewed head <SHA>", or "Yes (legacy previous review, pre-dates PR-number scoping; delta could not be precisely computed -- reviewed the full range instead)" -- Existing PR review workspaces only, per Step 0's detection>
 **Reviewed worktree commit:** <full SHA -- human reference only> -- Implementation workspaces only
 **Reviewed worktree fingerprint:** <12-char hash covering the commit plus any uncommitted tracked/untracked implementation changes> -- Implementation workspaces only
 **Reviewed artifacts hash:** <12-char hash covering proposal.md/design.md/tasks.md/specs/, or "N/A -- no artifacts to hash"> -- Implementation workspaces only
@@ -662,6 +786,35 @@ Or, if none applied: "N/A -- no lens applied."
 
 ---
 
+## Follow-up Review
+
+<!-- Existing PR review workspace only, and only when Step 0 detected a
+previous review report. Omit this entire section (never print an empty
+one) for a first-time review, or for an Implementation workspace. This
+table is Step 4's classification pass -- every finding from the previous
+report's "Findings Affecting This Change" and "Pre-Existing or Adjacent
+Issues" tables must appear here exactly once. -->
+
+**Previous review:** <path to the previous report>
+**Previously reviewed head:** <SHA, or "unknown -- legacy report predates head-tracking">
+**Delta reviewed:** <`<previousHead>..CE_DIFF_HEAD` commit range, or "N/A -- previously reviewed head unknown; reviewed the full range as a first-time review would">
+
+| Previous Finding | Previous Severity | Classification | Evidence | Notes |
+|---|---|---|---|---|
+| <finding, verbatim or summarized from the previous report> | BLOCKER / MAJOR / MINOR | RESOLVED / PARTIALLY RESOLVED / NOT RESOLVED / NO LONGER APPLICABLE | <file:line, diff hunk, or test output showing why> | <anything a reader needs to interpret the classification> |
+
+Or, if the previous report had no findings at all: "N/A -- the previous review found no findings to re-verify."
+
+A `NOT RESOLVED` or `PARTIALLY RESOLVED` classification here means the
+underlying finding is still live -- carry it forward into "Findings
+Affecting This Change" or "Pre-Existing or Adjacent Issues" below
+(whichever this pass now assigns it to; a finding is re-classified on its
+own current merits, not frozen into whichever table the previous review
+happened to put it in), with its own fresh Severity/Confidence/Merge
+impact/Area, not copy-pasted from the previous report unexamined.
+
+---
+
 ## Risk-Mitigating Observations
 
 <!-- Optional. Include only when a concrete decision directly mitigates a documented risk. Omit this section if there are no meaningful observations. Do not include generic praise. -->
@@ -670,7 +823,7 @@ Or, if none applied: "N/A -- no lens applied."
 
 ## Findings Affecting This Change
 
-<!-- A finding belongs here only if this change introduces it, worsens it, claims to fix the same behavior/class of problem but misses an in-scope equivalent surface, or depends on the flawed behavior for correctness. This table alone determines the Overall Verdict. "Affected Requirement/Design/Task" means the relevant PR-description claim or code area in an Existing PR review workspace, since there is no requirement/design/task there. -->
+<!-- A finding belongs here only if this change introduces it, worsens it, claims to fix the same behavior/class of problem but misses an in-scope equivalent surface, or depends on the flawed behavior for correctness. This table alone determines the Overall Verdict. "Affected Requirement/Design/Task" means the relevant PR-description claim or code area in an Existing PR review workspace, since there is no requirement/design/task there. Follow-up review: includes both new findings from the delta (Step 8) and any prior finding the "Follow-up Review" section above classified NOT RESOLVED / PARTIALLY RESOLVED and re-assigned here. -->
 
 | Severity | Confidence | Merge impact | Area | Affected Requirement/Design/Task | Finding | Evidence | Impact | Recommended Fix |
 |---|---|---|---|---|---|---|---|---|
@@ -767,10 +920,10 @@ in the chat response, but never apply them automatically -- this command
 only reviews and reports. If the user wants to act on a finding, that is a
 separate, explicit step.
 
-State the next step based on the verdict -- never assert `/archive` is
-ready from this command's verdict alone; that is entirely `/archive`'s
-own gate to decide, since it also requires `/verify`'s most recent
-report to be a fresh, clean `PASS`:
+**Implementation workspace:** State the next step based on the verdict --
+never assert `/archive` is ready from this command's verdict alone; that
+is entirely `/archive`'s own gate to decide, since it also requires
+`/verify`'s most recent report to be a fresh, clean `PASS`:
 - `PASS WITH GAPS` or `FAIL` -- the findings above need addressing (via
   `/apply` or a manual fix) before this change can be archived. Once
   fixed, re-run `/verify` next -- not `/archive`, and not another
@@ -781,6 +934,22 @@ report to be a fresh, clean `PASS`:
   unsure, run `/verify` first. Either way, `/archive`'s own gate checks
   this itself -- this command only ever suggests, never guarantees, that
   archiving will succeed.
+
+**Existing PR review workspace:** there is no `/archive` step -- state
+the next step in terms of the pull request itself instead:
+- `PASS WITH GAPS` or `FAIL` -- the findings need addressing on the pull
+  request. That normally happens outside this harness (the PR author
+  pushes a fix); once they do, running `ce review <repo> <pr-number>`
+  again pulls the new commits into this same workspace and starts a
+  follow-up review (see Step 0) that verifies each finding above against
+  the fix, rather than reviewing from scratch. If instead *you* are going
+  to fix it yourself inside this workspace, say so and mention
+  `/explore`/`/propose`/`/apply` are available for that (the workspace
+  transitions into implementation -- see Step 0's `reviewTransition`
+  detection).
+- `PASS` (adversarial) -- nothing further is required from this review;
+  mention that `ce review <repo> <pr-number>` can be re-run later if the
+  PR gains new commits, to review just the delta.
 
 **Guardrails**
 - Never end Step 10 with only the report's printed filesystem path --
@@ -799,9 +968,25 @@ report to be a fresh, clean `PASS`:
   conformance checks -- the PR description, repository conventions and
   documentation, and the commit range are the review baseline instead
   (Step 3). Its report always lives at the official
-  `<root.path>/reviews/<date>-adversarial-review.md` location (Step 9) --
-  never `<changeRoot>/reports/`, since there is no change, and never any
-  other invented location.
+  `<root.path>/reviews/<date>-pr-<number>-adversarial-review.md` location
+  (Step 9, PR-scoped whenever `CE_PR_NUMBER` is set; the older unscoped
+  filename only when it isn't) -- never `<changeRoot>/reports/`, since
+  there is no change, and never any other invented location.
+- Always write the `**Reviewed PR head:**` field, with the real full SHA
+  of `$CE_DIFF_HEAD` -- it is what makes both `ce status`'s stale-review
+  check and a later follow-up review's delta computation possible at all.
+  Never omit it, and never write a placeholder or short SHA in its place.
+- A follow-up review (Step 0 found a previous report) must classify
+  *every* finding from that previous report's two tables (Step 4) --
+  never silently drop one, and never classify one you didn't actually
+  re-check against the new code. A finding you don't mention is not the
+  same as one you checked. Still separately look for new regressions/
+  issues in the delta itself (Step 8) -- classification and fresh review
+  are complementary passes, neither substitutes for the other.
+- Never overwrite or delete a previous review report -- each review
+  (first-time or follow-up) writes its own new, dated file. Historical
+  review context is recovered by reading prior reports, never by editing
+  them.
 - Never invent a finding you don't have evidence for -- every finding must
   state the affected requirement/design decision/task, its impact, its
   Area, its Confidence, its Merge impact, and a recommended fix. Evidence

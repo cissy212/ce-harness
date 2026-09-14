@@ -28,6 +28,7 @@ if (outputFile) {
           CE_DIFF_BASE: process.env.CE_DIFF_BASE ?? null,
           CE_DIFF_HEAD: process.env.CE_DIFF_HEAD ?? null,
           CE_BASE_BRANCH: process.env.CE_BASE_BRANCH ?? null,
+          CE_PR_NUMBER: process.env.CE_PR_NUMBER ?? null,
           CE_CODE_NAV_AVAILABLE: process.env.CE_CODE_NAV_AVAILABLE ?? null,
           CE_CODE_NAV_PROVIDER: process.env.CE_CODE_NAV_PROVIDER ?? null,
           OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR ?? null,
