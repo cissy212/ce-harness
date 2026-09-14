@@ -184,25 +184,55 @@ async function readLatestVerdict(changeRoot: string, reports: string[], suffix: 
  * review`) always resolves with `staleness: undefined`, exactly as
  * before this feature existed.
  */
-async function resolvePrReviewStatus(
-  workspace: Workspace,
-  durableRoot: string,
-): Promise<{ verdict: ReportVerdict | null; staleness?: { reviewedHead: string | null; currentHead: string; reviewedHeadInferred: boolean } }> {
+interface PrReviewStatusResult {
+  verdict: ReportVerdict | null;
+  staleness?: { reviewedHead: string | null; currentHead: string; reviewedHeadInferred: boolean };
+  /** See `deriveReviewWorkflowStatus`'s field of the same name -- a legacy report exists somewhere in this project's shared `reviews/` directory, but could not be confirmed to belong to this exact PR. */
+  unattributableLegacyReport?: boolean;
+}
+
+async function resolvePrReviewStatus(workspace: Workspace, durableRoot: string): Promise<PrReviewStatusResult> {
   const prNumber = workspace.prReview?.number ?? inferPrNumberFromIssue(workspace.issue);
   if (prNumber === null) {
     return { verdict: await latestReviewVerdict(durableRoot) };
   }
 
   const lookup = await latestReviewForPr(durableRoot, prNumber);
-  const verdict = lookup?.verdict ?? null;
+
+  if (lookup.kind === "none") {
+    return { verdict: null };
+  }
+  if (lookup.kind === "unattributable") {
+    // A legacy report exists in this project's shared `reviews/`
+    // directory, but its own **Pull request:**/title fields didn't
+    // confirm it as this PR's -- never guess; report this PR as not yet
+    // reviewed, with an explicit caveat, rather than risking someone
+    // else's findings.
+    return { verdict: null, unattributableLegacyReport: true };
+  }
+
+  const verdict = lookup.verdict;
   if (verdict === null) {
     // Nothing has been reviewed yet -- "stale" is meaningless until a
     // first review exists, so never attempt (or need) the live check.
     return { verdict: null };
   }
 
-  const reviewedHead = lookup?.reviewedHead ?? workspace.diffHead ?? null;
-  const reviewedHeadInferred = (lookup?.reviewedHead ?? null) === null;
+  // Three tiers, most authoritative first:
+  // 1. The report's own `**Reviewed PR head:**` field (every report
+  //    written by this feature's version of the template).
+  // 2. `prReview.initialDiffHead` -- present whenever this workspace has
+  //    ever been touched by `ce review`'s PR-tracking machinery (created
+  //    or backfilled). Stable across every refresh, unlike `diffHead`
+  //    itself -- see `PrReviewMetadataSchema`'s doc comment for exactly
+  //    why `diffHead` alone would be wrong here once a refresh has moved
+  //    it past what a legacy report actually reviewed.
+  // 3. `workspace.diffHead` -- only when `prReview` is entirely absent,
+  //    which itself proves this workspace has *never* been refreshed
+  //    (refreshing always sets `prReview`), so `diffHead` still equals
+  //    whatever a pre-existing legacy report reviewed.
+  const reviewedHead = lookup.reviewedHead ?? workspace.prReview?.initialDiffHead ?? workspace.diffHead ?? null;
+  const reviewedHeadInferred = lookup.reviewedHead === null;
 
   const currentHead = await resolveLivePrHead(workspace.repositoryPath, prNumber);
   if (!currentHead) {
@@ -253,9 +283,9 @@ async function renderConcise(workspace: Workspace): Promise<void> {
   console.log();
 
   if (workspaceType(workspace) === "Existing PR review") {
-    const { verdict, staleness } = await resolvePrReviewStatus(workspace, trusted.root);
+    const { verdict, staleness, unattributableLegacyReport } = await resolvePrReviewStatus(workspace, trusted.root);
 
-    const review = deriveReviewWorkflowStatus({ reviewVerdict: verdict, staleness });
+    const review = deriveReviewWorkflowStatus({ reviewVerdict: verdict, staleness, unattributableLegacyReport });
     console.log(`Review:           ${review.summaryLine}`);
     if (review.staleness) {
       console.log(`Previous verdict: ${verdict}`);

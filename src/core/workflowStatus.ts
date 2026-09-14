@@ -48,6 +48,50 @@ export function extractReviewedHead(reportContent: string): string | null {
   return match?.[1] ?? null;
 }
 
+const PULL_REQUEST_FIELD_PATTERN = /\*\*Pull request:\*\*([^\n]*)/;
+const TITLE_LINE_PATTERN = /^#[^\n]*$/m;
+const PR_NUMBER_IN_TEXT_PATTERNS = [/\/pull\/(\d+)\b/, /#(\d+)\b/];
+
+/** Extracts a PR number from one line of text (the `**Pull request:**` field's own value, or the report's title), trying each recognized shape in turn. `null` if none match. */
+function extractPrNumberFromLine(line: string): number | null {
+  for (const pattern of PR_NUMBER_IN_TEXT_PATTERNS) {
+    const match = pattern.exec(line);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+/**
+ * Best-effort recovery of which pull request a *legacy* (pre-PR-number-
+ * scoping) `/adversarial-review` report actually reviewed, from its own
+ * `**Pull request:**` field (a GitHub URL like `.../pull/127`, or a bare
+ * `#127`) or, failing that, its title line (which may also embed
+ * `(PR #127)` -- see the report template's own title convention).
+ *
+ * Used exclusively by `reviewReports.ts`'s `latestReviewForPr` to decide
+ * whether a legacy report -- found in a `reviews/` directory shared by
+ * every PR review workspace of the same project -- may safely be
+ * attributed to a *specific* PR number, rather than assumed to belong to
+ * whichever PR happens to be asked about. Returns `null` when neither
+ * field/title contains a recognizable PR number (e.g. the field names
+ * only a head branch, per the template's own "if known, else the head
+ * branch name" allowance) -- callers must treat that as "cannot confirm
+ * either way," never as tacit permission to attribute it anyway.
+ */
+export function extractReportPrNumber(reportContent: string): number | null {
+  const fieldMatch = PULL_REQUEST_FIELD_PATTERN.exec(reportContent);
+  if (fieldMatch) {
+    const fromField = extractPrNumberFromLine(fieldMatch[1]);
+    if (fromField !== null) return fromField;
+  }
+  const titleMatch = TITLE_LINE_PATTERN.exec(reportContent);
+  if (titleMatch) {
+    const fromTitle = extractPrNumberFromLine(titleMatch[0]);
+    if (fromTitle !== null) return fromTitle;
+  }
+  return null;
+}
+
 export interface TaskProgress {
   completed: number;
   total: number;
@@ -202,6 +246,16 @@ export interface ReviewWorkflowInput {
   reviewVerdict: ReportVerdict | null;
   /** See `PrReviewStaleness`. Only ever meaningful when `reviewVerdict` is non-null -- a review that hasn't run yet can't be "stale". */
   staleness?: PrReviewStaleness | null;
+  /**
+   * True when a legacy (pre-PR-number-scoping) review report exists
+   * somewhere in this project's shared `reviews/` directory, but could
+   * not be confirmed to belong to *this* pull request specifically (see
+   * `reviewReports.ts`'s `latestReviewForPr`). Always paired with
+   * `reviewVerdict: null` -- a report that can't be safely attributed is
+   * never treated as this PR's own verdict, only flagged so `ce status`
+   * can say why "not yet done" doesn't mean "definitely never reviewed."
+   */
+  unattributableLegacyReport?: boolean;
 }
 
 export interface ReviewWorkflowStatus {
@@ -216,7 +270,15 @@ export interface ReviewWorkflowStatus {
 /** Same idea as `deriveImplementationWorkflowStatus`, for an Existing PR review workspace, whose entire workflow is a single `/adversarial-review` run. */
 export function deriveReviewWorkflowStatus(input: ReviewWorkflowInput): ReviewWorkflowStatus {
   if (input.reviewVerdict === null) {
-    return { attention: [], nextStep: "/adversarial-review", summaryLine: "not yet done" };
+    return {
+      attention: input.unattributableLegacyReport
+        ? [
+            "A legacy review report exists for this project, but it could not be confirmed as reviewing this pull request specifically -- treating this PR as not yet reviewed rather than risking someone else's findings.",
+          ]
+        : [],
+      nextStep: "/adversarial-review",
+      summaryLine: "not yet done",
+    };
   }
 
   const staleness = input.staleness;

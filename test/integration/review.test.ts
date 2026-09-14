@@ -511,7 +511,7 @@ describe("ce review (integration)", () => {
     await reviewCommand({ repo: repoDir, prNumber: "88" });
 
     const workspace = await readWorkspace(basenameOf(repoDir), "review-pr-88");
-    expect(workspace.prReview).toEqual({ number: 88 });
+    expect(workspace.prReview).toEqual({ number: 88, initialDiffHead: headSha });
 
     const launch = JSON.parse(await readFile(fakeOpenCode.outputFile, "utf8"));
     expect(launch.env.CE_PR_NUMBER).toBe("88");
@@ -555,7 +555,7 @@ describe("ce review (integration)", () => {
       const after = await readWorkspace(project, "review-pr-300");
       expect(after.diffHead).toBe(newHeadSha);
       expect(after.diffBase).toBe(baseSha);
-      expect(after.prReview).toEqual({ number: 300 });
+      expect(after.prReview).toEqual({ number: 300, initialDiffHead: headSha });
 
       const worktreeHead = (
         await execa("git", ["-C", after.worktreePath, "rev-parse", "HEAD"])
@@ -600,7 +600,7 @@ describe("ce review (integration)", () => {
       await reviewCommand({ repo: repoDir, prNumber: "301" });
 
       const after = await readWorkspace(project, "review-pr-301");
-      expect(after.prReview).toEqual({ number: 301 });
+      expect(after.prReview).toEqual({ number: 301, initialDiffHead: headSha });
       expect(after.diffHead).toBe(newHeadSha);
     });
 

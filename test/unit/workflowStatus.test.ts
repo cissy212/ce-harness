@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveImplementationWorkflowStatus,
   deriveReviewWorkflowStatus,
+  extractReportPrNumber,
   extractReviewedHead,
   extractVerdict,
   formatProgressLine,
@@ -66,6 +67,42 @@ describe("extractReviewedHead", () => {
 
   it("returns null when the field is absent (a legacy report)", () => {
     expect(extractReviewedHead("# Adversarial Review\n\n**Verdict:** PASS\n")).toBeNull();
+  });
+});
+
+describe("extractReportPrNumber", () => {
+  it("extracts a PR number from a GitHub pull URL in the Pull request field", () => {
+    expect(
+      extractReportPrNumber("**Pull request:** https://github.com/example/example/pull/127 (`feat` -> `dev`)\n"),
+    ).toBe(127);
+  });
+
+  it("extracts a bare #<number> from the Pull request field", () => {
+    expect(extractReportPrNumber("**Pull request:** #127\n")).toBe(127);
+  });
+
+  it("falls back to a #<number> embedded in the title when the field has none", () => {
+    expect(
+      extractReportPrNumber("# Adversarial Review: Some Feature (PR #127)\n\n**Pull request:** feature-branch\n"),
+    ).toBe(127);
+  });
+
+  it("returns null when neither the field nor the title names a PR number", () => {
+    expect(
+      extractReportPrNumber("# Adversarial Review: feature-branch\n\n**Pull request:** feature-branch\n"),
+    ).toBeNull();
+  });
+
+  it("returns null when the Pull request field is entirely absent", () => {
+    expect(extractReportPrNumber("# Adversarial Review\n\n**Verdict:** PASS\n")).toBeNull();
+  });
+
+  it("does not get confused by unrelated numbers elsewhere in the report", () => {
+    expect(
+      extractReportPrNumber(
+        "# Adversarial Review: feature-branch\n\n**Pull request:** feature-branch\n**Scope:** 5 commits, lines 42-99\n",
+      ),
+    ).toBeNull();
   });
 });
 
@@ -244,6 +281,13 @@ describe("deriveReviewWorkflowStatus", () => {
     expect(result.nextStep).toBe("/adversarial-review");
     expect(result.summaryLine).toBe("not yet done");
     expect(result.attention).toEqual([]);
+  });
+
+  it("flags an unattributable legacy report as attention, but still reports not yet done for this PR", () => {
+    const result = deriveReviewWorkflowStatus({ reviewVerdict: null, unattributableLegacyReport: true });
+    expect(result.nextStep).toBe("/adversarial-review");
+    expect(result.summaryLine).toBe("not yet done");
+    expect(result.attention[0]).toMatch(/could not be confirmed as reviewing this pull request/);
   });
 
   it("reports a clean PASS as complete, with nothing further to do", () => {

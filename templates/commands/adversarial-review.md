@@ -108,34 +108,60 @@ recognizing that a *previous* review of this same workspace exists, so
 you treat it as a follow-up instead of a from-scratch review.
 
 If `CE_PR_NUMBER` is set, look for an existing report in this order
-(never write anything yet -- this is discovery only):
+(never write anything yet -- this is discovery only). `reviews/` is
+shared by every PR review workspace of this *project* (not just this
+one PR) -- a project that has reviewed several pull requests accumulates
+all of their reports in this one directory, so never assume a file found
+here belongs to this PR without checking; see below.
 
 ```bash
-ls "<root.path>/reviews/"*"-pr-${CE_PR_NUMBER}-adversarial-review.md" 2>/dev/null | sort
+ls "<root.path>/reviews/"*"-pr-${CE_PR_NUMBER}-adversarial-review"*.md 2>/dev/null | sort
 ```
 
-(`<root.path>` is read from `openspec list --store "$CE_OPENSPEC_STORE" --json`
-in Step 1 below -- if you haven't run Step 1 yet, do that first.)
+(the trailing `*` before `.md` also matches a report with a numeric
+collision suffix, e.g. `...-adversarial-review-2.md` -- see Step 9's
+`ce review-report-path`. `<root.path>` is read from
+`openspec list --store "$CE_OPENSPEC_STORE" --json` in Step 1 below -- if
+you haven't run Step 1 yet, do that first.)
 
-- **One or more files found** -- this is a **follow-up review**. Take the
-  last one (sorted, so the most recent). Read it in full now -- its
-  Findings tables are what Step 8 below verifies against the new code.
-  Also extract its `**Reviewed PR head:**` field (the exact SHA it
-  covered) -- this is the base of the delta you'll diff in Step 5.
-- **None found**, but `CE_PR_NUMBER` is set -- also check the legacy,
-  pre-PR-scoping filename convention as a fallback:
+- **One or more files found** -- these are unambiguously this PR's own
+  (the filename itself encodes `$CE_PR_NUMBER`). This is a **follow-up
+  review**. Take the last one (sorted, so the most recent). Read it in
+  full now -- its Findings tables are what Step 8 below verifies against
+  the new code. Also extract its `**Reviewed PR head:**` field (the exact
+  SHA it covered) -- this is the base of the delta you'll diff in Step 5.
+- **None found** -- also check the legacy, pre-PR-scoping filename
+  convention as a fallback. Unlike the PR-scoped case above, a legacy
+  filename carries **no PR identity at all** -- it could belong to any
+  PR this project has ever reviewed under the old convention -- so it
+  must never be trusted just for being the most recent one:
   ```bash
-  ls "<root.path>/reviews/"*"-adversarial-review.md" 2>/dev/null | grep -v -- '-pr-[0-9]*-adversarial-review\.md$' | sort
+  ls "<root.path>/reviews/"*"-adversarial-review"*.md 2>/dev/null | grep -vE -- '-pr-[0-9]+-adversarial-review(-[0-9]+)?\.md$' | sort
   ```
-  If that finds a file, this is still a **follow-up review**, but treat
-  it as a **legacy previous review**: read it the same way, but note in
-  Step 9 that it predates PR-number scoping and, if this project has ever
-  reviewed more than one pull request, may not be specific to this PR. If
-  it has no `**Reviewed PR head:**` field either (almost certainly true
-  for a report this old), you cannot compute a precise delta -- fall back
-  to reviewing the full `$CE_DIFF_BASE..$CE_DIFF_HEAD` range in Step 5
-  exactly as a first-time review would, and say so explicitly in Step 9's
-  **Follow-up review** field rather than guessing a delta.
+  For each candidate, most recent first, read its `**Pull request:**`
+  field (and, failing that, its title line, which may embed `(PR
+  #<number>)`) and check whether it names *this exact* `$CE_PR_NUMBER` --
+  a GitHub URL (`.../pull/<number>`) or a bare `#<number>` both count.
+  - **Names this exact PR number** -- this is a **follow-up review**;
+    treat this file as a **legacy previous review**: read it the same
+    way as above, but note in Step 9 that it predates PR-number scoping.
+    If it has no `**Reviewed PR head:**` field either (almost certainly
+    true for a report this old), you cannot compute a precise delta --
+    fall back to reviewing the full `$CE_DIFF_BASE..$CE_DIFF_HEAD` range
+    in Step 5 exactly as a first-time review would, and say so explicitly
+    in Step 9's **Follow-up review** field rather than guessing a delta.
+  - **Names a different PR number** -- definitely not this PR's report;
+    do not use it. Check the next-most-recent legacy candidate, if any,
+    the same way.
+  - **Names no PR number at all** (only a head branch, per the template's
+    own older "if known, else the head branch name" allowance) -- you
+    cannot confirm or rule out this candidate. If nothing more specific
+    turns up among the other legacy candidates, treat this as a
+    **first-time review**, but record in Step 9's **Follow-up review**
+    field that a legacy report exists in this project's `reviews/`
+    directory that *might* be this PR's own but could not be confirmed
+    (name its filename) -- never silently adopt its findings as this
+    PR's history. A wrong previous report is worse than none.
 - **Nothing found either way, or `CE_PR_NUMBER` is unset** -- this is a
   **first-time review** of this pull request. Proceed exactly as the rest
   of this command already describes; there is nothing follow-up-specific
@@ -690,13 +716,26 @@ it from the `root.path` read in Step 1, and never invent a different one:
 
 ```bash
 mkdir -p "<root.path>/reviews"
-# CE_PR_NUMBER set (this workspace was created/refreshed by `ce review` --
-# true for every review from now on, including every follow-up):
-# write to: <root.path>/reviews/<YYYY-MM-DD>-pr-$CE_PR_NUMBER-adversarial-review.md
-#
-# CE_PR_NUMBER unset (a legacy workspace, or a plain `ce start --base
-# --head` never resolved from a GitHub PR at all) -- the original,
-# unscoped convention:
+```
+
+**`CE_PR_NUMBER` set** (this workspace was created/refreshed by `ce
+review` -- true for every review from now on, including every follow-up):
+resolve the exact, collision-free path with `ce review-report-path`
+(never hand-construct it) -- more than one review of the same PR can
+legitimately happen on the same calendar day (e.g. two follow-up
+refreshes in quick succession), and this guarantees you never overwrite
+an earlier report from the same day:
+
+```bash
+REPORT_PATH=$(ce review-report-path "<root.path>" "$CE_PR_NUMBER" "<YYYY-MM-DD>")
+# write to: $REPORT_PATH
+```
+
+**`CE_PR_NUMBER` unset** (a legacy workspace, or a plain `ce start --base
+--head` never resolved from a GitHub PR at all) -- the original, unscoped
+convention:
+
+```bash
 # write to: <root.path>/reviews/<YYYY-MM-DD>-adversarial-review.md
 ```
 
@@ -726,7 +765,7 @@ this workspace's type -- never both, and never invent a third variant.
 **Change:** <changeRoot> -- Implementation workspaces only
 **Pull request:** <PR number/URL if known, else the head branch name> -- Existing PR review workspaces only
 **Reviewed PR head:** <full SHA of $CE_DIFF_HEAD at the moment this review ran> -- Existing PR review workspaces only. This exact line is a durable, machine-checkable sentinel -- `ce status`'s stale-review check and a later follow-up review both read it verbatim -- so write it exactly this way, with the real full SHA, never a placeholder or a short SHA.
-**Follow-up review:** <"No -- first review of this pull request", or "Yes -- previous review: <path to the previous report>, previously reviewed head <SHA>", or "Yes (legacy previous review, pre-dates PR-number scoping; delta could not be precisely computed -- reviewed the full range instead)" -- Existing PR review workspaces only, per Step 0's detection>
+**Follow-up review:** <one of, per Step 0's detection -- Existing PR review workspaces only: "No -- first review of this pull request"; "No -- a legacy review report exists in this project's reviews/ directory (`<filename>`) but could not be confirmed as reviewing this PR; treated as a first-time review"; "Yes -- previous review: <path to the previous report>, previously reviewed head <SHA>"; or "Yes (legacy previous review, pre-dates PR-number scoping; delta could not be precisely computed -- reviewed the full range instead)">
 **Reviewed worktree commit:** <full SHA -- human reference only> -- Implementation workspaces only
 **Reviewed worktree fingerprint:** <12-char hash covering the commit plus any uncommitted tracked/untracked implementation changes> -- Implementation workspaces only
 **Reviewed artifacts hash:** <12-char hash covering proposal.md/design.md/tasks.md/specs/, or "N/A -- no artifacts to hash"> -- Implementation workspaces only
@@ -986,7 +1025,18 @@ the next step in terms of the pull request itself instead:
 - Never overwrite or delete a previous review report -- each review
   (first-time or follow-up) writes its own new, dated file. Historical
   review context is recovered by reading prior reports, never by editing
-  them.
+  them. Always resolve the destination path via `ce review-report-path`
+  (Step 9) rather than hand-constructing `<date>-pr-<n>-adversarial-
+  review.md` yourself -- more than one review of the same PR can happen
+  on the same calendar day, and only that command guarantees a
+  collision-free path.
+- Never treat a legacy (unscoped) report in `reviews/` as this PR's own
+  history just because it's the most recent file there -- that directory
+  is shared by every PR review workspace of this project. Confirm its
+  `**Pull request:**` field or title names this exact `$CE_PR_NUMBER`
+  (Step 0) before recovering findings from it or computing a delta
+  against it. A wrong previous report is worse than treating this as a
+  first-time review.
 - Never invent a finding you don't have evidence for -- every finding must
   state the affected requirement/design decision/task, its impact, its
   Area, its Confidence, its Merge impact, and a recommended fix. Evidence

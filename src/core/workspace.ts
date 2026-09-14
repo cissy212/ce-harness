@@ -145,15 +145,33 @@ export type RunnerWorktreeArtifacts = z.infer<typeof RunnerWorktreeArtifactsSche
  * persisted by `ce review` so a later `ce status`/`ce review` can tell
  * which pull request this workspace reviews without parsing `issue`
  * (see `inferPrNumberFromIssue` below for the legacy bridge that exists
- * only because older workspaces predate this field). Deliberately just
- * the number -- never a repository slug -- since the slug is cheaply and
- * reliably re-derived live from the repository's own `origin` remote
- * (see `core/github.ts`'s `parseGithubSlug`, already used identically by
- * `ce publish`) rather than persisted and risking drifting stale if the
- * remote ever changes.
+ * only because older workspaces predate this field). Deliberately no
+ * repository slug -- the slug is cheaply and reliably re-derived live
+ * from the repository's own `origin` remote (see `core/github.ts`'s
+ * `parseGithubSlug`, already used identically by `ce publish`) rather
+ * than persisted and risking drifting stale if the remote ever changes.
  */
 export const PrReviewMetadataSchema = z.object({
   number: z.number().int().positive(),
+  // The PR head SHA this workspace's `diffHead` was *first* set to --
+  // set once, at `ce review` (whether creating a workspace fresh, or
+  // backfilling one that predates `prReview` on its first refresh) --
+  // and never touched by any later refresh, unlike `diffHead` itself
+  // (which a follow-up refresh moves forward to the PR's new head).
+  //
+  // This exists specifically so a *legacy* review report -- one written
+  // before this feature existed, with no `**Reviewed PR head:**` field
+  // of its own -- can still be attributed to the exact head it reviewed,
+  // even after this workspace has since been refreshed one or more
+  // times. `diffHead` alone cannot serve that purpose once it has moved:
+  // a legacy report necessarily reviewed the workspace's *original*
+  // head (refreshing didn't exist yet when it was written), never
+  // whatever `diffHead` happens to hold right now. See
+  // `reviewReports.ts`'s `latestReviewForPr` and `ce status`'s use of
+  // this field -- without it, a workspace refreshed to a new,
+  // not-yet-reviewed head would be misreported as still "current"
+  // simply because `diffHead` now matches the live PR head.
+  initialDiffHead: z.string().min(1),
 });
 
 export type PrReviewMetadata = z.infer<typeof PrReviewMetadataSchema>;

@@ -1565,10 +1565,13 @@ describe("ce status --verbose (integration)", () => {
         await mkdir(join(trusted.root, "reviews"), { recursive: true });
         // A legacy-shaped report: no PR-scoped filename, no "Reviewed PR
         // head" field -- exactly what a report written before this
-        // feature shipped looks like.
+        // feature shipped looks like. It does name this PR via its
+        // **Pull request:** field, though, so it can be safely
+        // attributed (see the "unattributable" tests below for the case
+        // where it can't).
         await writeFile(
           join(trusted.root, "reviews", "2026-05-01-adversarial-review.md"),
-          "# Adversarial Review\n\n**Verdict:** PASS WITH GAPS\n",
+          "# Adversarial Review\n\n**Verdict:** PASS WITH GAPS\n**Pull request:** #403\n",
           "utf8",
         );
 
@@ -1626,6 +1629,184 @@ describe("ce status --verbose (integration)", () => {
         expect(output).toMatch(/Review:\s+done -- verdict PASS/);
         expect(output).not.toMatch(/stale/);
         expect(output).not.toMatch(/Current HEAD:/);
+      });
+
+      it("full transition: A reviewed -> B pushed -> stale -> refreshed to B -> still pending until B is actually reviewed -> then current (regression)", async () => {
+        const { reviewCommand } = await import("../../src/commands/review.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readWorkspace, resolveTrustedOpenSpec, readActivePointer } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { setFakePrSnapshot } = await import("../helpers/fakeGh.js");
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const { baseSha, headSha: headA, baseRefName, headRefName } = await setupSameRepoPr(410);
+        setFakePrSnapshot({
+          number: 410,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headA,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "410" });
+
+        const pointer = await readActivePointer();
+        const trusted = resolveTrustedOpenSpec(await readWorkspace(pointer!.project, pointer!.sanitizedIssue))!;
+
+        // A is reviewed: a legacy-shaped report (no "Reviewed PR head"
+        // field -- exactly the real website-exploration/review-pr-127
+        // shape), but attributable to this PR via its own field.
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+        await writeFile(
+          join(trusted.root, "reviews", "2026-06-01-adversarial-review.md"),
+          "# Adversarial Review\n\n**Verdict:** PASS WITH GAPS\n**Pull request:** #410\n",
+          "utf8",
+        );
+
+        // The PR author pushes B.
+        const headB = await pushFollowupCommit(410, headRefName);
+        setFakePrSnapshot({
+          number: 410,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headB,
+          isCrossRepository: false,
+        });
+
+        // status: stale (A != live B).
+        logSpy.mockClear();
+        await statusCommand();
+        let output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+stale -- PR updated since last review/);
+        expect(output).toMatch(new RegExp(`Reviewed HEAD:\\s+${headA}`));
+        expect(output).toMatch(new RegExp(`Current HEAD:\\s+${headB}`));
+
+        // `ce review` refreshes the workspace to B.
+        logSpy.mockClear();
+        await reviewCommand({ repo: repoDir, prNumber: "410" });
+        const refreshed = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+        expect(refreshed.diffHead).toBe(headB);
+        // initialDiffHead must stay pinned to A -- never advanced by the
+        // refresh -- precisely so the legacy report (which only ever
+        // proved A was reviewed) can't be mistaken for having reviewed B.
+        expect(refreshed.prReview).toEqual({ number: 410, initialDiffHead: headA });
+
+        // Before /adversarial-review actually runs against B: status
+        // must NOT claim this is current/done just because `diffHead`
+        // now happens to equal the live head -- the only completed
+        // review on file still only covers A.
+        logSpy.mockClear();
+        await statusCommand();
+        output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+stale -- PR updated since last review/);
+        expect(output).toMatch(new RegExp(`Reviewed HEAD:\\s+${headA}`));
+        expect(output).toMatch(new RegExp(`Current HEAD:\\s+${headB}`));
+        expect(output).not.toMatch(/done -- verdict/);
+
+        // Now /adversarial-review actually completes a follow-up review
+        // of B: writes a new, PR-scoped report recording B as reviewed.
+        await writeFile(
+          join(trusted.root, "reviews", "2026-06-02-pr-410-adversarial-review.md"),
+          `# Adversarial Review\n\n**Verdict:** PASS\n**Reviewed PR head:** ${headB}\n`,
+          "utf8",
+        );
+
+        logSpy.mockClear();
+        await statusCommand();
+        output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+done -- verdict PASS/);
+        expect(output).not.toMatch(/stale/);
+      });
+
+      it("two legacy PR-review workspaces sharing one project's reviews/ directory never cross-attribute reports (regression)", async () => {
+        const { reviewCommand } = await import("../../src/commands/review.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readWorkspace, resolveTrustedOpenSpec, writeWorkspace } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { nonExistentGhBin, setFakePrSnapshot } = await import("../helpers/fakeGh.js");
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const pr420 = await setupSameRepoPr(420);
+        setFakePrSnapshot({
+          number: 420,
+          title: "t",
+          baseRefName: pr420.baseRefName,
+          baseRefOid: pr420.baseSha,
+          headRefName: pr420.headRefName,
+          headRefOid: pr420.headSha,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "420" });
+
+        const pr421 = await setupSameRepoPr(421, "feature-421");
+        setFakePrSnapshot({
+          number: 421,
+          title: "t",
+          baseRefName: pr421.baseRefName,
+          baseRefOid: pr421.baseSha,
+          headRefName: pr421.headRefName,
+          headRefOid: pr421.headSha,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "421" });
+
+        const project = basenameOf(repoDir);
+        const workspace420 = await readWorkspace(project, "review-pr-420");
+        const trusted = resolveTrustedOpenSpec(workspace420)!;
+
+        // Strip prReview from both to simulate genuinely legacy
+        // workspaces (created before this feature existed), each with
+        // its own legacy (unscoped) report in the SAME shared reviews/
+        // directory -- exactly the real website-exploration project's
+        // shape (PR #124 and PR #127 sharing one store).
+        const { prReview: _dropped420, ...legacy420 } = workspace420;
+        await writeWorkspace(legacy420);
+        const workspace421 = await readWorkspace(project, "review-pr-421");
+        const { prReview: _dropped421, ...legacy421 } = workspace421;
+        await writeWorkspace(legacy421);
+
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+        await writeFile(
+          join(trusted.root, "reviews", "2026-06-01-adversarial-review.md"),
+          "# Adversarial Review: PR 420\n\n**Verdict:** FAIL\n**Pull request:** #420\n",
+          "utf8",
+        );
+        await writeFile(
+          join(trusted.root, "reviews", "2026-06-02-adversarial-review.md"),
+          "# Adversarial Review: PR 421\n\n**Verdict:** PASS\n**Pull request:** #421\n",
+          "utf8",
+        );
+
+        // This test is specifically about *local* report attribution
+        // (never about live staleness), and the fake `gh` fixture always
+        // returns whichever PR snapshot was set most recently regardless
+        // of which PR number is actually requested -- so disable `gh`
+        // entirely here to keep the live check (irrelevant to what this
+        // test verifies) from interfering.
+        const ghlessDir = await mkdtemp(join(tmpdir(), "ce-harness-nogh-"));
+        process.env.CE_GH_BIN = nonExistentGhBin(ghlessDir);
+        try {
+          // review-pr-420's status must show ITS OWN (FAIL) verdict,
+          // never PR 421's PASS -- even though PR 421's report is the
+          // more recent file in the shared directory.
+          logSpy.mockClear();
+          await statusCommand({ workspace: `${project}/review-pr-420` });
+          let output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+          expect(output).toMatch(/Review:\s+done -- verdict FAIL/);
+
+          // review-pr-421's status must show ITS OWN (PASS) verdict.
+          logSpy.mockClear();
+          await statusCommand({ workspace: `${project}/review-pr-421` });
+          output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+          expect(output).toMatch(/Review:\s+done -- verdict PASS/);
+        } finally {
+          await rm(ghlessDir, { recursive: true, force: true });
+        }
       });
     });
   });

@@ -9,6 +9,7 @@ import { openCommand } from "./commands/open.js";
 import { migrateOpenSpecCommand } from "./commands/migrateOpenSpec.js";
 import { retrieveCommand } from "./commands/retrieve.js";
 import { diffScopeCommand } from "./commands/diffScope.js";
+import { reviewReportPathCommand } from "./commands/reviewReportPath.js";
 import { usageCommand } from "./commands/usage.js";
 import { libraryCommand } from "./commands/library.js";
 import { publishCommand } from "./commands/publish.js";
@@ -428,6 +429,28 @@ export async function runCli(): Promise<void> {
     )
     .action(async () => {
       await run(() => diffScopeCommand());
+    });
+
+  program
+    .command("review-report-path")
+    .summary("Resolve a collision-free /adversarial-review report path for a PR review (used by /adversarial-review)")
+    .description(
+      [
+        "Resolves the exact, collision-free path an Existing PR review",
+        "workspace's /adversarial-review should write its report to, for",
+        "<pr-number> on <date> (YYYY-MM-DD, the exact output of",
+        "`date -u +%Y-%m-%d` -- never inferred). More than one review can",
+        "legitimately happen for the same PR on the same calendar day (e.g.",
+        "two follow-up refreshes in quick succession); this appends a numeric",
+        "counter rather than ever resolving to a path that would overwrite an",
+        "earlier report. Read-only -- prints the path, writes nothing itself.",
+      ].join(" "),
+    )
+    .argument("<root-path>", "the OpenSpec store root (root.path from `openspec list --json`)")
+    .argument("<pr-number>", "GitHub pull request number (e.g. $CE_PR_NUMBER)")
+    .argument("<date>", "today's date as YYYY-MM-DD, from `date -u +%Y-%m-%d`")
+    .action(async (rootPath: string, prNumber: string, date: string) => {
+      await run(() => reviewReportPathCommand({ rootPath, prNumber, date }));
     });
 
   // --- Maintenance -------------------------------------------------------

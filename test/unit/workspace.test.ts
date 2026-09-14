@@ -651,7 +651,34 @@ describe("workspace serialization and validation", () => {
       createdAt: new Date().toISOString(),
     };
 
-    expect(WorkspaceSchema.safeParse({ ...base, prReview: { number: 127 } }).success).toBe(false);
+    expect(
+      WorkspaceSchema.safeParse({ ...base, prReview: { number: 127, initialDiffHead: "b".repeat(40) } }).success,
+    ).toBe(false);
+    expect(
+      WorkspaceSchema.safeParse({
+        ...base,
+        diffBase: "a".repeat(40),
+        diffHead: "b".repeat(40),
+        prReview: { number: 127, initialDiffHead: "b".repeat(40) },
+      }).success,
+    ).toBe(true);
+    expect(
+      WorkspaceSchema.safeParse({
+        ...base,
+        diffBase: "a".repeat(40),
+        diffHead: "b".repeat(40),
+        prReview: { number: 0, initialDiffHead: "b".repeat(40) },
+      }).success,
+    ).toBe(false);
+    expect(
+      WorkspaceSchema.safeParse({
+        ...base,
+        diffBase: "a".repeat(40),
+        diffHead: "b".repeat(40),
+        prReview: { number: -1, initialDiffHead: "b".repeat(40) },
+      }).success,
+    ).toBe(false);
+    // initialDiffHead is required whenever prReview is present.
     expect(
       WorkspaceSchema.safeParse({
         ...base,
@@ -659,9 +686,7 @@ describe("workspace serialization and validation", () => {
         diffHead: "b".repeat(40),
         prReview: { number: 127 },
       }).success,
-    ).toBe(true);
-    expect(WorkspaceSchema.safeParse({ ...base, prReview: { number: 0 } }).success).toBe(false);
-    expect(WorkspaceSchema.safeParse({ ...base, prReview: { number: -1 } }).success).toBe(false);
+    ).toBe(false);
   });
 
   it("round-trips prReview through writeWorkspace/readWorkspace", async () => {
@@ -678,11 +703,11 @@ describe("workspace serialization and validation", () => {
       createdAt: new Date().toISOString(),
       diffBase: "a".repeat(40),
       diffHead: "b".repeat(40),
-      prReview: { number: 127 },
+      prReview: { number: 127, initialDiffHead: "b".repeat(40) },
     };
     await writeWorkspace(workspace);
     const loaded = await readWorkspace("demo", "review-pr-127");
-    expect(loaded.prReview).toEqual({ number: 127 });
+    expect(loaded.prReview).toEqual({ number: 127, initialDiffHead: "b".repeat(40) });
   });
 
   it("reads a legacy workspace file with no prReview field as valid, left undefined", async () => {

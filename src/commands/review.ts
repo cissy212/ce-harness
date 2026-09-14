@@ -153,7 +153,7 @@ export async function reviewCommand({ repo, prNumber, runner }: ReviewOptions): 
     base: pr.baseRefOid,
     head: pr.headRefOid,
     runner,
-    prReview: { number: pr.number },
+    prReview: { number: pr.number, initialDiffHead: pr.headRefOid },
   });
 }
 
@@ -214,6 +214,27 @@ async function refreshReviewWorkspace(repoRoot: string, pr: PrSnapshot, existing
 
   const diffMergeBase = await resolveMergeBase(existing.worktreePath, pr.baseRefOid, pr.headRefOid);
 
+  // `initialDiffHead` is the head this workspace's `diffHead` was *first*
+  // ever set to -- preserved verbatim across every refresh, never
+  // overwritten with the new head. This is what lets a legacy report (one
+  // predating PR-number scoping, with no `**Reviewed PR head:**` field of
+  // its own) still be correctly attributed to the exact head it reviewed
+  // even after this workspace has since been refreshed one or more times
+  // -- see `core/workspace.ts`'s `PrReviewMetadataSchema` doc comment.
+  // Backfilled from `existing.diffHead` only the *first* time this
+  // workspace ever gains a `prReview` block (a legacy workspace that
+  // predates the field entirely) -- `existing.diffHead` is still correct
+  // for that one-time backfill specifically because, before this
+  // refresh capability existed, nothing could ever have moved it.
+  const initialDiffHead = existing.prReview?.initialDiffHead ?? existing.diffHead;
+  if (!initialDiffHead) {
+    // Defensive only: `existing.diffHead` is required alongside
+    // `diffBase` for every Existing PR review workspace (see
+    // `WorkspaceSchema`'s own refine) -- this workspace's type already
+    // guarantees it's set. Not a real code path.
+    throw new CeError(`Workspace "${selector}" has no recorded diffHead -- its metadata is invalid.`);
+  }
+
   const updated: Workspace = {
     ...existing,
     diffBase: pr.baseRefOid,
@@ -222,16 +243,16 @@ async function refreshReviewWorkspace(repoRoot: string, pr: PrSnapshot, existing
     // Backfills a legacy workspace (created before `prReview` existed)
     // with structured PR identity -- we already know the number for
     // certain here, since it's exactly the CLI argument this call was
-    // given. Overwritten with the identical value for a workspace that
-    // already had it.
-    prReview: { number: pr.number },
+    // given. `number` and `initialDiffHead` are both stable across every
+    // future refresh once set here.
+    prReview: { number: pr.number, initialDiffHead },
   };
   await writeWorkspace(updated);
 
   console.log(`Pull request #${pr.number} has new commits since workspace "${selector}" was last reviewed.`);
   console.log("");
-  console.log(`Previously reviewed head: ${shortSha(existing.diffHead ?? "unknown")}`);
-  console.log(`New head:                 ${shortSha(pr.headRefOid)}`);
+  console.log(`Previous head: ${shortSha(existing.diffHead ?? "unknown")}`);
+  console.log(`New head:      ${shortSha(pr.headRefOid)}`);
   console.log("");
   console.log("Workspace refreshed for a follow-up review.");
   console.log("");
