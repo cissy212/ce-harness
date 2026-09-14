@@ -1718,7 +1718,136 @@ describe("ce status --verbose (integration)", () => {
         logSpy.mockClear();
         await statusCommand();
         output = logSpy.mock.calls.map((call) => call[0]).join("\n");
-        expect(output).toMatch(/Review:\s+done -- verdict PASS/);
+        // Precise, end-anchored match -- "verdict PASS" alone would also
+        // match "verdict PASS WITH GAPS" as a mere prefix, which would
+        // have silently let the old legacy verdict through undetected.
+        expect(output).toMatch(/Review:\s+done -- verdict PASS\s*$/m);
+        expect(output).not.toMatch(/PASS WITH GAPS/);
+        expect(output).not.toMatch(/stale/);
+      });
+
+      it("a newer PR-scoped follow-up report outranks an older attributable legacy report, never the reverse (regression: real website-exploration/review-pr-127 sequence)", async () => {
+        const { reviewCommand } = await import("../../src/commands/review.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readWorkspace, resolveTrustedOpenSpec, readActivePointer } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { setFakePrSnapshot } = await import("../helpers/fakeGh.js");
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const { baseSha, headSha: headA, baseRefName, headRefName } = await setupSameRepoPr(430);
+        setFakePrSnapshot({
+          number: 430,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headA,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "430" });
+
+        const pointer = await readActivePointer();
+        const trusted = resolveTrustedOpenSpec(await readWorkspace(pointer!.project, pointer!.sanitizedIssue))!;
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+
+        // 1. An older, attributable legacy report for this PR, verdict
+        //    PASS WITH GAPS -- exactly the shape the real project's own
+        //    2026-09-11-adversarial-review.md report has.
+        await writeFile(
+          join(trusted.root, "reviews", "2026-09-11-adversarial-review.md"),
+          "# Adversarial Review: Feature (PR #430)\n\n**Verdict:** PASS WITH GAPS\n**Pull request:** https://github.com/example/example/pull/430\n",
+          "utf8",
+        );
+
+        const headB = await pushFollowupCommit(430, headRefName);
+        setFakePrSnapshot({
+          number: 430,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headB,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "430" });
+
+        // 2. A newer, PR-scoped follow-up report for the same PR,
+        //    verdict PASS, reviewed head B.
+        await writeFile(
+          join(trusted.root, "reviews", "2026-09-14-pr-430-adversarial-review.md"),
+          `# Adversarial Review\n\n**Verdict:** PASS\n**Reviewed PR head:** ${headB}\n`,
+          "utf8",
+        );
+
+        // 3. `ce status` must resolve PASS/B -- the newer, unambiguous
+        //    PR-scoped report -- never the older legacy verdict.
+        logSpy.mockClear();
+        await statusCommand();
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+done -- verdict PASS\s*$/m);
+        expect(output).not.toMatch(/PASS WITH GAPS/);
+        expect(output).not.toMatch(/stale/);
+      });
+
+      it("same-day legacy and PR-scoped reports for the same PR: the PR-scoped one still wins, regardless of filename lexical order (regression)", async () => {
+        const { reviewCommand } = await import("../../src/commands/review.js");
+        const { statusCommand } = await import("../../src/commands/status.js");
+        const { readWorkspace, resolveTrustedOpenSpec, readActivePointer } = await import(
+          "../../src/core/workspace.js"
+        );
+        const { setFakePrSnapshot } = await import("../helpers/fakeGh.js");
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+        const { baseSha, headSha: headA, baseRefName, headRefName } = await setupSameRepoPr(431);
+        setFakePrSnapshot({
+          number: 431,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headA,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "431" });
+
+        const pointer = await readActivePointer();
+        const trusted = resolveTrustedOpenSpec(await readWorkspace(pointer!.project, pointer!.sanitizedIssue))!;
+        await mkdir(join(trusted.root, "reviews"), { recursive: true });
+
+        const headB = await pushFollowupCommit(431, headRefName);
+        setFakePrSnapshot({
+          number: 431,
+          title: "t",
+          baseRefName,
+          baseRefOid: baseSha,
+          headRefName,
+          headRefOid: headB,
+          isCrossRepository: false,
+        });
+        await reviewCommand({ repo: repoDir, prNumber: "431" });
+
+        // Both reports dated the same day; the legacy filename
+        // ("2026-09-14-adversarial-review.md") sorts *after* the
+        // PR-scoped one ("2026-09-14-pr-431-...") lexically ("a" < "p"),
+        // so a naive "sort all filenames, take the last" approach would
+        // pick the legacy one -- it must not.
+        await writeFile(
+          join(trusted.root, "reviews", "2026-09-14-adversarial-review.md"),
+          "**Verdict:** FAIL\n**Pull request:** #431\n",
+          "utf8",
+        );
+        await writeFile(
+          join(trusted.root, "reviews", "2026-09-14-pr-431-adversarial-review.md"),
+          `**Verdict:** PASS\n**Reviewed PR head:** ${headB}\n`,
+          "utf8",
+        );
+
+        logSpy.mockClear();
+        await statusCommand();
+        const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+        expect(output).toMatch(/Review:\s+done -- verdict PASS\s*$/m);
+        expect(output).not.toMatch(/FAIL/);
         expect(output).not.toMatch(/stale/);
       });
 

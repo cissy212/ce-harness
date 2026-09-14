@@ -123,6 +123,68 @@ describe("reviewReports: PR-scoped lookup", () => {
     expect(result.kind === "found" && result.verdict).toBe("PASS");
   });
 
+  it("a PR-scoped report outranks an attributable legacy report even when the legacy report is the newer file (regression)", async () => {
+    // Mirrors the real website-exploration/review-pr-127 sequence: an
+    // older, attributable legacy report with verdict PASS WITH GAPS,
+    // followed later by a newer PR-scoped follow-up report with verdict
+    // PASS and a different reviewed head -- the PR-scoped report must
+    // win regardless of which file is chronologically newer, since a
+    // PR-scoped report is unambiguous by construction and a legacy one
+    // never is.
+    await writeReport(
+      "2026-09-11-adversarial-review.md",
+      "# Adversarial Review: Feature Y (PR #127)\n\n**Verdict:** PASS WITH GAPS\n**Pull request:** https://github.com/example/example/pull/127\n",
+    );
+    await writeReport(
+      `2026-09-14-${prScopedReportSuffix(127)}.md`,
+      "**Verdict:** PASS\n**Reviewed PR head:** e1e5b48f104ba32679ab307a9fb51a588c9dca96\n",
+    );
+
+    const result = await latestReviewForPr(durableRoot, 127);
+    expect(result).toEqual({
+      kind: "found",
+      filename: `2026-09-14-${prScopedReportSuffix(127)}.md`,
+      verdict: "PASS",
+      reviewedHead: "e1e5b48f104ba32679ab307a9fb51a588c9dca96",
+      legacyFallback: false,
+    });
+  });
+
+  it("a PR-scoped report outranks an attributable legacy report even when the legacy report is CHRONOLOGICALLY LATER, on paper, than the scoped one", async () => {
+    // Deliberately the inverse date ordering of the test above -- proves
+    // the PR-scoped/legacy preference is a *type* preference, never an
+    // artifact of whichever file happens to sort last.
+    await writeReport(
+      `2026-06-01-${prScopedReportSuffix(127)}.md`,
+      "**Verdict:** PASS\n**Reviewed PR head:** bbb0000\n",
+    );
+    await writeReport(
+      "2026-09-11-adversarial-review.md",
+      "**Verdict:** FAIL\n**Pull request:** #127\n",
+    );
+
+    const result = await latestReviewForPr(durableRoot, 127);
+    expect(result.kind === "found" && result.legacyFallback).toBe(false);
+    expect(result.kind === "found" && result.verdict).toBe("PASS");
+    expect(result.kind === "found" && result.reviewedHead).toBe("bbb0000");
+  });
+
+  it("a PR-scoped report outranks an attributable legacy report even when both are dated the same day (filename ordering must never decide this)", async () => {
+    await writeReport(
+      "2026-09-14-adversarial-review.md", // legacy, same date, sorts AFTER the scoped filename below lexically ("a" < "p")
+      "**Verdict:** FAIL\n**Pull request:** #127\n",
+    );
+    await writeReport(
+      `2026-09-14-${prScopedReportSuffix(127)}.md`,
+      "**Verdict:** PASS\n**Reviewed PR head:** ccc0000\n",
+    );
+
+    const result = await latestReviewForPr(durableRoot, 127);
+    expect(result.kind === "found" && result.legacyFallback).toBe(false);
+    expect(result.kind === "found" && result.verdict).toBe("PASS");
+    expect(result.kind === "found" && result.reviewedHead).toBe("ccc0000");
+  });
+
   it("legacy fallback never matches a PR-scoped report belonging to a different PR", async () => {
     await writeReport(`2026-06-01-${prScopedReportSuffix(128)}.md`, "**Verdict:** PASS\n**Reviewed PR head:** other\n");
 
