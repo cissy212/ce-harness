@@ -472,6 +472,12 @@ read reasoning lenses **only** through the canonical, runner-agnostic
 directory at `"$CE_LENSES_DIR"` (injected by `ce start`); never assume or
 hardcode any runner-specific path such as `opencode/agents/`.
 
+**First-time review, or a follow-up review where Step 0 could not
+recover which lenses the previous review applied at all** (a report old
+enough to predate even the "Lenses applied" field): run the full
+selection algorithm below over the whole review baseline and diff
+gathered in Steps 3/5.
+
 1. If `CE_LENSES_DIR` is unset, or the directory contains neither a
    `*.md` file directly inside it nor any immediate subdirectory's own
    `SKILL.md`, skip this step entirely -- proceed without a lens and
@@ -518,9 +524,79 @@ hardcode any runner-specific path such as `opencode/agents/`.
    explained and re-asked, duplicates de-duplicated, order preserved) and
    use it instead of steps 2-7.
 
-If one or more lenses are selected, load each one's file as an ordinary
-reasoning input for the rest of this review -- exactly like
-`proposal.md`, `design.md`, or `tasks.md`. Do not spawn a subagent,
+**Follow-up review where Step 0 recovered the previous review's own
+"Lenses applied" list** (read from that report's Lens Coverage section
+in Step 0/3): do not silently reuse that list unexamined, and do not
+re-run the full algorithm above from scratch either -- carry it forward
+as settled, human-approved context, then independently check the delta
+for anything new. This is the only way to satisfy both halves of a
+follow-up review's lens semantics at once: a previously-approved lens is
+never re-litigated, but a delta can still expose a concern the original
+diff never did.
+
+a. **Carry forward.** Take the previous review's "Lenses applied" list
+   verbatim (names only -- ignore any parenthetical rationale attached to
+   it). These are already a human's approved decision for this PR: never
+   re-ask about them, and never drop one merely because you personally
+   would not have picked it fresh from today's diff alone -- a human
+   already decided it matters here.
+b. **List every available lens, in full, exactly like step 2 of the
+   first-time algorithm above** -- never reuse or assume the previous
+   review's own catalog is still accurate. A lens can be added to (or,
+   rarely, removed from) `$CE_LENSES_DIR` between reviews (see `ce
+   refresh`), so the available set is never assumed unchanged just
+   because this is the same PR.
+c. **Independently compare every available lens's description --
+   including the ones already carried forward -- against the delta
+   specifically**: the `<previousHead>..$CE_DIFF_HEAD` range from Step 5
+   (or, when Step 0 could only recover the previously-reviewed head
+   informally and no precise delta exists, the full range Step 5 falls
+   back to reviewing instead). **This is the step that actually
+   discovers something new, and it is mandatory even when the
+   carried-forward lenses still obviously apply.** Checking only whether
+   the *cumulative* diff still supports the carried-forward lenses is not
+   enough, and is exactly the mistake this rule exists to prevent: the
+   fact that the file(s) a carried-forward lens originally cared about
+   are still present *somewhere* in the cumulative diff says nothing
+   about what the *new* commits specifically did. A delta that is mostly
+   comment/dead-code/dependency cleanup, for example, can newly match a
+   comments-and-documentation-hygiene lens that the original, UI-focused
+   diff never would have -- entirely independent of whether the
+   originally-matched UI files are still sitting elsewhere in the full
+   range.
+d. Any lens that matches the delta and is **already** in the
+   carried-forward set from step a: no action needed -- it's already
+   applied, nothing to add or ask about.
+e. Any lens that matches the delta and is **not** already carried
+   forward: this is a newly-discovered candidate for this round.
+   - Zero newly-discovered candidates: apply nothing further. Continue
+     with only the carried-forward lenses, exactly as before -- no ask.
+   - Exactly one newly-discovered candidate: select it automatically,
+     alongside the carried-forward lenses -- no need to ask (mirrors
+     step 5 of the first-time algorithm above).
+   - Two or more newly-discovered candidates: ask the user, but **only
+     about these new candidates** -- never re-litigate the
+     already-decided, carried-forward ones from step a. Same acceptance
+     rules as step 7 of the first-time algorithm above (free-form list,
+     `all`, `none`; unresolvable names explained and re-asked; duplicates
+     de-duplicated; order preserved).
+f. Always allow an explicit user override for the newly-discovered set
+   the same way step 8 of the first-time algorithm allows one: if the
+   user has already named specific additional lenses (or "none") before
+   this step runs, use that instead of step e's ask -- but this never
+   overrides the carried-forward set from step a, which is never up for
+   re-litigation via this path either.
+
+Either way, record in the "Lens Coverage" section (Step 9) which lenses
+were carried forward without re-asking, which (if any) were newly
+discovered from the delta and how, and which lenses were considered
+against the delta but ruled out -- a fresh judgment made this round,
+never copied verbatim from the previous review's own "Other lenses
+considered" list.
+
+If one or more lenses are selected (by either path above), load each
+one's file as an ordinary reasoning input for the rest of this review --
+exactly like `proposal.md`, `design.md`, or `tasks.md`. Do not spawn a subagent,
 delegate to another conversation, or treat any of them as a
 runner-specific skill/agent invocation; each is simply another document
 you have read. Apply each as an additional layer on top of the same
@@ -810,6 +886,12 @@ either way. -->
 
 **Lenses applied:** <comma-separated lens names, in the order applied, or "None">
 **Other lenses considered:** <other lens names found in $CE_LENSES_DIR but not selected, or "None found">
+
+<!-- Follow-up review only (Step 0 recovered a previous review's own
+"Lenses applied" list) -- omit these two lines entirely for a first-time
+review: -->
+**Carried forward (no re-ask):** <lens names taken verbatim from the previous review's own "Lenses applied", or "N/A -- first-time review">
+**Newly discovered from the delta:** <lens names matched only when comparing the catalog against `<previousHead>..$CE_DIFF_HEAD` (or the full range, if no precise delta), not already in the carried-forward set, or "None -- the delta introduced no additional lens-relevant concern">
 
 | Lens | Selection rationale | Lens checks applied | Additional checks beyond the baseline pass |
 |---|---|---|---|

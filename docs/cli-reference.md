@@ -232,7 +232,21 @@ previous finding against the new code (classifying it `RESOLVED`,
 `PARTIALLY RESOLVED`, `NOT RESOLVED`, or `NO LONGER APPLICABLE`), looks
 for regressions or new issues in the delta, and produces a fresh verdict
 for the PR's current head — without discarding or overwriting the
-previous report, which stays exactly where it was.
+previous report, which stays exactly where it was. It also handles
+[reasoning lenses](workflow-guide.md#reasoning-lenses) the same way:
+lenses a human already approved in the previous review are carried
+forward without re-asking, but the full lens catalog is independently
+re-checked against the new delta, and only a genuinely new match is
+ever proposed (auto-applied if exactly one, asked about if two or more)
+— never the already-decided ones.
+
+If the harness's own lens library has grown since this workspace was
+created (a new lens vendored into a newer ce-harness release), run `ce
+refresh` first so `/adversarial-review` can actually see it —
+`CE_LENSES_DIR` is populated once at `ce start`/`ce review` time and
+never updated automatically. `ce refresh` additively syncs it: any lens
+missing from the workspace gets added, and anything already there
+(harness-written or your own) is left completely untouched.
 
 `ce status` surfaces staleness too, best-effort (it needs `gh` installed
 and authenticated, and only checks a workspace `ce review` created):

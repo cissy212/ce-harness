@@ -63,6 +63,17 @@ pass, never a substitute for it and never a reason to repeat that
 baseline — each is loaded as an ordinary document to read, never spawned
 as a separate agent.
 
+**A follow-up PR review never re-asks about a lens a human already
+approved** — it recovers the previous review's own applied-lens list as
+settled context — but it also never just assumes that list still covers
+everything: it independently re-runs the same matching pass against the
+new delta specifically, and only asks (or auto-applies, if there's
+exactly one) about lenses that turn up newly there. A delta that's
+mostly comment or dead-code cleanup, for example, can newly match a
+lens the original, UI-focused diff never would have, entirely
+independent of whether the files that matched originally are still
+present elsewhere in the cumulative diff.
+
 The lenses shipped today:
 
 | Lens | Use when reasoning about... |

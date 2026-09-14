@@ -326,6 +326,116 @@ describe("ce refresh (integration)", () => {
     expect(output).toMatch(/Nothing to refresh/);
     expect(existsSync(join(worktreePath, ".claude"))).toBe(false);
   });
+
+  describe("reasoning lenses (additive sync)", () => {
+    it("reports up to date when the workspace already has every lens the template library currently has (none, in this fake root)", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { refreshCommand } = await import("../../src/commands/refresh.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await refreshCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Reasoning lenses: already up to date\./);
+      expect(output).not.toMatch(/Reasoning lenses added:/);
+    });
+
+    it("adds a flat .md lens the template library has gained since the workspace was created", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { refreshCommand } = await import("../../src/commands/refresh.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+      const lensesDir = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1", "lenses");
+      expect(existsSync(join(lensesDir, "new-lens.md"))).toBe(false);
+
+      // The harness's template library gains a lens after this workspace
+      // was created.
+      await mkdir(join(fakeTemplatesDir, "lenses"), { recursive: true });
+      await writeFile(
+        join(fakeTemplatesDir, "lenses", "new-lens.md"),
+        "---\nname: new-lens\ndescription: a newly vendored lens\n---\n\n# New Lens\n",
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await refreshCommand();
+
+      expect(await readFile(join(lensesDir, "new-lens.md"), "utf8")).toContain("a newly vendored lens");
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Reasoning lenses added: new-lens\.md/);
+    });
+
+    it("adds a vendored Agent Skill lens (a subdirectory's own SKILL.md), not just flat .md lenses", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { refreshCommand } = await import("../../src/commands/refresh.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+      const lensesDir = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1", "lenses");
+
+      await mkdir(join(fakeTemplatesDir, "lenses", "comment-cleanup"), { recursive: true });
+      await writeFile(
+        join(fakeTemplatesDir, "lenses", "comment-cleanup", "SKILL.md"),
+        "---\nname: comment-cleanup\ndescription: comment hygiene\n---\n\n# Comment Guidelines\n",
+        "utf8",
+      );
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await refreshCommand();
+
+      expect(existsSync(join(lensesDir, "comment-cleanup", "SKILL.md"))).toBe(true);
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Reasoning lenses added: comment-cleanup/);
+    });
+
+    it("never overwrites an existing lens file, even if the template's content has since changed", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { refreshCommand } = await import("../../src/commands/refresh.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+      const lensesDir = join(harnessHomeDir, "workspaces", basenameOf(repoDir), "issue-1", "lenses");
+      await mkdir(join(fakeTemplatesDir, "lenses"), { recursive: true });
+      await writeFile(join(fakeTemplatesDir, "lenses", "custom.md"), "template version", "utf8");
+
+      // Pre-existing entry at that same path in the workspace -- whether a
+      // prior harness-written lens or a user's own hand-edit, this
+      // function has no way (and no need) to tell the difference; it must
+      // never touch it either way.
+      await mkdir(lensesDir, { recursive: true });
+      await writeFile(join(lensesDir, "custom.md"), "user's own content, must survive", "utf8");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await refreshCommand();
+
+      expect(await readFile(join(lensesDir, "custom.md"), "utf8")).toBe("user's own content, must survive");
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).not.toMatch(/custom\.md/);
+      expect(output).toMatch(/Reasoning lenses: already up to date\./);
+    });
+
+    it("a repeated refresh after adding a lens is idempotent -- reports up to date the second time", async () => {
+      const { startCommand } = await import("../../src/commands/start.js");
+      const { refreshCommand } = await import("../../src/commands/refresh.js");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await startCommand({ repo: repoDir, issue: "issue-1", runner: "claude" });
+
+      await mkdir(join(fakeTemplatesDir, "lenses"), { recursive: true });
+      await writeFile(join(fakeTemplatesDir, "lenses", "new-lens.md"), "content", "utf8");
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await refreshCommand();
+      logSpy.mockClear();
+      await refreshCommand();
+
+      const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(output).toMatch(/Reasoning lenses: already up to date\./);
+      expect(output).not.toMatch(/Reasoning lenses added:/);
+    });
+  });
 });
 
 function basenameOf(path: string): string {

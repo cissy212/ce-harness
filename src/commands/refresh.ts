@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { CeError } from "../core/errors.js";
+import { expectedLensesDir, refreshLensesDir } from "../core/lenses.js";
 import { readActivePointer, readWorkspace, writeWorkspace } from "../core/workspace.js";
 import { resolveRunner } from "../core/runners/index.js";
 
@@ -14,9 +15,18 @@ import { resolveRunner } from "../core/runners/index.js";
  * external OpenSpec store). See `RunnerSpec.refreshConfig` for exactly
  * what "harness-managed" and "safe to overwrite" mean here.
  *
+ * Also additively syncs the workspace's canonical, runner-agnostic
+ * `lenses/` directory (see `core/lenses.ts`'s `refreshLensesDir`) --
+ * unlike the runner-config refresh above, this only ever adds a lens
+ * the template library has gained since this workspace was created; it
+ * never overwrites or removes anything already there, harness-written or
+ * user-added, since there is no hash-tracking scheme for lenses to prove
+ * an existing one is still untouched.
+ *
  * Deliberately never called automatically by `ce resume` -- see that
  * command's own docstring for why. This is the only command that ever
- * writes worktree-managed config files after `ce start`.
+ * writes worktree-managed config files (or adds to the lenses directory)
+ * after `ce start`.
  */
 export async function refreshCommand(): Promise<void> {
   const pointer = await readActivePointer();
@@ -41,6 +51,7 @@ export async function refreshCommand(): Promise<void> {
     { workspacePath: workspace.workspacePath, worktreePath: workspace.worktreePath },
     workspace,
   );
+  const lensResult = await refreshLensesDir(workspace.workspacePath);
 
   workspace = {
     ...workspace,
@@ -68,5 +79,16 @@ export async function refreshCommand(): Promise<void> {
   }
   if (result.updated.length === 0 && result.unchanged.length === 0 && result.skipped.length === 0) {
     console.log("  Nothing to refresh for this runner.");
+  }
+
+  console.log("");
+  if (lensResult.blockedByNonDirectory) {
+    console.log(
+      `  Reasoning lenses: could not sync -- "${expectedLensesDir(workspace.workspacePath)}" exists but is not a directory.`,
+    );
+  } else if (lensResult.written.length > 0) {
+    console.log(`  Reasoning lenses added: ${lensResult.written.join(", ")}`);
+  } else {
+    console.log("  Reasoning lenses: already up to date.");
   }
 }

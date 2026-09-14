@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { copyTemplates } from "./templates.js";
+import { copyTemplates, copyTemplatesSkippingCollisions, type CollisionAwareCopyResult } from "./templates.js";
 
 /**
  * Canonical, runner-agnostic directory of reasoning lenses for a workspace.
@@ -49,4 +49,32 @@ export async function createLensesDir(workspacePath: string): Promise<string> {
 /** True if the workspace's canonical lens directory exists on disk. */
 export function lensesDirExists(workspacePath: string): boolean {
   return existsSync(expectedLensesDir(workspacePath));
+}
+
+/**
+ * Additively syncs `<workspacePath>/lenses` against the harness's
+ * *current* template library -- the `ce refresh` counterpart to
+ * `createLensesDir`, for a workspace that already exists.
+ *
+ * Unlike `RunnerSpec.refreshConfig`'s command-file refresh, this never
+ * overwrites an existing entry, harness-written or not: `createLensesDir`
+ * never recorded which lens files it wrote (there is no hash-tracking
+ * scheme for lenses, unlike `commandsManagedHashes`), so there is no way
+ * to prove an existing lens file is still exactly what ce-harness itself
+ * last wrote there -- and no need to, since the only thing this needs to
+ * fix is a lens the harness's template library has gained *since* this
+ * workspace was created (see `copyTemplatesSkippingCollisions`'s own
+ * collision-safe, add-only semantics). A lens file the user hand-edited,
+ * or dropped in themselves, is therefore always left completely alone,
+ * exactly like an already-existing entry from the harness's own library.
+ *
+ * A brand-new workspace already gets every current lens at `ce start`
+ * time (`createLensesDir`); this only ever has something to add for a
+ * workspace that predates a lens added to `templates/lenses/` later --
+ * which matters most for a long-lived or repeatedly-refreshed review
+ * workspace (see `ce review`'s follow-up refresh and
+ * `templates/commands/adversarial-review.md`'s Step 7).
+ */
+export async function refreshLensesDir(workspacePath: string): Promise<CollisionAwareCopyResult> {
+  return copyTemplatesSkippingCollisions(LENSES_TEMPLATE_CATEGORY, expectedLensesDir(workspacePath));
 }

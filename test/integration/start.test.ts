@@ -5048,6 +5048,46 @@ describe("ce start (integration)", () => {
         }
       });
 
+      it("Step 7's first-time lens-selection algorithm (steps 1-8) is fully intact and untouched by the follow-up branch", async () => {
+        const content = await readTemplate();
+        const step7 = content.slice(content.indexOf("## 7. Select"), content.indexOf("## 8. Adversarial pass"));
+
+        expect(step7).toMatch(/1\. If `CE_LENSES_DIR` is unset/);
+        expect(step7).toMatch(/2\. Otherwise, list every available lens/);
+        expect(step7).toMatch(/3\. Compare each description against the review baseline/);
+        expect(step7).toMatch(/4\. If both an operational\/runtime concern/);
+        expect(step7).toMatch(/5\. If exactly one lens clearly matches/);
+        expect(step7).toMatch(/6\. If no lens clearly matches/);
+        expect(step7).toMatch(/7\. If two or more lenses match/);
+        expect(step7).toMatch(/8\. Always allow an explicit user override.*use it instead of steps 2-7\./s);
+      });
+
+      it("Step 7 adds an explicit follow-up branch: carry forward previously-applied lenses, then independently discover from the delta", async () => {
+        const content = await readTemplate();
+        const step7 = content
+          .slice(content.indexOf("## 7. Select"), content.indexOf("## 8. Adversarial pass"))
+          .replace(/\s+/g, " ");
+
+        expect(step7).toMatch(/Follow-up review where Step 0 recovered the previous review's own "Lenses applied" list/);
+        // Carry forward without re-asking.
+        expect(step7).toMatch(/never re-ask about them/);
+        // Independent, delta-specific re-discovery is mandatory, not optional.
+        expect(step7).toMatch(/against the delta specifically/);
+        expect(step7).toMatch(/mandatory even when the carried-forward lenses still obviously apply/);
+        // Only newly-discovered candidates are ever asked about, never the carried-forward set.
+        expect(step7).toMatch(/never re-litigate the already-decided, carried-forward ones/);
+        expect(step7).toMatch(/Two or more newly-discovered candidates: ask the user, but \*\*only about these new candidates\*\*/);
+        // Explicitly calls out the exact failure mode this branch exists to prevent.
+        expect(step7).toMatch(/Checking only whether the \*cumulative\* diff still supports the carried-forward lenses is not enough/);
+      });
+
+      it("the Lens Coverage report section records carried-forward vs. newly-discovered lenses for a follow-up review", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(/\*\*Carried forward \(no re-ask\):\*\*/);
+        expect(content).toMatch(/\*\*Newly discovered from the delta:\*\*/);
+      });
+
       it("still preserves the intro's dual-mode framing without altering the two locked lidr-specboot sentences verbatim", async () => {
         const content = await readTemplate();
 
