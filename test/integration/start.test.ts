@@ -4366,6 +4366,39 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/a past decision\s*\n?\s*can itself turn out to be wrong/i);
     });
 
+    describe("Implementation-workspace follow-up reconciliation (generalized from the PR-review case)", () => {
+      it("Step 4 detects a prior /adversarial-review report for an Implementation-workspace change and classifies its findings", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(
+          /Additionally, for an Implementation workspace: look for a prior\s*\n?\s*`\/adversarial-review` report of your own/,
+        );
+        expect(content).toMatch(/"<changeRoot>\/reports\/"\*"-adversarial-review\.md"/);
+        expect(content).toMatch(/`RESOLVED`,\s*\n?\s*`PARTIALLY RESOLVED`, `NOT RESOLVED`, or `NO LONGER APPLICABLE`/);
+        // Reconciling a finding must never let it silently vanish from
+        // the tables /archive's hard gate actually reads.
+        expect(content).toMatch(/never a way\s*\n?\s*to make it disappear from the tables/);
+      });
+
+      it("Step 5 computes a delta for an Implementation-workspace follow-up, anchored on the prior report's Reviewed worktree commit", async () => {
+        const content = await readTemplate();
+
+        expect(content).toMatch(
+          /Implementation workspace, follow-up adversarial review only/,
+        );
+        expect(content).toMatch(/<previousHead>\.\.HEAD/);
+      });
+
+      it("Step 9's Follow-up Review section is no longer restricted to Existing PR review workspaces", async () => {
+        const content = await readTemplate();
+
+        expect(content).not.toMatch(/Existing PR review workspace only, and only when Step 0 detected a/);
+        const section = content.slice(content.indexOf("## Follow-up Review"), content.indexOf("## Risk-Mitigating"));
+        expect(section).toMatch(/Implementation-workspace change's own\s*\n?\s*prior \/adversarial-review report/);
+        expect(section).toMatch(/Reviewed worktree commit/);
+      });
+    });
+
     it("passes --store \"$CE_OPENSPEC_STORE\" on every concrete openspec invocation (list, status)", async () => {
       const content = await readTemplate();
 

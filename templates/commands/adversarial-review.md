@@ -361,6 +361,37 @@ Avoid redoing the entire verification pass move-for-move; reuse the prior
 report's evidence where it's genuinely sufficient, and spend your effort on
 challenging it and looking beyond it, not re-deriving it.
 
+**Additionally, for an Implementation workspace: look for a prior
+`/adversarial-review` report of your own.** This is separate from (and
+never a substitute for) the verify-report challenge above -- a change can
+have a prior verify report, a prior adversarial-review report, both, or
+neither, independently.
+
+```bash
+ls "<changeRoot>/reports/"*"-adversarial-review.md" 2>/dev/null | sort
+```
+
+**If one or more exist:** this is a **follow-up adversarial review** of
+this same change. Take the most recent (sorted, so the last one). Read it
+in full now -- its Findings tables are what you reconcile below. For
+each finding in its "Findings Affecting This Change" and "Pre-Existing or
+Adjacent Issues" tables, check it against the current worktree state and
+classify it exactly the same way, using exactly the same four labels, as
+the Existing-PR-review-workspace follow-up branch above: `RESOLVED`,
+`PARTIALLY RESOLVED`, `NOT RESOLVED`, or `NO LONGER APPLICABLE`, each with
+cited evidence. Do this for *every* finding in the prior report, not only
+the ones that look interesting. Record the full table in the "Follow-up
+Review" section of the report (Step 9) -- this section is no longer
+Existing-PR-review-workspace-only; it applies here too whenever a prior
+`/adversarial-review` report was found. A finding classified `NOT
+RESOLVED` or `PARTIALLY RESOLVED` must still appear, with its own Merge
+impact tag, in "Findings Affecting This Change" or "Pre-Existing or
+Adjacent Issues" below (Step 8) -- reconciling a finding is never a way
+to make it disappear from the tables `/archive`'s gate actually reads.
+
+**If none exists:** this is a first-time adversarial review of this
+change -- proceed normally; the Follow-up Review section does not apply.
+
 ## 5. Load the implementation side
 
 Determine the diff scope, entirely inside `$CE_WORKTREE`:
@@ -427,6 +458,24 @@ remains the baseline for whether the PR *as a whole* is now correct; the
 delta is additional, narrower context specifically for "what actually
 changed since I last looked," so Step 8's regression pass can focus its
 attention there first before it's satisfied nothing new was missed.
+
+**Implementation workspace, follow-up adversarial review only** (Step 4
+found a prior `/adversarial-review` report for this change): compute the
+same kind of delta, anchored on that prior report's own `**Reviewed
+worktree commit:**` field (call it `<previousHead>`) instead of a
+`**Reviewed PR head:**` field, which doesn't exist for this workspace
+type:
+
+```bash
+git -C "$CE_WORKTREE" log --oneline "<previousHead>..HEAD"
+git -C "$CE_WORKTREE" diff "<previousHead>...HEAD"
+```
+
+Same rationale as the PR-review case: the full merge-base diff above
+remains the baseline for whether the change as a whole is now correct;
+this delta is additional, narrower context for what changed since the
+prior adversarial-review run specifically, so Step 8's reconciliation
+pass can focus there first.
 
 ## 6. Baseline adversarial pass (runner- and lens-independent)
 
@@ -665,14 +714,17 @@ each PR-description claim (Existing PR review workspace):
 6. Fold in whatever the Step 6 baseline pass and the Step 7 lens (if any)
    surfaced -- this step is where every finding from every source gets
    classified, not just what's found fresh here.
-7. **Follow-up review only:** look specifically for regressions or new
-   issues introduced by the delta identified in Step 5 (`<previousHead>..
-   $CE_DIFF_HEAD`) -- new findings that weren't in the previous report at
-   all, not the previously-known findings Step 4 already classified.
-   Every finding Step 4 classified `NOT RESOLVED` or `PARTIALLY RESOLVED`
-   is carried forward into this report's Findings tables below (Step 9)
-   with its classification noted, not dropped just because it was
-   already known -- a finding that's still there is still a finding.
+7. **Follow-up review only** (Existing PR review, or an Implementation
+   workspace with a prior `/adversarial-review` report): look specifically
+   for regressions or new issues introduced by the delta identified in
+   Step 5 (`<previousHead>..$CE_DIFF_HEAD` for a PR review,
+   `<previousHead>..HEAD` for an Implementation workspace) -- new findings
+   that weren't in the previous report at all, not the previously-known
+   findings Step 4 already classified. Every finding Step 4 classified
+   `NOT RESOLVED` or `PARTIALLY RESOLVED` is carried forward into this
+   report's Findings tables below (Step 9) with its classification noted,
+   not dropped just because it was already known -- a finding that's
+   still there is still a finding.
 
 ### Classify each finding
 
@@ -859,7 +911,7 @@ this workspace's type -- never both, and never invent a third variant.
 **Change:** <changeRoot> -- Implementation workspaces only
 **Pull request:** <PR number/URL if known, else the head branch name> -- Existing PR review workspaces only
 **Reviewed PR head:** <full SHA of $CE_DIFF_HEAD at the moment this review ran> -- Existing PR review workspaces only. This exact line is a durable, machine-checkable sentinel -- `ce status`'s stale-review check and a later follow-up review both read it verbatim -- so write it exactly this way, with the real full SHA, never a placeholder or a short SHA.
-**Follow-up review:** <one of, per Step 0's detection -- Existing PR review workspaces only: "No -- first review of this pull request"; "No -- a legacy review report exists in this project's reviews/ directory (`<filename>`) but could not be confirmed as reviewing this PR; treated as a first-time review"; "Yes -- previous review: <path to the previous report>, previously reviewed head <SHA>"; or "Yes (legacy previous review, pre-dates PR-number scoping; delta could not be precisely computed -- reviewed the full range instead)">
+**Follow-up review:** <one of -- **Existing PR review workspace**, per Step 0's detection: "No -- first review of this pull request"; "No -- a legacy review report exists in this project's reviews/ directory (`<filename>`) but could not be confirmed as reviewing this PR; treated as a first-time review"; "Yes -- previous review: <path to the previous report>, previously reviewed head <SHA>"; or "Yes (legacy previous review, pre-dates PR-number scoping; delta could not be precisely computed -- reviewed the full range instead)" -- **Implementation workspace**, per Step 4's detection: "No -- first adversarial review of this change"; or "Yes -- previous review: <path to the previous report>, previously reviewed worktree commit <SHA>">
 **Reviewed worktree commit:** <full SHA -- human reference only> -- Implementation workspaces only
 **Reviewed worktree fingerprint:** <12-char hash covering the commit plus any uncommitted tracked/untracked implementation changes> -- Implementation workspaces only
 **Reviewed artifacts hash:** <12-char hash covering proposal.md/design.md/tasks.md/specs/, or "N/A -- no artifacts to hash"> -- Implementation workspaces only
@@ -927,16 +979,17 @@ Or, if none applied: "N/A -- no lens applied."
 
 ## Follow-up Review
 
-<!-- Existing PR review workspace only, and only when Step 0 detected a
-previous review report. Omit this entire section (never print an empty
-one) for a first-time review, or for an Implementation workspace. This
-table is Step 4's classification pass -- every finding from the previous
-report's "Findings Affecting This Change" and "Pre-Existing or Adjacent
-Issues" tables must appear here exactly once. -->
+<!-- Only when Step 4 found a prior report of this same kind (a PR
+review's previous review, or an Implementation-workspace change's own
+prior /adversarial-review report). Omit this entire section (never print
+an empty one) for a first-time review. This table is Step 4's
+classification pass -- every finding from the previous report's
+"Findings Affecting This Change" and "Pre-Existing or Adjacent Issues"
+tables must appear here exactly once. -->
 
 **Previous review:** <path to the previous report>
-**Previously reviewed head:** <SHA, or "unknown -- legacy report predates head-tracking">
-**Delta reviewed:** <`<previousHead>..CE_DIFF_HEAD` commit range, or "N/A -- previously reviewed head unknown; reviewed the full range as a first-time review would">
+**Previously reviewed head:** <SHA -- Existing PR review workspace: the prior review's `**Reviewed PR head:**`, or "unknown -- legacy report predates head-tracking"; Implementation workspace: the prior review's `**Reviewed worktree commit:**`>
+**Delta reviewed:** <the commit range from Step 5 (`<previousHead>..$CE_DIFF_HEAD` for a PR review, `<previousHead>..HEAD` for an Implementation workspace), or "N/A -- previously reviewed head unknown; reviewed the full range as a first-time review would">
 
 | Previous Finding | Previous Severity | Classification | Evidence | Notes |
 |---|---|---|---|---|
@@ -1115,8 +1168,9 @@ the next step in terms of the pull request itself instead:
   of `$CE_DIFF_HEAD` -- it is what makes both `ce status`'s stale-review
   check and a later follow-up review's delta computation possible at all.
   Never omit it, and never write a placeholder or short SHA in its place.
-- A follow-up review (Step 0 found a previous report) must classify
-  *every* finding from that previous report's two tables (Step 4) --
+- A follow-up review (Step 4 found a previous report of the same kind --
+  Existing PR review or Implementation workspace alike) must classify
+  *every* finding from that previous report's two tables --
   never silently drop one, and never classify one you didn't actually
   re-check against the new code. A finding you don't mention is not the
   same as one you checked. Still separately look for new regressions/
