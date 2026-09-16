@@ -502,7 +502,7 @@ actually launches.
 ## `ce library`
 
 Rebuilds a human-readable, browsable directory of every known project's
-retained OpenSpec knowledge, organized by recognizable project name —
+retained OpenSpec artifacts, organized by recognizable project name —
 not project id, not `~/.ce-harness/openspec/...` — and opens it directly
 in an editor:
 
@@ -531,7 +531,12 @@ deterministic across rebuilds regardless of scan order.
 Identity (`.identity.yml`) has no authoritative label to show here and
 is simply absent — never guessed, never shown under an invented name.
 Run [`ce migrate-openspec`](#ce-migrate-openspec) to give it one and
-bring it into the library.
+bring it into the library. A project's `knowledge.md` (see [Retrieval
+Contract and project-local
+knowledge](workflow-guide.md#retrieval-contract-and-project-local-knowledge)
+in the workflow guide) isn't symlinked here either — it's a single
+small file, not a directory; open it directly from the durable store,
+or search it via `ce retrieve`, instead.
 
 **Always fully regenerated**, never incrementally maintained: every run
 wipes and rebuilds the whole directory from `resolveKnownProjects()`

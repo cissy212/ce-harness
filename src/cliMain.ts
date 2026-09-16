@@ -287,18 +287,19 @@ export async function runCli(): Promise<void> {
 
   program
     .command("library")
-    .summary("Open a human-readable library of retained project knowledge in your editor")
+    .summary("Open a human-readable library of retained OpenSpec artifacts in your editor")
     .description(
       "Rebuilds a human-readable, browsable directory of every known project's retained " +
-        "OpenSpec knowledge -- organized by recognizable project name, not by project id or " +
+        "OpenSpec artifacts -- organized by recognizable project name, not by project id or " +
         "internal store path -- and opens it directly in an editor. Each project gets its own " +
         "folder (disambiguated with a short id suffix if two currently share the same name) " +
         "containing whichever of `changes/`, `archive/`, `specs/`, `reviews/` actually exist, " +
-        "as plain symlinks into the real durable store -- nothing is copied or duplicated. " +
-        "Entirely derived: the whole directory is wiped and regenerated on every run, so it is " +
-        "always safe to delete and never goes stale. A legacy durable store with no recorded " +
-        "Project Identity has no authoritative name to show here and is simply absent -- see " +
-        "`ce migrate-openspec`.",
+        "as plain symlinks into the real durable store -- nothing is copied or duplicated. A " +
+        "project's knowledge.md (see `ce retrieve`) is not symlinked here -- it's a single " +
+        "small file, not a directory. Entirely derived: the whole directory is wiped and " +
+        "regenerated on every run, so it is always safe to delete and never goes stale. A " +
+        "legacy durable store with no recorded Project Identity has no authoritative name to " +
+        "show here and is simply absent -- see `ce migrate-openspec`.",
     )
     .action(async () => {
       await run(() => libraryCommand());
@@ -358,16 +359,23 @@ export async function runCli(): Promise<void> {
 
   program
     .command("retrieve")
-    .summary("Search prior project knowledge relevant to a task (used by /enrich)")
+    .summary(
+      "Search prior project knowledge relevant to a task (used by /explore, /enrich, /propose, " +
+        "/verify, /adversarial-review)",
+    )
     .description(
       [
-        "Search the active workspace's durable OpenSpec store and repository Git",
-        "history for prior project knowledge relevant to a task, via the Retrieval",
-        "Contract (core/retrieval.ts) -- deterministic, read-only, and scoped",
-        "strictly to this project. Prints a small ranked JSON list of candidates",
-        "(never full artifact bodies) to stdout, for a workflow stage such as",
-        "`/enrich` to parse. An empty result, or no durable store yet, is reported",
-        "as a normal (non-error) outcome.",
+        "Search the active workspace's durable OpenSpec store and repository history",
+        "for prior project knowledge relevant to a task, via the Retrieval Contract",
+        "(core/retrieval.ts) -- deterministic, read-only, and scoped strictly to this",
+        "project: current specs, archived OpenSpec changes, Existing PR review",
+        "reports (reviews/*.md), the project's shared advisory knowledge.md (see",
+        "docs/workflow-guide.md), and repository Git history. Every result is",
+        "historical/advisory (except a current spec) -- never authoritative on its",
+        "own; the calling workflow stage is responsible for checking it against the",
+        "current repository, not this command. Prints a small ranked JSON list of",
+        "candidates (never full artifact bodies) to stdout. An empty result, or no",
+        "durable store yet, is reported as a normal (non-error) outcome.",
       ].join(" "),
     )
     .option("--task <text>", "free-text description of the current task/issue")
@@ -377,7 +385,8 @@ export async function runCli(): Promise<void> {
     .option("--limit <n>", "maximum candidates to return (default 15)")
     .option(
       "--sources <list>",
-      'comma-separated sources to search: "specs", "archivedChanges", "gitHistory" (default: all three)',
+      'comma-separated sources to search: "specs", "archivedChanges", "reviewReports", ' +
+        '"projectKnowledge", "gitHistory" (default: all five)',
     )
     .action(
       async (options: {

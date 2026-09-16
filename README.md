@@ -136,6 +136,6 @@ Anything else: the full list is in
 
 - [docs/installation.md](docs/installation.md) — the complete, step-by-step install walkthrough
 - [docs/cli-reference.md](docs/cli-reference.md) — every command and flag, the coding-agent runner choice, the macOS desktop experience, environment variables
-- [docs/workflow-guide.md](docs/workflow-guide.md) — what each workflow step does, reasoning lenses, mutation/Docker safety
+- [docs/workflow-guide.md](docs/workflow-guide.md) — what each workflow step does, reasoning lenses, mutation/Docker safety, how retrieval and project-local knowledge work
 - [docs/concepts.md](docs/concepts.md) — how ce-harness works internally: worktree isolation, the durable OpenSpec store, Project Identity
 - [docs/troubleshooting.md](docs/troubleshooting.md) — the complete troubleshooting list

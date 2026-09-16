@@ -21,12 +21,12 @@ automatically):
 |---|---|
 | `/workspace` | Shows the current workspace's context in plain language: project, issue, workspace type, worktree/workspace paths, OpenSpec store id, lenses directory. A safe first command in any session. |
 | `/explore` | Explores the codebase read-only and records findings about the problem and the existing system — use when you want to investigate before committing to a plan. |
-| `/enrich` | Clarifies and confirms the requirement is actually understood well enough to propose a good technical change — the step between "I looked at the code" and "here's the plan," so `/propose` isn't building on an assumption nobody checked. |
+| `/enrich` | Clarifies and confirms the requirement is actually understood well enough to propose a good technical change — the step between "I looked at the code" and "here's the plan," so `/propose` isn't building on an assumption nobody checked. Also consults the [Retrieval Contract](#retrieval-contract-and-project-local-knowledge) for relevant prior context, and may record a new, evidence-backed observation to the project's shared `knowledge.md` when it reaches one worth keeping. |
 | `/propose` | Creates a new OpenSpec change and generates **all** of its artifacts (proposal, design, tasks) in one step, grounded in what `/explore`/`/enrich` established. |
 | `/apply` | Implements the tasks from an OpenSpec change, one at a time, only inside the worktree — marking each task's checkbox as it completes it, and pausing on anything unclear or blocked. |
 | `/verify` | Checks the implementation against the change's proposal, design, specs, and tasks — the **conformance baseline**. Runs discovered test/lint/build commands and writes a report into the OpenSpec store. Never fixes code. **Refuses to run in an `Existing PR review` workspace** (there's no OpenSpec-driven implementation to check conformance against) — use `/adversarial-review` there instead. |
-| `/adversarial-review` | In an `Implementation` workspace: runs after `/verify` and independently hunts for defects, gaps, and risks the specification itself doesn't describe, challenging `/verify`'s report rather than duplicating it. In an `Existing PR review` workspace: the **only** review step — reviews the commit range directly against the PR description and repository conventions, with no OpenSpec change involved. Detects on its own whether this is a **follow-up review** of a workspace it already reviewed before (see [Follow-up PR reviews](cli-reference.md#follow-up-pr-reviews)), and if so, verifies each previous finding against the new code before looking for anything new. Never fixes code, either way. |
-| `/archive` | Archives a completed change: checks artifact/task completion, offers to sync delta specs into the main specs, and moves the change into the store's archive. |
+| `/adversarial-review` | In an `Implementation` workspace: runs after `/verify` and independently hunts for defects, gaps, and risks the specification itself doesn't describe, challenging `/verify`'s report rather than duplicating it. In an `Existing PR review` workspace: the **only** review step — reviews the commit range directly against the PR description and repository conventions, with no OpenSpec change involved. Detects on its own whether this is a **follow-up review** of a workspace it already reviewed before (see [Follow-up PR reviews](cli-reference.md#follow-up-pr-reviews)), and if so, verifies each previous finding against the new code before looking for anything new. Never fixes code, either way. When a follow-up review's reconciliation confirms a finding's own assumption was wrong, with fresh evidence, it may record that observation to the project's shared `knowledge.md` — see [Retrieval Contract](#retrieval-contract-and-project-local-knowledge). |
+| `/archive` | Archives a completed change: checks artifact/task completion, runs a **Knowledge check** that reads (never writes) the project's shared `knowledge.md` and may recommend — never silently apply — a canonical-documentation update (see [Retrieval Contract](#retrieval-contract-and-project-local-knowledge)), offers to sync delta specs into the main specs, and moves the change into the store's archive. |
 | `/publish` | Ships the completed, archived change as a normal GitHub pull request: fetches and safely updates against the current base branch, shows the exact repository/branch/included commits/PR title/PR description, and only pushes and opens the PR after explicit confirmation. Never merges, never enables auto-merge. |
 
 In an **Implementation** workspace, the canonical order is: `/explore` →
@@ -41,6 +41,82 @@ your actual repository or worktree — only inside the external OpenSpec
 store, and (for `/apply`) actual code changes inside the worktree
 itself; `/publish` is the one exception that also reaches an external
 service (GitHub), and only after you explicitly confirm its preview.
+
+## Retrieval Contract and project-local knowledge
+
+`/explore`, `/enrich`, `/propose`, `/verify`, and `/adversarial-review`
+each consult the **Retrieval Contract** (`ce retrieve`) for relevant
+prior context before doing their own work: current specs (this
+project's actual, present-day source of truth), archived OpenSpec
+changes, Existing PR review reports, and the project's shared
+`knowledge.md` (below) — plus repository Git history. Matching is
+deterministic (path/keyword/domain/identifier matching against the
+durable store and Git history), never embeddings or a learned model, so
+every result is explainable.
+
+**Every result is advisory and historical, never authoritative.** A
+result only ever carries a `status: "historical"` tag (a current spec is
+the one exception, tagged `"current"`) and a date — retrieval itself
+never judges whether something is still true. Each command's own
+instructions require re-checking a retrieved result against the current
+repository before relying on it; the current repository, its specs, its
+docs, and its tests always win over anything retrieved. This is
+something each command is instructed to do — it's not a runtime check
+ce-harness enforces in code, the same way whether a review finding is
+genuinely `Blocking` is a judgment call, not a computed value.
+
+**Project-local learned knowledge** (`<durable store>/knowledge.md`,
+[Directory layout reference](concepts.md#directory-layout-reference)) is
+a small, shared, per-project file of evidence-backed conclusions —
+things ce-harness confirmed while working on this repository that may
+be useful to a *different*, later change in the same project, without
+that later change needing to know which earlier change or review
+discovered them. Every entry cites concrete evidence from the repository
+at the time it was recorded (a file/line, a test, a spec) and a date —
+it's explicitly historical/advisory, exactly like every other retrieval
+result, and can go stale the same way an old report can. Only `/enrich`
+and `/adversarial-review`'s reconciliation step write to it, and only
+after checking a conservative bar: the observation must be specific and
+reusable (not scoped to just this one change), backed by evidence from
+the *current* repository state (never a citation of what an older
+report merely claimed), genuinely demonstrated rather than merely
+plausible, a settled conclusion rather than a hypothesis or
+recommendation, and not already stated in the repository's own
+documentation. `/archive` reads it (as part of its own Knowledge check,
+below) but never writes it.
+
+If later evidence contradicts or narrows an existing entry, a **new**,
+separately dated entry is appended saying so — the older entry is never
+edited or deleted, since it may genuinely have been correct for the
+repository state it was recorded against. Retrieval can therefore return
+both an older and a newer observation about the same thing; that's
+intentional, not a bug — read the dates, and trust the current
+repository over either one.
+
+**The Knowledge check** runs at the end of an Implementation workspace's
+`/archive` and at the end of an Existing PR review's `/adversarial-review`
+run. It asks whether the change/review just produced something durably
+reusable that the repository's own canonical documentation (an ADR,
+`AGENTS.md`, `CONTRIBUTING.md`, an API spec, ...) doesn't already say.
+When it finds something, it only ever *recommends*: `/archive` may pause
+to let you incorporate a small, obvious edit before archiving;
+`/adversarial-review` only ever prints the recommendation in its review
+output. **Neither ever edits your repository's documentation itself** —
+promoting something from advisory knowledge into canonical documentation
+always stays your explicit decision.
+
+**Existing PR review workspaces never archive**, but their reports are
+still retrievable: `ce retrieve` reads a project's `reviews/*.md`
+directly, so a past PR review's findings remain discoverable from a
+later, unrelated workspace even though there's no archive step to move
+them through.
+
+**Known limitation:** a discovery that happens entirely in free-form
+conversation — never captured by `/enrich` writing `enrich.md`, or by
+`/adversarial-review`'s reconciliation step re-checking a prior finding
+— isn't automatically written to `knowledge.md`. Nothing currently
+prompts for that case; it's lost unless you explicitly ask for it to be
+recorded.
 
 ## Reasoning lenses
 

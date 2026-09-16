@@ -120,6 +120,15 @@ under a command, or you're debugging something unexpected.
     silently overwrite) a colliding archive-date folder; run `/explore`
     first in a reused workspace if you want to see what's already there
     before proposing a new change.
+- **Retrieval Contract and project-local knowledge.** The durable store
+  also holds `knowledge.md` (see [Directory layout
+  reference](#directory-layout-reference) below) — a small, evidence-backed,
+  project-local cache several workflow commands read via `ce retrieve`
+  alongside current specs, archived changes, and PR review reports. See
+  [Retrieval Contract and project-local
+  knowledge](workflow-guide.md#retrieval-contract-and-project-local-knowledge)
+  in the workflow guide for what it is, who writes it, and why every
+  result stays advisory rather than authoritative.
 - **Many preserved workspaces, one default.** Every workspace is fully
   isolated and addressable by its own `<project>/<issue>` (the same
   identity `ce status` displays), independent of any other workspace —
@@ -215,6 +224,8 @@ a separate, unsolved problem.
       agents/                       # OpenCode-specific mirror of the lens files
   openspec/<project-id>/             # durable -- survives `ce cleanup`, shared by every workspace for this project
                                      #   .identity.yml -- this project's Project Identity record (see above)
+                                     #   knowledge.md -- project-local learned knowledge (advisory, evidence-backed;
+                                     #   see Retrieval Contract above); not symlinked into library/ below
                                      #   the OpenSpec store itself (proposal, design, specs, tasks, reports, archive)
                                      #   reviews/ -- Existing PR review workspaces only: /adversarial-review's
                                      #   dedicated report location, since there is no change to nest reports under
