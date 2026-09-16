@@ -2049,6 +2049,111 @@ describe("ce start (integration)", () => {
         );
       });
     });
+
+    describe("project-local learned knowledge (knowledge.md): step 9, eligibility rule, read-before-append/update", () => {
+      const readEnrich = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+      };
+
+      it("is inserted as step 9, between writing enrich.md (step 8) and recording provenance (now step 10)", async () => {
+        const content = await readEnrich();
+
+        expect(content).toMatch(/## 9\. Update project-local learned knowledge \(if eligible\)/);
+        expect(content).toMatch(/## 10\. Record provenance/);
+        expect(content).toMatch(/## 11\. Report back/);
+      });
+
+      it("states most runs write nothing, and requires all five eligibility criteria", async () => {
+        const content = await readEnrich();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Most `\/enrich` runs write nothing here; that is the expected,\s*common outcome/,
+        );
+        expect(content).toMatch(/\*\*Specific and reusable\*\*/);
+        expect(content).toMatch(/\*\*Backed by current-repository evidence\*\*/);
+        expect(content).toMatch(/\*\*The evidence actually demonstrates the claim\*\*/);
+        expect(normalized).toMatch(
+          /\*\*A conclusion, not a hypothesis\/recommendation\/finding\/preference\/\s*open question\*\*/,
+        );
+        expect(content).toMatch(/\*\*Not already clearly stated in canonical documentation\*\*/);
+        expect(normalized).toMatch(/\*\*All five must hold\.\*\*/);
+      });
+
+      it("evidence must come from current repository state, never merely a prior report's claim", async () => {
+        const content = await readEnrich();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /you actually looked at \*this session\*, from the repository's current\s*state -- never a citation of what a prior report merely claimed/,
+        );
+      });
+
+      it("ties the evidence-demonstrates-the-claim bar to /adversarial-review's own High-confidence rubric", async () => {
+        const content = await readEnrich();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /would it qualify\s*as High confidence under `\/adversarial-review`'s own rubric/,
+        );
+      });
+
+      it("defines read-before-append/update: append new, no-op on reconfirm, never overwrite on contradiction", async () => {
+        const content = await readEnrich();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(/\*\*No related entry exists:\*\* append a new entry\./);
+        expect(normalized).toMatch(
+          /\*\*A related entry exists and this evidence reconfirms it:\*\* do not\s*duplicate it/,
+        );
+        expect(normalized).toMatch(
+          /\*\*A related entry exists and this evidence contradicts or materially\s*changes it:\*\* append a \*new\*, separately dated entry/,
+        );
+        expect(normalized).toMatch(
+          /\*\*Never overwrite, delete, or edit the\s*older entry's own claim\*\*/,
+        );
+      });
+
+      it("frames knowledge.md as historical/advisory, not a mutable current-truth database -- both old and new entries surfacing is intentional", async () => {
+        const content = await readEnrich();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`knowledge\.md` is historical\/\s*advisory, not a mutable current-truth database, and retrieval\s*surfacing both the old and the new observation, with visible dates,\s*is intentional, not a bug\./,
+        );
+      });
+
+      it("references the entry shape with a claim, Evidence, and Source", async () => {
+        const content = await readEnrich();
+
+        expect(content).toMatch(/## YYYY-MM-DD -- <one-line, present-tense claim>/);
+        expect(content).toMatch(/\*\*Evidence:\*\*/);
+        expect(content).toMatch(/\*\*Source:\*\*/);
+      });
+
+      it("never writes speculative/recommendation-shaped content into knowledge.md", async () => {
+        const content = await readEnrich();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Never write speculative, unresolved, or recommendation-shaped content\s*here\*\*/,
+        );
+      });
+
+      it("has a guardrail confirming step 9 is soft, never writes canonical docs or $CE_WORKTREE, and never overwrites an entry", async () => {
+        const content = await readEnrich();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Step 9 \(project-local learned knowledge\) is\s*soft and never blocks/,
+        );
+        expect(normalized).toMatch(
+          /It never writes to `\$CE_WORKTREE` or\s*any canonical documentation file, and it never overwrites an existing\s*`knowledge\.md` entry/,
+        );
+      });
+    });
   });
 
   describe("/propose command template", () => {
@@ -3216,6 +3321,42 @@ describe("ce start (integration)", () => {
         expect(normalized).toMatch(
           /It never writes to `\$CE_WORKTREE` or any canonical documentation file\s*itself/,
         );
+      });
+    });
+
+    describe("project-local learned knowledge (knowledge.md): archive.md is reader-only", () => {
+      const readArchive = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+      };
+
+      it("Step 5 reads knowledge.md as an additional input, explicitly never writing it", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Also read `<planningHome\.root>\/\s*knowledge\.md` if it exists, for entries relevant to this change/,
+        );
+        expect(normalized).toMatch(
+          /\*\*This command only ever reads\s*`knowledge\.md` -- it never writes or updates it itself\.\*\*/,
+        );
+      });
+
+      it("has a guardrail bullet confirming archive.md never writes knowledge.md -- /enrich and /adversarial-review are the only writers", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /This command reads `<planningHome\.root>\/knowledge\.md` \(Step 5\) but never writes, appends to, or updates it -- `\/enrich` and `\/adversarial-review`'s own reconciliation step are the only writers\./,
+        );
+      });
+
+      it("never itself contains the eligibility rule or an append/update instruction -- that logic belongs only to the two writers", async () => {
+        const content = await readArchive();
+
+        expect(content).not.toMatch(/\*\*Specific and reusable\*\*/);
+        expect(content).not.toMatch(/\*\*No related entry exists:\*\* append a new entry\./);
       });
     });
   });
@@ -5448,6 +5589,54 @@ describe("ce start (integration)", () => {
         );
         expect(normalized).toMatch(
           /An\s*Implementation workspace's equivalent check is `\/archive`'s own Step\s*5, not this command's job\./,
+        );
+      });
+    });
+
+    describe("project-local learned knowledge (knowledge.md): Step 4 reconciliation, eligibility rule, read-before-append/update", () => {
+      const readAdversarialReview = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8");
+      };
+
+      it("triggers on either follow-up branch's RESOLVED/NO LONGER APPLICABLE classification, not a routine NOT RESOLVED", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Either follow-up branch above: update project-local learned knowledge\s*\(if eligible\)\.\*\*/,
+        );
+        expect(normalized).toMatch(
+          /Only when a finding was just classified `RESOLVED` or\s*`NO LONGER APPLICABLE` with evidence that overturns what was previously\s*understood/,
+        );
+      });
+
+      it("requires all five eligibility criteria, same as /enrich's", async () => {
+        const content = await readAdversarialReview();
+
+        expect(content).toMatch(/\*\*Specific and reusable\*\*/);
+        expect(content).toMatch(/\*\*Backed by current-repository evidence\*\*/);
+        expect(content).toMatch(/\*\*The evidence actually demonstrates the claim\*\*/);
+        expect(content).toMatch(/\*\*Not already clearly stated in canonical documentation\*\*/);
+      });
+
+      it("defines the same read-before-append/update mechanic: append new, no-op on reconfirm, never overwrite on contradiction", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(/\*\*No related entry exists:\*\* append a new entry\./);
+        expect(normalized).toMatch(
+          /\*\*Never overwrite, delete, or edit the\s*older entry's own claim\*\*/,
+        );
+      });
+
+      it("points its closing sentence at this command's own Findings tables/Open Questions, not enrich.md's sections", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /that belongs in this command's own Findings tables or Open\s*Questions, never in `knowledge\.md`\./,
         );
       });
     });

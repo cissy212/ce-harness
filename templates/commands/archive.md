@@ -184,7 +184,13 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    and *every* `/verify` and `/adversarial-review` report under
    `<changeRoot>/reports/` -- not just the most recent of each kind, so a
    finding that was raised, challenged, and resolved across two reports
-   reads as one story, not a fragment.
+   reads as one story, not a fragment. Also read `<planningHome.root>/
+   knowledge.md` if it exists, for entries relevant to this change -- it
+   is the project's advisory, cross-change learned-knowledge cache (see
+   `/enrich` and `/adversarial-review`'s own reconciliation step, the
+   only two writers), and may already contain the same conclusion this
+   step is about to ask you to evaluate. **This command only ever reads
+   `knowledge.md` -- it never writes or updates it itself.**
 
    **Ask: did this produce reusable project knowledge that is not
    represented in the project's current canonical documentation?** A
@@ -432,5 +438,6 @@ Target archive directory already exists.
 - Never create `openspec/`, `.opencode/`, reports, or any other harness/config file or directory inside the target repository or its Git worktree -- archiving happens only inside the external store at `$CE_OPENSPEC_STORE`
 - This command requires a fresh `/verify` and `/adversarial-review` report before archiving (Step 4), with nothing unresolved that either report itself classifies `Blocking`: missing, `FAIL`, stale evidence (verified against a different worktree commit or tasks.md than the current state), or a `PASS WITH GAPS` report containing any unresolved `Blocking` (or untagged) item unconditionally blocks archive -- no confirm-to-continue override, unlike the softer artifact/task-completion warnings in steps 2-3. A `PASS WITH GAPS` report whose every unresolved item is explicitly tagged `Merge impact: Non-blocking` does **not** block -- but its carried-forward gaps must always be surfaced in Step 8's output (never presented as a clean `PASS`). A later passing rerun always supersedes an earlier failure, since the gate only ever looks at the most recent report of each kind. It never reruns `/verify` or `/adversarial-review` itself, never modifies a report, and never reclassifies a finding's Merge impact itself -- it only reads the most recent report of each kind and gates on what it already says.
 - The Knowledge check (Step 5) is soft and never blocks archiving on its own -- it only pauses, at the human's own choice, when it finds a small, in-scope, obvious edit to incorporate before archiving. It never writes to `$CE_WORKTREE` or any canonical documentation file itself, and it never promotes anything without a human explicitly acting on it: a bigger or out-of-scope find only ever becomes a surfaced recommendation, never an edit `/archive` makes on its own.
+- This command reads `<planningHome.root>/knowledge.md` (Step 5) but never writes, appends to, or updates it -- `/enrich` and `/adversarial-review`'s own reconciliation step are the only writers. `/archive` archives; it doesn't accumulate project knowledge, and this step is no exception.
 
 _See `THIRD_PARTY_NOTICES.md` for this command's provenance and licensing._

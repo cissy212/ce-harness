@@ -29,6 +29,10 @@ async function writeReviewReportFile(durableRoot: string, filename: string, cont
   await writeFixtureFile(durableRoot, `reviews/${filename}`, content);
 }
 
+async function writeKnowledgeFile(durableRoot: string, content: string): Promise<void> {
+  await writeFixtureFile(durableRoot, "knowledge.md", content);
+}
+
 describe("retrieveCandidates", () => {
   let durableRoot: string;
 
@@ -240,6 +244,139 @@ describe("retrieveCandidates", () => {
         sources: ["specs", "archivedChanges", "gitHistory"],
       });
       expect(result.candidates).toEqual([]);
+    });
+  });
+
+  describe("project-local learned knowledge (knowledge.md)", () => {
+    it("matches a knowledge entry by keyword and tags it 'project-knowledge', 'historical'", async () => {
+      await writeKnowledgeFile(
+        durableRoot,
+        [
+          "## 2026-06-01 -- Refund tokens are single-use",
+          "",
+          "**Evidence:** `src/core/refund.ts:42` and `test/refund.test.ts:88` show the token is invalidated immediately after redemption.",
+          "**Source:** reports/2026-06-01-adversarial-review.md",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await retrieveCandidates({ durableRoot, keywords: ["refund"] });
+      expect(result.candidates.length).toBe(1);
+      const [candidate] = result.candidates;
+      expect(candidate.type).toBe("project-knowledge");
+      expect(candidate.status).toBe("historical");
+      expect(candidate.path).toBe("knowledge.md");
+      expect(candidate.date).toBe("2026-06-01T00:00:00.000Z");
+    });
+
+    it("returns one candidate per entry, not one per file, as the file grows", async () => {
+      await writeKnowledgeFile(
+        durableRoot,
+        [
+          "## 2026-06-01 -- Refund tokens are single-use",
+          "",
+          "**Evidence:** src/core/refund.ts:42 demonstrates this.",
+          "**Source:** reports/2026-06-01-adversarial-review.md",
+          "",
+          "## 2026-06-02 -- Billing webhooks retry with exponential backoff",
+          "",
+          "**Evidence:** src/core/webhooks.ts:10 demonstrates this.",
+          "**Source:** reports/2026-06-02-verify.md",
+          "",
+        ].join("\n"),
+      );
+
+      const refundResult = await retrieveCandidates({ durableRoot, keywords: ["refund"] });
+      expect(refundResult.candidates.length).toBe(1);
+      expect(refundResult.candidates[0].date).toBe("2026-06-01T00:00:00.000Z");
+
+      const webhookResult = await retrieveCandidates({ durableRoot, keywords: ["webhooks"] });
+      expect(webhookResult.candidates.length).toBe(1);
+      expect(webhookResult.candidates[0].date).toBe("2026-06-02T00:00:00.000Z");
+    });
+
+    it("bounds the excerpt to the matching entry, never bleeding in an unrelated entry's text", async () => {
+      await writeKnowledgeFile(
+        durableRoot,
+        [
+          "## 2026-06-01 -- Refund tokens are single-use",
+          "",
+          "**Evidence:** src/core/refund.ts:42 demonstrates this.",
+          "",
+          "## 2026-06-02 -- Billing webhooks retry with exponential backoff",
+          "",
+          "**Evidence:** src/core/webhooks.ts:10 demonstrates this.",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await retrieveCandidates({ durableRoot, keywords: ["webhooks"] });
+      expect(result.candidates.length).toBe(1);
+      expect(result.candidates[0].excerpt).not.toMatch(/refund/i);
+    });
+
+    it("does not return a knowledge entry with no matching signal", async () => {
+      await writeKnowledgeFile(
+        durableRoot,
+        "## 2026-06-01 -- Refund tokens are single-use\n\n**Evidence:** src/core/refund.ts:42.\n",
+      );
+
+      const result = await retrieveCandidates({ durableRoot, keywords: ["completely-unrelated-term"] });
+      expect(result.candidates).toEqual([]);
+    });
+
+    it("is excluded when 'projectKnowledge' is not in the requested sources", async () => {
+      await writeKnowledgeFile(
+        durableRoot,
+        "## 2026-06-01 -- Refund tokens are single-use\n\n**Evidence:** src/core/refund.ts:42.\n",
+      );
+
+      const result = await retrieveCandidates({
+        durableRoot,
+        keywords: ["refund"],
+        sources: ["specs", "archivedChanges", "gitHistory"],
+      });
+      expect(result.candidates).toEqual([]);
+    });
+
+    it("returns an empty result when knowledge.md does not exist yet", async () => {
+      const result = await retrieveCandidates({ durableRoot, keywords: ["refund"] });
+      expect(result.candidates).toEqual([]);
+    });
+  });
+
+  describe("splitKnowledgeEntries", () => {
+    it("splits content into one entry per '## ' heading, discarding text before the first heading", async () => {
+      const { splitKnowledgeEntries } = await import("../../src/core/retrieval.js");
+      const entries = splitKnowledgeEntries(
+        [
+          "# Project Knowledge",
+          "",
+          "## 2026-06-01 -- Refund tokens are single-use",
+          "Body line 1.",
+          "## 2026-06-02 -- Billing webhooks retry with exponential backoff",
+          "Body line 2.",
+        ].join("\n"),
+      );
+
+      expect(entries.length).toBe(2);
+      expect(entries[0].date).toBe("2026-06-01T00:00:00.000Z");
+      expect(entries[0].claim).toBe("Refund tokens are single-use");
+      expect(entries[0].body).toContain("Body line 1.");
+      expect(entries[0].body).not.toContain("Body line 2.");
+      expect(entries[1].date).toBe("2026-06-02T00:00:00.000Z");
+      expect(entries[1].claim).toBe("Billing webhooks retry with exponential backoff");
+    });
+
+    it("accepts both an em dash and a plain hyphen between the date and the claim", async () => {
+      const { splitKnowledgeEntries } = await import("../../src/core/retrieval.js");
+      const entries = splitKnowledgeEntries("## 2026-06-01 — Em dash claim\n## 2026-06-02 - Hyphen claim\n");
+      expect(entries.map((e) => e.claim)).toEqual(["Em dash claim", "Hyphen claim"]);
+    });
+
+    it("returns an empty array for content with no recognizable heading", async () => {
+      const { splitKnowledgeEntries } = await import("../../src/core/retrieval.js");
+      expect(splitKnowledgeEntries("Just some prose, no headings.\n")).toEqual([]);
     });
   });
 

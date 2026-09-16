@@ -234,7 +234,80 @@ conflict, or edge case above, never a re-summary of the whole
 exploration. Prefer short bullet points over prose. A clean, well-scoped
 task should produce a short `enrich.md`, not an exhaustive account.
 
-## 9. Record provenance
+## 9. Update project-local learned knowledge (if eligible)
+
+Only when step 6's analysis or step 7's resolution of a blocking item
+produced a genuinely new conclusion -- not the routine clarification
+most `/enrich` runs produce -- check it against the eligibility rule
+below. Most `/enrich` runs write nothing here; that is the expected,
+common outcome, not a shortfall.
+
+**Ask, of the specific conclusion you just reached, all five:**
+- **Specific and reusable** -- does it name a concrete behavior,
+  decision, convention, or contract that would plausibly matter to
+  *different*, future work in this area -- not something that only
+  matters to this one change?
+- **Backed by current-repository evidence** -- do you have a concrete
+  citation (file:line, test name and output, spec text, command output)
+  you actually looked at *this session*, from the repository's current
+  state -- never a citation of what a prior report merely claimed?
+- **The evidence actually demonstrates the claim** -- would it qualify
+  as High confidence under `/adversarial-review`'s own rubric
+  (demonstrated by concrete code flow, exact evidence, a test, or
+  measured behavior) -- not Medium or Low?
+- **A conclusion, not a hypothesis/recommendation/finding/preference/
+  open question** -- can it be phrased in the past or present indicative
+  ("X does Y", "X was true because Z") without changing its meaning? If
+  it only reads correctly as conditional or imperative ("should",
+  "might", "consider"), it is not eligible.
+- **Not already clearly stated in canonical documentation** -- scan the
+  target repository, read-only, for an existing, obvious canonical
+  statement of it (e.g. `docs/adr/`, `AGENTS.md`, `CONTRIBUTING.md`, an
+  OpenAPI/API-spec file, the current OpenSpec specs) -- the same ad hoc
+  discovery already used elsewhere in this command family. If it is
+  already stated there, this step writes nothing: a shadow copy that
+  can independently go stale is worse than no copy.
+
+**All five must hold.** If any fails, write nothing -- this rule does
+not eliminate the risk of writing something wrong, but it keeps
+`knowledge.md` no less reliable than the reports/evidence it is drawn
+from, never more.
+
+**If eligible, read the durable store's `knowledge.md` (this
+workspace's `<planningHome.root>` or `<root.path>`, as already resolved
+in this command's own steps above) in full first -- create it, with
+just a `# Project Knowledge` title line, if it doesn't exist yet --
+then:**
+- **No related entry exists:** append a new entry.
+- **A related entry exists and this evidence reconfirms it:** do not
+  duplicate it -- at most add a trailing `(reconfirmed YYYY-MM-DD via
+  <source>)` to the existing entry.
+- **A related entry exists and this evidence contradicts or materially
+  changes it:** append a *new*, separately dated entry that explicitly
+  says it supersedes the older one for the current repository state,
+  citing the fresh evidence. **Never overwrite, delete, or edit the
+  older entry's own claim** -- it may have been correct for the
+  repository state when it was recorded; `knowledge.md` is historical/
+  advisory, not a mutable current-truth database, and retrieval
+  surfacing both the old and the new observation, with visible dates,
+  is intentional, not a bug.
+
+Entry shape:
+```markdown
+## YYYY-MM-DD -- <one-line, present-tense claim>
+
+**Evidence:** <file:line / test name+output / spec citation, from the
+current repository state> demonstrates this.
+**Source:** <path to the report/change that produced this, relative to
+the durable store root> (or "no report -- confirmed directly during
+this command")
+```
+
+**Never write speculative, unresolved, or recommendation-shaped content
+here** -- that belongs in this command's own Open Questions or
+Assumptions sections, never in `knowledge.md`.
+
+## 10. Record provenance
 
 Record the same worktree state `explore.md`'s own provenance sidecar
 uses (see `/explore` step 8), so a much later `/propose` run can tell
@@ -257,7 +330,7 @@ OpenSpec tracks, never part of `applyRequires`, and never mentioned in
 this command's own output. Write/refresh it unconditionally after
 writing `enrich.md`, including on a re-run.
 
-## 10. Report back
+## 11. Report back
 
 Reply in the conversation (not only in the file) with a concise summary:
 
@@ -287,9 +360,14 @@ agreed contract, rather than a change only the conversation remembers.
   ask the user to pick when it reports exactly one. Project-wide
   discovery is a backward-compatibility fallback only, for a change
   that predates the ownership sidecar.
-- Never skip step 9 (recording provenance) -- write/refresh
+- Never skip step 10 (recording provenance) -- write/refresh
   `.ce-provenance-enrich.yml` every time `enrich.md` is written, never
   only on first creation.
+- Step 9 (project-local learned knowledge) is soft and never blocks --
+  most runs write nothing there. It never writes to `$CE_WORKTREE` or
+  any canonical documentation file, and it never overwrites an existing
+  `knowledge.md` entry -- a contradicting conclusion appends a new,
+  separately dated entry instead (see step 9 itself for why).
 - Never skip checking `explore.md`'s provenance in step 4 when
   `explore.md` exists -- and never merely warn about a stale or
   unrecorded (legacy) result: **stop this command** and direct the user

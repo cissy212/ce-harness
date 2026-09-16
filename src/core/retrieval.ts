@@ -55,6 +55,13 @@ import { commitChangedPaths, pathHistory, searchCommitMessages } from "./git.js"
  *     Existing PR review workspace reports; this workspace type has no
  *     OpenSpec change, so these live at a dedicated, flat, project-shared
  *     location instead of a change's own reports/)
+ *   <durableRoot>/knowledge.md                              (historical --
+ *     project-local learned knowledge: a small, advisory, non-canonical
+ *     cache of evidence-backed conclusions, written only by /enrich and
+ *     /adversarial-review's reconciliation step -- see those templates
+ *     for the write-time eligibility rule. This module only ever reads
+ *     it, one candidate per `## `-delimited entry, never the whole file
+ *     as one candidate.)
  *
  * A change directory that has *not yet* been archived
  * (<durableRoot>/openspec/changes/<name>/, i.e. everything except the
@@ -67,7 +74,12 @@ import { commitChangedPaths, pathHistory, searchCommitMessages } from "./git.js"
 // Public types
 // ---------------------------------------------------------------------------
 
-export type RetrievalSource = "specs" | "archivedChanges" | "reviewReports" | "gitHistory";
+export type RetrievalSource =
+  | "specs"
+  | "archivedChanges"
+  | "reviewReports"
+  | "projectKnowledge"
+  | "gitHistory";
 
 export type ArtifactType =
   | "spec"
@@ -79,6 +91,7 @@ export type ArtifactType =
   | "change-delta-spec"
   | "change-other"
   | "review-report"
+  | "project-knowledge"
   | "git-commit";
 
 export type ArtifactStatus = "current" | "historical";
@@ -677,6 +690,98 @@ async function scanReviewReports(durableRoot: string, signals: QuerySignals): Pr
 }
 
 // ---------------------------------------------------------------------------
+// Project-local learned knowledge (knowledge.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * A `knowledge.md` entry heading: `## YYYY-MM-DD -- <one-line claim>` (an
+ * em dash or a plain hyphen, either side of the date, both accepted --
+ * writers are LLM-driven prose, not a machine format). Capture group 1 is
+ * the date, group 2 the claim.
+ */
+const KNOWLEDGE_ENTRY_HEADING_PATTERN = /^##\s+(\d{4}-\d{2}-\d{2})\s*(?:--|—|-)\s*(.+)$/;
+
+interface KnowledgeEntry {
+  date: string | null;
+  claim: string;
+  body: string;
+}
+
+/**
+ * Splits `knowledge.md`'s raw content into individual entries, one per
+ * `## ` heading. Content before the first recognized heading (if any --
+ * e.g. a stray title line) is discarded, not turned into a malformed
+ * entry. Exported for reuse by templates/tests that need to validate an
+ * entry's shape without duplicating this parsing.
+ */
+export function splitKnowledgeEntries(content: string): KnowledgeEntry[] {
+  const lines = content.split("\n");
+  const entries: KnowledgeEntry[] = [];
+  let current: { date: string | null; claim: string; lines: string[] } | null = null;
+
+  for (const line of lines) {
+    const match = KNOWLEDGE_ENTRY_HEADING_PATTERN.exec(line.trim());
+    if (match) {
+      if (current) entries.push({ date: current.date, claim: current.claim, body: current.lines.join("\n") });
+      current = { date: `${match[1]}T00:00:00.000Z`, claim: match[2].trim(), lines: [line] };
+    } else if (current) {
+      current.lines.push(line);
+    }
+  }
+  if (current) entries.push({ date: current.date, claim: current.claim, body: current.lines.join("\n") });
+  return entries;
+}
+
+/**
+ * Project-local learned knowledge: `<durableRoot>/knowledge.md`, an
+ * advisory, non-authoritative cache of evidence-backed conclusions --
+ * see this module's doc comment. Written only by `/enrich` and
+ * `/adversarial-review`'s reconciliation step (never by this module, and
+ * never by `/archive`, which only ever reads it); status is always
+ * `"historical"`, exactly like every other source here -- this file is
+ * never treated as more authoritative than the current repository, or
+ * even than an archived report.
+ *
+ * One candidate per entry, never one per file: unlike a spec file (one
+ * capability, naturally bounded), `knowledge.md` is a flat, growing list
+ * -- scanning it as a single document would mean a single matched
+ * candidate whose one bounded excerpt could show any arbitrary fragment
+ * of an unrelated entry as the file grows. Per-entry candidates keep
+ * retrieval useful at any file size.
+ */
+async function scanProjectKnowledge(durableRoot: string, signals: QuerySignals): Promise<InternalCandidate[]> {
+  const file = join(durableRoot, "knowledge.md");
+  if (!existsSync(file)) return [];
+
+  let content: string;
+  try {
+    content = await readFile(file, "utf8");
+  } catch {
+    return [];
+  }
+
+  const candidates: InternalCandidate[] = [];
+  for (const entry of splitKnowledgeEntries(content)) {
+    const matched = [
+      ...matchPaths(entry.body, signals),
+      ...matchDomain(entry.body, null, signals),
+      ...matchKeywords(entry.body, signals),
+    ];
+    const candidate = buildCandidate({
+      path: "knowledge.md",
+      root: "durableStore",
+      type: "project-knowledge",
+      status: "historical",
+      date: entry.date,
+      matched,
+      content: entry.body,
+    });
+    if (candidate) candidates.push(candidate);
+  }
+  return candidates;
+}
+
+// ---------------------------------------------------------------------------
 // Git history scanning
 // ---------------------------------------------------------------------------
 
@@ -860,7 +965,8 @@ export async function retrieveCandidates(query: RetrievalQuery): Promise<Retriev
   const warnings: string[] = [];
   const limit = query.limit ?? DEFAULT_LIMIT;
   const sources =
-    query.sources ?? (["specs", "archivedChanges", "reviewReports", "gitHistory"] as RetrievalSource[]);
+    query.sources ??
+    (["specs", "archivedChanges", "reviewReports", "projectKnowledge", "gitHistory"] as RetrievalSource[]);
   const signals = buildQuerySignals(query);
 
   if (signals.keywordEntries.length === 0 && signals.paths.length === 0 && !signals.domain) {
@@ -885,6 +991,9 @@ export async function retrieveCandidates(query: RetrievalQuery): Promise<Retriev
   }
   if (sources.includes("reviewReports") && durableRootExists) {
     candidates.push(...(await scanReviewReports(query.durableRoot, signals)));
+  }
+  if (sources.includes("projectKnowledge") && durableRootExists) {
+    candidates.push(...(await scanProjectKnowledge(query.durableRoot, signals)));
   }
   if (sources.includes("gitHistory")) {
     if (query.repositoryPath) {

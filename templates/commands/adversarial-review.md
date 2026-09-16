@@ -392,6 +392,79 @@ to make it disappear from the tables `/archive`'s gate actually reads.
 **If none exists:** this is a first-time adversarial review of this
 change -- proceed normally; the Follow-up Review section does not apply.
 
+**Either follow-up branch above: update project-local learned knowledge
+(if eligible).** Only when a finding was just classified `RESOLVED` or
+`NO LONGER APPLICABLE` with evidence that overturns what was previously
+understood -- not a routine `NOT RESOLVED`/`PARTIALLY RESOLVED`
+classification, or a first-time review with no reconciliation at all,
+both of which are the common outcome and write nothing here -- check it
+against the eligibility rule below.
+
+**Ask, of the specific conclusion you just reached, all five:**
+- **Specific and reusable** -- does it name a concrete behavior,
+  decision, convention, or contract that would plausibly matter to
+  *different*, future work in this area -- not something that only
+  matters to this one change?
+- **Backed by current-repository evidence** -- do you have a concrete
+  citation (file:line, test name and output, spec text, command output)
+  you actually looked at *this session*, from the repository's current
+  state -- never a citation of what a prior report merely claimed?
+- **The evidence actually demonstrates the claim** -- would it qualify
+  as High confidence under `/adversarial-review`'s own rubric
+  (demonstrated by concrete code flow, exact evidence, a test, or
+  measured behavior) -- not Medium or Low?
+- **A conclusion, not a hypothesis/recommendation/finding/preference/
+  open question** -- can it be phrased in the past or present indicative
+  ("X does Y", "X was true because Z") without changing its meaning? If
+  it only reads correctly as conditional or imperative ("should",
+  "might", "consider"), it is not eligible.
+- **Not already clearly stated in canonical documentation** -- scan the
+  target repository, read-only, for an existing, obvious canonical
+  statement of it (e.g. `docs/adr/`, `AGENTS.md`, `CONTRIBUTING.md`, an
+  OpenAPI/API-spec file, the current OpenSpec specs) -- the same ad hoc
+  discovery already used elsewhere in this command family. If it is
+  already stated there, this step writes nothing: a shadow copy that
+  can independently go stale is worse than no copy.
+
+**All five must hold.** If any fails, write nothing -- this rule does
+not eliminate the risk of writing something wrong, but it keeps
+`knowledge.md` no less reliable than the reports/evidence it is drawn
+from, never more.
+
+**If eligible, read the durable store's `knowledge.md` (this
+workspace's `<planningHome.root>` or `<root.path>`, as already resolved
+in this command's own steps above) in full first -- create it, with
+just a `# Project Knowledge` title line, if it doesn't exist yet --
+then:**
+- **No related entry exists:** append a new entry.
+- **A related entry exists and this evidence reconfirms it:** do not
+  duplicate it -- at most add a trailing `(reconfirmed YYYY-MM-DD via
+  <source>)` to the existing entry.
+- **A related entry exists and this evidence contradicts or materially
+  changes it:** append a *new*, separately dated entry that explicitly
+  says it supersedes the older one for the current repository state,
+  citing the fresh evidence. **Never overwrite, delete, or edit the
+  older entry's own claim** -- it may have been correct for the
+  repository state when it was recorded; `knowledge.md` is historical/
+  advisory, not a mutable current-truth database, and retrieval
+  surfacing both the old and the new observation, with visible dates,
+  is intentional, not a bug.
+
+Entry shape:
+```markdown
+## YYYY-MM-DD -- <one-line, present-tense claim>
+
+**Evidence:** <file:line / test name+output / spec citation, from the
+current repository state> demonstrates this.
+**Source:** <path to the report/change that produced this, relative to
+the durable store root> (or "no report -- confirmed directly during
+this command")
+```
+
+**Never write speculative, unresolved, or recommendation-shaped content
+here** -- that belongs in this command's own Findings tables or Open
+Questions, never in `knowledge.md`.
+
 ## 5. Load the implementation side
 
 Determine the diff scope, entirely inside `$CE_WORKTREE`:

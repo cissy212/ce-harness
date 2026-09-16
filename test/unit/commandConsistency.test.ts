@@ -35,6 +35,10 @@ async function readArchive(): Promise<string> {
   return readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
 }
 
+async function readEnrich(): Promise<string> {
+  return readFile(join(templatesRoot(), "commands", "enrich.md"), "utf8");
+}
+
 /**
  * Strips each line's leading whitespace. Used only for the Knowledge check
  * reasoning core below: `archive.md` embeds it as a numbered step's
@@ -278,5 +282,35 @@ describe("Cross-file methodology consistency (/archive vs /adversarial-review)",
     // only ever surfaces text, never pauses, never writes) -- these differ
     // by design (caller-specific setup/handling around a shared reasoning
     // core), not by drift.
+  });
+
+  describe("Project-local learned knowledge (knowledge.md) eligibility rule and write mechanics", () => {
+    it("shares an identical eligibility rule and read-before-append/update mechanic, byte-for-byte", async () => {
+      const enrich = await readEnrich();
+      const adversarial = await readAdversarialReview();
+
+      const start = "**Ask, of the specific conclusion you just reached, all five:**";
+      const end = 'this command")\n```';
+
+      const enrichBlock = extractSection(enrich, "enrich.md knowledge.md eligibility rule", start, end);
+      const adversarialBlock = extractSection(
+        adversarial,
+        "adversarial-review.md knowledge.md eligibility rule",
+        start,
+        end,
+      );
+
+      expect(adversarialBlock).toBe(enrichBlock);
+    });
+
+    // Deliberately NOT asserted identical: each caller's own trigger
+    // sentence just above the pinned block (enrich.md: "step 6's analysis
+    // or step 7's resolution of a blocking item"; adversarial-review.md:
+    // "a finding was just classified RESOLVED or NO LONGER APPLICABLE"),
+    // and each caller's closing sentence just below it, pointing at that
+    // command's own non-knowledge.md home for speculative content
+    // (enrich.md: Open Questions/Assumptions; adversarial-review.md:
+    // Findings tables/Open Questions) -- both genuinely differ by which
+    // command is writing, not by drift.
   });
 });

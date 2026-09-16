@@ -217,7 +217,7 @@ describe("template text: guardrails and non-blocking framing", () => {
     const propose = await readTemplate("propose.md");
 
     expect(explore).toMatch(/Never skip step 9 \(recording provenance\)/);
-    expect(enrich).toMatch(/Never skip step 9 \(recording provenance\)/);
+    expect(enrich).toMatch(/Never skip step 10 \(recording provenance\)/);
     expect(propose).toMatch(/Always write\/refresh `<changeRoot>\/\.ce-provenance-propose\.yml`/);
   });
 
