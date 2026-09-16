@@ -31,6 +31,26 @@ async function readAdversarialReview(): Promise<string> {
   return readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8");
 }
 
+async function readArchive(): Promise<string> {
+  return readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+}
+
+/**
+ * Strips each line's leading whitespace. Used only for the Knowledge check
+ * reasoning core below: `archive.md` embeds it as a numbered step's
+ * indented body while `adversarial-review.md` embeds it as an unindented
+ * top-level section, so the two are identical prose at a different nesting
+ * depth -- not drift. Every other pinned block in this file is compared
+ * without this normalization, since both sides share the same nesting
+ * there.
+ */
+function dedent(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^[ \t]+/, ""))
+    .join("\n");
+}
+
 /** Extracts the substring from `startMarker` through the end of `endMarker`, inclusive. */
 function extractSection(content: string, label: string, startMarker: string, endMarker: string): string {
   const startIdx = content.indexOf(startMarker);
@@ -226,5 +246,37 @@ describe("Cross-file methodology consistency (/verify vs /adversarial-review)", 
     // structure (verify.md: a "Gaps and Blockers" section; adversarial-review.md:
     // a "**Scope limitations:**" field) -- a genuine, documented difference,
     // not drift.
+  });
+});
+
+describe("Cross-file methodology consistency (/archive vs /adversarial-review)", () => {
+  describe("Knowledge check reasoning core", () => {
+    it("shares an identical reasoning core (the question, and the yes/no/scan/branch logic), modulo nesting-depth indentation", async () => {
+      const archive = await readArchive();
+      const adversarial = await readAdversarialReview();
+
+      const start = "**Ask: did this produce reusable project knowledge that is not";
+      const end = "for the human to act on later.";
+
+      const archiveBlock = extractSection(archive, "archive.md Knowledge check reasoning core", start, end);
+      const adversarialBlock = extractSection(
+        adversarial,
+        "adversarial-review.md Knowledge check reasoning core",
+        start,
+        end,
+      );
+
+      expect(dedent(adversarialBlock)).toBe(dedent(archiveBlock));
+    });
+
+    // Deliberately NOT asserted identical, and NOT part of the pinned
+    // block above: each caller's setup (what it gathers -- archive.md reads
+    // proposal/design/enrich/tasks and every report; adversarial-review.md
+    // reads the PR description, repo conventions, and its own findings) and
+    // each caller's handling of the outcome (archive.md may pause for the
+    // human to incorporate a small find before archiving; adversarial-review.md
+    // only ever surfaces text, never pauses, never writes) -- these differ
+    // by design (caller-specific setup/handling around a shared reasoning
+    // core), not by drift.
   });
 });

@@ -1143,6 +1143,49 @@ the next step in terms of the pull request itself instead:
   mention that `ce review <repo> <pr-number>` can be re-run later if the
   PR gains new commits, to review just the delta.
 
+**Existing PR review workspace only: check for reusable project
+knowledge (the Knowledge check)**
+
+Gather what this review has already produced: the PR description, the
+repository conventions/documentation read in Step 3, this review's own
+findings (Step 9), and, for a follow-up review, the prior report's
+reconciliation from Step 4.
+
+**Ask: did this produce reusable project knowledge that is not
+represented in the project's current canonical documentation?** A
+behavioral or domain rule, an architectural decision, a project
+convention, or an API contract all count; something that only matters
+to this one specific change does not. Only answer yes when you can
+point to something concrete and citable -- never because of a vague
+sense that "we could document more."
+
+**If no:** say so in one line and continue -- this is the common case.
+
+**If yes:** scan the target repository, read-only, inside
+`$CE_WORKTREE`, for an existing, obvious canonical home for it (e.g.
+`docs/adr/`, `AGENTS.md`, `CONTRIBUTING.md`, an OpenAPI/API-spec file)
+-- the same ad hoc discovery already used elsewhere in this command
+family for "repository conventions and documentation," never a
+persisted registry.
+
+- **A small, in-scope, obvious home exists:** draft the minimal,
+  concrete edit -- the durable fact or decision itself, terse and
+  future-facing, with a short citation back to what taught it (this
+  work and its report) -- and present it as text.
+- **No obvious home, or the change would be larger than this one edit**
+  (e.g. it genuinely needs a new ADR, or touches many files): draft
+  nothing. State a specific, named recommendation instead (what should
+  be documented, and where) for the human to act on later.
+
+Include this as text in your chat response, alongside the verdict and
+next-step guidance above. **Never write to `$CE_WORKTREE`, the report
+file, or any canonical documentation file yourself, and never pause
+waiting for a decision here** -- unlike `/archive`'s own Knowledge
+check, this command reviews; it never implements, and a human who
+wants to act on this can do so as a separate, explicit step (a manual
+edit, or `/explore`/`/propose`/`/apply` inside this same workspace, per
+the transition already described above).
+
 **Guardrails**
 - Never end Step 10 with only the report's printed filesystem path --
   always also give the user a ready-to-run `ce open --path "<report
@@ -1223,6 +1266,12 @@ the next step in terms of the pull request itself instead:
   rather than accepting it at face value. (Implementation workspaces
   only -- an Existing PR review workspace never has a verify report to
   consult; see Step 4.)
+- The Existing-PR-review-workspace Knowledge check (Step 10) is
+  text-only -- it never writes to `$CE_WORKTREE`, the report file, or
+  any canonical documentation file, and it never pauses. This command
+  reviews; it never implements, and this step is no exception. (An
+  Implementation workspace's equivalent check is `/archive`'s own Step
+  5, not this command's job.)
 - Never modify product/application code. This command reviews; it does not
   implement or fix.
 - Never independently mutate database schema/data, infrastructure,

@@ -2880,9 +2880,9 @@ describe("ce start (integration)", () => {
       expect(content).toMatch(/1\. \*\*If no change name provided, prompt for selection\*\*/);
       expect(content).toMatch(/2\. \*\*Check artifact completion status\*\*/);
       expect(content).toMatch(/3\. \*\*Check task completion status\*\*/);
-      expect(content).toMatch(/5\. \*\*Assess delta spec sync state\*\*/);
-      expect(content).toMatch(/6\. \*\*Perform the archive\*\*/);
-      expect(content).toMatch(/7\. \*\*Display summary\*\*/);
+      expect(content).toMatch(/6\. \*\*Assess delta spec sync state\*\*/);
+      expect(content).toMatch(/7\. \*\*Perform the archive\*\*/);
+      expect(content).toMatch(/8\. \*\*Display summary\*\*/);
       expect(content).toMatch(/If any artifacts are not `done`:/);
       expect(content).toMatch(/If incomplete tasks found:/);
       expect(content).toMatch(/Sync now \(recommended\)/);
@@ -2929,7 +2929,7 @@ describe("ce start (integration)", () => {
         /\*\*If both reports are Good\*\* \(whether from a clean `PASS`, or a\s*`PASS WITH GAPS` where every unresolved item is explicitly\s*`Non-blocking`\): proceed to step 5\./,
       );
       expect(normalized).toMatch(
-        /\*\*If either report is Missing, Failing, Stale, or Blocked by\s*findings: stop here\.\*\* Do not proceed to step 5 or step 6\./,
+        /\*\*If either report is Missing, Failing, Stale, or Blocked by\s*findings: stop here\.\*\* Do not proceed to step 5, step 6, or step 7\./,
       );
     });
 
@@ -3118,6 +3118,103 @@ describe("ce start (integration)", () => {
         );
         expect(normalized).toMatch(
           /with the same\s*untagged-means-`Blocking` rule as above/,
+        );
+      });
+    });
+
+    describe("Knowledge check (Step 5): surfaces reusable project knowledge, never writes canonical docs itself", () => {
+      const readArchive = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "archive.md"), "utf8");
+      };
+
+      it("is inserted as step 5, between the hard evidence gate (step 4) and the spec-sync step (now step 6)", async () => {
+        const content = await readArchive();
+
+        expect(content).toMatch(
+          /5\. \*\*Check for reusable project knowledge \(the Knowledge check\)\*\*/,
+        );
+        expect(content).toMatch(/6\. \*\*Assess delta spec sync state\*\*/);
+      });
+
+      it("gathers proposal/design/enrich/tasks and every verify/adversarial-review report, not just the most recent", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Gather what this change has already produced: `proposal\.md`,\s*`design\.md`.*`enrich\.md`, `tasks\.md`,\s*and \*every\* `\/verify` and `\/adversarial-review` report under\s*`<changeRoot>\/reports\/`/,
+        );
+      });
+
+      it("asks whether the change produced reusable knowledge, and is conservative about answering yes", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Ask: did this produce reusable project knowledge that is not\s*represented in the project's current canonical documentation\?\*\*/,
+        );
+        expect(normalized).toMatch(
+          /Only answer yes when you can\s*point to something concrete and citable -- never because of a vague\s*sense that "we could document more\."/,
+        );
+      });
+
+      it("scans the target repository read-only for a canonical home, and branches on scope: small in-scope edit vs. bigger/no-home recommendation", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /scan the target repository, read-only, inside\s*`\$CE_WORKTREE`, for an existing, obvious canonical home for it/,
+        );
+        expect(content).toMatch(/\*\*A small, in-scope, obvious home exists:\*\*/);
+        expect(content).toMatch(
+          /\*\*No obvious home, or the change would be larger than this one edit\*\*/,
+        );
+      });
+
+      it("never writes to $CE_WORKTREE itself -- a small find pauses for the human to act, a bigger find is a recommendation only", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*This step never writes to `\$CE_WORKTREE` or any canonical\s*documentation file itself -- `\/archive` archives; it doesn't\s*implement, and this step is no exception\.\*\*/,
+        );
+        expect(normalized).toMatch(
+          /ask whether to incorporate it into this\s*change before archiving\. If yes, \*\*stop here\*\*/,
+        );
+        expect(normalized).toMatch(
+          /the human makes\s*the edit.*and commits it as part of the change,\s*then re-runs `\/archive`/,
+        );
+      });
+
+      it("is a soft check that never blocks archiving, distinct from step 4's hard gate", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /This is a \*soft\*, optional check, distinct from step 4's\s*unconditional hard gate immediately above -- it never blocks\s*archiving on its own/,
+        );
+      });
+
+      it("surfaces its outcome in the Display summary step and the Output On Success template", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Step 5's Knowledge check outcome, if it found anything worth\s*mentioning/,
+        );
+        expect(content).toMatch(/\*\*Knowledge check:\*\*/);
+      });
+
+      it("has a guardrail bullet describing its soft, non-writing nature", async () => {
+        const content = await readArchive();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /The Knowledge check \(Step 5\) is soft and never blocks archiving on its own/,
+        );
+        expect(normalized).toMatch(
+          /It never writes to `\$CE_WORKTREE` or any canonical documentation file\s*itself/,
         );
       });
     });
@@ -5278,6 +5375,80 @@ describe("ce start (integration)", () => {
           content.indexOf("**Guardrails**"),
         );
         expect(reportBack).toMatch(/State the next step based on the verdict/);
+      });
+    });
+
+    describe("Knowledge check (Step 10, Existing PR review workspace only): text-only, never writes, never pauses", () => {
+      const readAdversarialReview = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8");
+      };
+
+      it("is scoped to Existing PR review workspaces only, inside Step 10", async () => {
+        const content = await readAdversarialReview();
+
+        const reportBack = content.slice(
+          content.indexOf("## 10. Report back"),
+          content.indexOf("**Guardrails**"),
+        );
+        expect(reportBack).toMatch(
+          /\*\*Existing PR review workspace only: check for reusable project\s*knowledge \(the Knowledge check\)\*\*/,
+        );
+      });
+
+      it("gathers the PR description, repo conventions, this review's findings, and any follow-up reconciliation", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Gather what this review has already produced: the PR description, the\s*repository conventions\/documentation read in Step 3, this review's own\s*findings \(Step 9\), and, for a follow-up review, the prior report's\s*reconciliation from Step 4\./,
+        );
+      });
+
+      it("asks the same reusable-knowledge question, conservatively, as /archive's Knowledge check", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Ask: did this produce reusable project knowledge that is not\s*represented in the project's current canonical documentation\?\*\*/,
+        );
+        expect(normalized).toMatch(
+          /Only answer yes when you can\s*point to something concrete and citable -- never because of a vague\s*sense that "we could document more\."/,
+        );
+      });
+
+      it("never writes to $CE_WORKTREE, the report file, or canonical docs, and never pauses -- unlike /archive's version", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Never write to `\$CE_WORKTREE`, the report file, or any canonical\s*documentation file yourself, and never pause\s*waiting for a decision here\*\*/,
+        );
+        expect(normalized).toMatch(
+          /unlike `\/archive`'s own Knowledge\s*check, this command reviews; it never implements/,
+        );
+      });
+
+      it("includes the outcome as text in the chat response alongside the verdict, never inside a write", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Include this as text in your chat response, alongside the verdict and\s*next-step guidance above\./,
+        );
+      });
+
+      it("has a guardrail bullet distinguishing it from /archive's Step 5 equivalent", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /The Existing-PR-review-workspace Knowledge check \(Step 10\) is\s*text-only -- it never writes to `\$CE_WORKTREE`, the report file, or\s*any canonical documentation file, and it never pauses\./,
+        );
+        expect(normalized).toMatch(
+          /An\s*Implementation workspace's equivalent check is `\/archive`'s own Step\s*5, not this command's job\./,
+        );
       });
     });
 

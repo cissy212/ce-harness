@@ -162,12 +162,12 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    **If both reports are Good** (whether from a clean `PASS`, or a
    `PASS WITH GAPS` where every unresolved item is explicitly
    `Non-blocking`): proceed to step 5. If either report contributed
-   carried-forward gaps, remember them for step 7's output -- do not
+   carried-forward gaps, remember them for step 8's output -- do not
    drop this information once the gate passes.
 
    **If either report is Missing, Failing, Stale, or Blocked by
-   findings: stop here.** Do not proceed to step 5 or step 6. This is
-   unconditional -- unlike steps 2 and 3's warnings, there is no
+   findings: stop here.** Do not proceed to step 5, step 6, or step 7.
+   This is unconditional -- unlike steps 2 and 3's warnings, there is no
    "confirm to continue anyway," and reclassifying a finding's Merge
    impact to force a pass is never this command's decision to make (that
    belongs to `/verify`/`/adversarial-review` themselves, on a rerun).
@@ -177,7 +177,59 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    one) and the exact command to run next (`/verify <name>` and/or
    `/adversarial-review <name>`).
 
-5. **Assess delta spec sync state**
+5. **Check for reusable project knowledge (the Knowledge check)**
+
+   Gather what this change has already produced: `proposal.md`,
+   `design.md` (including its Decisions section), `enrich.md`, `tasks.md`,
+   and *every* `/verify` and `/adversarial-review` report under
+   `<changeRoot>/reports/` -- not just the most recent of each kind, so a
+   finding that was raised, challenged, and resolved across two reports
+   reads as one story, not a fragment.
+
+   **Ask: did this produce reusable project knowledge that is not
+   represented in the project's current canonical documentation?** A
+   behavioral or domain rule, an architectural decision, a project
+   convention, or an API contract all count; something that only matters
+   to this one specific change does not. Only answer yes when you can
+   point to something concrete and citable -- never because of a vague
+   sense that "we could document more."
+
+   **If no:** say so in one line and continue -- this is the common case.
+
+   **If yes:** scan the target repository, read-only, inside
+   `$CE_WORKTREE`, for an existing, obvious canonical home for it (e.g.
+   `docs/adr/`, `AGENTS.md`, `CONTRIBUTING.md`, an OpenAPI/API-spec file)
+   -- the same ad hoc discovery already used elsewhere in this command
+   family for "repository conventions and documentation," never a
+   persisted registry.
+
+   - **A small, in-scope, obvious home exists:** draft the minimal,
+     concrete edit -- the durable fact or decision itself, terse and
+     future-facing, with a short citation back to what taught it (this
+     work and its report) -- and present it as text.
+   - **No obvious home, or the change would be larger than this one edit**
+     (e.g. it genuinely needs a new ADR, or touches many files): draft
+     nothing. State a specific, named recommendation instead (what should
+     be documented, and where) for the human to act on later.
+
+   **This step never writes to `$CE_WORKTREE` or any canonical
+   documentation file itself -- `/archive` archives; it doesn't
+   implement, and this step is no exception.** Instead:
+   - On a small, in-scope find: ask whether to incorporate it into this
+     change before archiving. If yes, **stop here** -- the human makes
+     the edit (themselves, or by asking you directly, outside this
+     command's own instructions) and commits it as part of the change,
+     then re-runs `/archive`. If no, continue to step 6, treating it as
+     change-local -- not promoted, not lost either, since it's still
+     sitting in whichever artifact you found it in.
+   - On a bigger/out-of-scope find: no pause needed -- there's nothing
+     actionable right now. Include the recommendation in step 8's output
+     and continue to step 6.
+   - This is a *soft*, optional check, distinct from step 4's
+     unconditional hard gate immediately above -- it never blocks
+     archiving on its own, and declining it is always a valid choice.
+
+6. **Assess delta spec sync state**
 
    Use `artifactPaths.specs.existingOutputPaths` from status JSON to check for delta specs. If none exist, proceed without sync prompt.
 
@@ -192,7 +244,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
 
-6. **Perform the archive**
+7. **Perform the archive**
 
    Create an `archive` directory under `planningHome.changesDir` if it doesn't exist:
    ```bash
@@ -220,7 +272,7 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 
    Both `<changeRoot>` and `<planningHome.changesDir>` come from the `status --store "$CE_OPENSPEC_STORE" --json` output in step 2 -- always absolute paths inside the external store. Never substitute a repo-local or hand-constructed path.
 
-7. **Display summary**
+8. **Display summary**
 
    Show archive completion summary including:
    - Change name
@@ -230,6 +282,10 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
    - Note about any warnings (incomplete artifacts/tasks)
    - Any carried-forward, explicitly non-blocking gaps from step 4 -- never
      silently omitted just because they didn't block archiving
+   - Step 5's Knowledge check outcome, if it found anything worth
+     mentioning (a drafted edit the human declined to incorporate now, or
+     an out-of-scope recommendation) -- omit entirely when step 5
+     answered no
 
 **Output On Success**
 
@@ -249,6 +305,12 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
 **Carried-forward gaps (explicitly non-blocking, not required to be fixed before archiving):**
 - [/verify] <the gap's own text, verbatim> -- reports/<file>
 - [/adversarial-review] <the finding/limitation's own text, verbatim> -- reports/<file>
+
+**Knowledge check:** <either "No reusable project knowledge identified
+beyond this change" -- the common case -- or, when step 5 found
+something: the drafted edit (and that the human chose not to
+incorporate it now), or the out-of-scope recommendation for the human
+to act on later>
 
 All artifacts complete. All tasks complete.
 
@@ -290,6 +352,14 @@ section, and never let the surrounding output read as if the result
 were a clean `PASS`** when a non-blocking gap was actually carried
 forward -- the whole point of this gate change is that the human stays
 able to see exactly what was accepted and why.
+
+**Include the "Knowledge check" line whenever step 5 found something --
+either a drafted edit the human chose not to incorporate now, or an
+out-of-scope recommendation.** Use the "No reusable project knowledge
+identified beyond this change" line when step 5 answered no. Either
+way this is always exactly one line (or a short block for a drafted
+edit) -- step 5 never blocks archiving, so this line only ever informs,
+it never changes whether archiving proceeds.
 
 **Never print the bare archive filesystem path** (e.g.
 `openspec/changes/archive/2026-09-09-case-studies-domain-model/`) as
@@ -360,6 +430,7 @@ Target archive directory already exists.
 - Never assume repo-local `openspec/` paths -- always use `planningHome`, `changeRoot`, and `artifactPaths` resolved from the CLI's JSON output, which point inside the external store
 - Never modify product/application code during `/archive` -- this command only moves OpenSpec planning artifacts within the external store
 - Never create `openspec/`, `.opencode/`, reports, or any other harness/config file or directory inside the target repository or its Git worktree -- archiving happens only inside the external store at `$CE_OPENSPEC_STORE`
-- This command requires a fresh `/verify` and `/adversarial-review` report before archiving (Step 4), with nothing unresolved that either report itself classifies `Blocking`: missing, `FAIL`, stale evidence (verified against a different worktree commit or tasks.md than the current state), or a `PASS WITH GAPS` report containing any unresolved `Blocking` (or untagged) item unconditionally blocks archive -- no confirm-to-continue override, unlike the softer artifact/task-completion warnings in steps 2-3. A `PASS WITH GAPS` report whose every unresolved item is explicitly tagged `Merge impact: Non-blocking` does **not** block -- but its carried-forward gaps must always be surfaced in Step 7's output (never presented as a clean `PASS`). A later passing rerun always supersedes an earlier failure, since the gate only ever looks at the most recent report of each kind. It never reruns `/verify` or `/adversarial-review` itself, never modifies a report, and never reclassifies a finding's Merge impact itself -- it only reads the most recent report of each kind and gates on what it already says.
+- This command requires a fresh `/verify` and `/adversarial-review` report before archiving (Step 4), with nothing unresolved that either report itself classifies `Blocking`: missing, `FAIL`, stale evidence (verified against a different worktree commit or tasks.md than the current state), or a `PASS WITH GAPS` report containing any unresolved `Blocking` (or untagged) item unconditionally blocks archive -- no confirm-to-continue override, unlike the softer artifact/task-completion warnings in steps 2-3. A `PASS WITH GAPS` report whose every unresolved item is explicitly tagged `Merge impact: Non-blocking` does **not** block -- but its carried-forward gaps must always be surfaced in Step 8's output (never presented as a clean `PASS`). A later passing rerun always supersedes an earlier failure, since the gate only ever looks at the most recent report of each kind. It never reruns `/verify` or `/adversarial-review` itself, never modifies a report, and never reclassifies a finding's Merge impact itself -- it only reads the most recent report of each kind and gates on what it already says.
+- The Knowledge check (Step 5) is soft and never blocks archiving on its own -- it only pauses, at the human's own choice, when it finds a small, in-scope, obvious edit to incorporate before archiving. It never writes to `$CE_WORKTREE` or any canonical documentation file itself, and it never promotes anything without a human explicitly acting on it: a bigger or out-of-scope find only ever becomes a surfaced recommendation, never an edit `/archive` makes on its own.
 
 _See `THIRD_PARTY_NOTICES.md` for this command's provenance and licensing._
