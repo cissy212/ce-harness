@@ -25,6 +25,10 @@ async function writeArchivedChangeFile(
   await writeFixtureFile(durableRoot, `openspec/changes/archive/${archiveDirName}/${relToChange}`, content);
 }
 
+async function writeReviewReportFile(durableRoot: string, filename: string, content: string): Promise<void> {
+  await writeFixtureFile(durableRoot, `reviews/${filename}`, content);
+}
+
 describe("retrieveCandidates", () => {
   let durableRoot: string;
 
@@ -165,6 +169,77 @@ describe("retrieveCandidates", () => {
 
       const result = await retrieveCandidates({ durableRoot, domain: "billing" });
       expect(result.candidates.length).toBe(1);
+    });
+  });
+
+  describe("review reports (Existing PR review workspace)", () => {
+    it("matches a review report by keyword and tags it 'review-report', 'historical'", async () => {
+      await writeReviewReportFile(
+        durableRoot,
+        "2026-06-01-pr-42-adversarial-review.md",
+        "Reviewed the refund token flow for double-submit races.\n",
+      );
+
+      const result = await retrieveCandidates({ durableRoot, keywords: ["refund"] });
+      expect(result.candidates.length).toBe(1);
+      const [candidate] = result.candidates;
+      expect(candidate.type).toBe("review-report");
+      expect(candidate.status).toBe("historical");
+      expect(candidate.path).toBe(join("reviews", "2026-06-01-pr-42-adversarial-review.md"));
+    });
+
+    it("dates a review report from its own filename", async () => {
+      await writeReviewReportFile(
+        durableRoot,
+        "2026-06-01-pr-42-adversarial-review.md",
+        "Reviewed the refund token flow.\n",
+      );
+
+      const result = await retrieveCandidates({ durableRoot, keywords: ["refund"] });
+      expect(result.candidates[0].date).toBe("2026-06-01T00:00:00.000Z");
+    });
+
+    it("matches both PR-scoped and legacy unscoped review report filenames", async () => {
+      await writeReviewReportFile(
+        durableRoot,
+        "2026-06-01-pr-42-adversarial-review.md",
+        "Reviewed the refund token flow.\n",
+      );
+      await writeReviewReportFile(
+        durableRoot,
+        "2026-06-02-adversarial-review.md",
+        "Reviewed another refund token change.\n",
+      );
+
+      const result = await retrieveCandidates({ durableRoot, keywords: ["refund"], limit: 20 });
+      expect(result.candidates.length).toBe(2);
+      expect(result.candidates.every((c) => c.type === "review-report")).toBe(true);
+    });
+
+    it("does not return a review report with no matching signal", async () => {
+      await writeReviewReportFile(
+        durableRoot,
+        "2026-06-01-pr-42-adversarial-review.md",
+        "Reviewed the refund token flow.\n",
+      );
+
+      const result = await retrieveCandidates({ durableRoot, keywords: ["completely-unrelated-term"] });
+      expect(result.candidates).toEqual([]);
+    });
+
+    it("is excluded when 'reviewReports' is not in the requested sources", async () => {
+      await writeReviewReportFile(
+        durableRoot,
+        "2026-06-01-pr-42-adversarial-review.md",
+        "Reviewed the refund token flow.\n",
+      );
+
+      const result = await retrieveCandidates({
+        durableRoot,
+        keywords: ["refund"],
+        sources: ["specs", "archivedChanges", "gitHistory"],
+      });
+      expect(result.candidates).toEqual([]);
     });
   });
 

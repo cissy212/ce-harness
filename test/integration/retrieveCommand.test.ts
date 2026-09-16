@@ -100,6 +100,37 @@ describe("ce retrieve (integration)", () => {
     expect(parsed.warnings).toEqual([]);
   });
 
+  it("surfaces an Existing-PR-review-workspace report from reviews/ by default, with no --sources flag needed", async () => {
+    const { startCommand } = await import("../../src/commands/start.js");
+    const { retrieveCommand } = await import("../../src/commands/retrieve.js");
+    const { readActivePointer, readWorkspace, resolveTrustedOpenSpec } = await import(
+      "../../src/core/workspace.js"
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await startCommand({ repo: repoDir, issue: "issue-1" });
+
+    const pointer = await readActivePointer();
+    const workspace = await readWorkspace(pointer!.project, pointer!.sanitizedIssue);
+    const trusted = resolveTrustedOpenSpec(workspace);
+    expect(trusted).not.toBeNull();
+
+    await writeFixtureFile(
+      trusted!.root,
+      "reviews/2026-06-01-pr-42-adversarial-review.md",
+      "Reviewed the refund token flow for double-submit races.\n",
+    );
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    logSpy.mockClear();
+    await retrieveCommand({ keywords: ["refund"] });
+
+    const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+    expect(parsed.candidates.length).toBe(1);
+    expect(parsed.candidates[0].type).toBe("review-report");
+    expect(parsed.candidates[0].status).toBe("historical");
+  });
+
   it("passes taskDescription, paths, domain, and limit through to retrieveCandidates", async () => {
     const { startCommand } = await import("../../src/commands/start.js");
     const { retrieveCommand } = await import("../../src/commands/retrieve.js");

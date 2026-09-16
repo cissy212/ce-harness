@@ -39,7 +39,8 @@ import { commitChangedPaths, pathHistory, searchCommitMessages } from "./git.js"
  * Durable store layout this module reads (never writes): confirmed
  * against ce-harness's own `/propose`, `/archive`, `/verify`, and
  * `/adversarial-review` command templates, which are the actual source
- * of truth for what the `openspec` CLI puts on disk --
+ * of truth for what the `openspec` CLI (and, for `reviews/`, `ce`
+ * itself -- see core/reviewReports.ts) puts on disk --
  *
  *   <durableRoot>/openspec/specs/<capability>/spec.md      (current)
  *   <durableRoot>/openspec/changes/archive/<date>-<name>/  (historical)
@@ -49,6 +50,11 @@ import { commitChangedPaths, pathHistory, searchCommitMessages } from "./git.js"
  *     reports/<date>-verify.md
  *     reports/<date>-adversarial-review.md
  *     specs/<capability>/spec.md                            (delta spec)
+ *   <durableRoot>/reviews/<date>-[pr-<n>-]adversarial-review.md
+ *                                                           (historical --
+ *     Existing PR review workspace reports; this workspace type has no
+ *     OpenSpec change, so these live at a dedicated, flat, project-shared
+ *     location instead of a change's own reports/)
  *
  * A change directory that has *not yet* been archived
  * (<durableRoot>/openspec/changes/<name>/, i.e. everything except the
@@ -61,7 +67,7 @@ import { commitChangedPaths, pathHistory, searchCommitMessages } from "./git.js"
 // Public types
 // ---------------------------------------------------------------------------
 
-export type RetrievalSource = "specs" | "archivedChanges" | "gitHistory";
+export type RetrievalSource = "specs" | "archivedChanges" | "reviewReports" | "gitHistory";
 
 export type ArtifactType =
   | "spec"
@@ -72,6 +78,7 @@ export type ArtifactType =
   | "change-report"
   | "change-delta-spec"
   | "change-other"
+  | "review-report"
   | "git-commit";
 
 export type ArtifactStatus = "current" | "historical";
@@ -611,6 +618,64 @@ async function scanArchivedChanges(durableRoot: string, signals: QuerySignals): 
   return candidates;
 }
 
+/**
+ * Existing PR review workspace reports: every `.md` file directly under
+ * `<durableRoot>/reviews/` (see core/reviewReports.ts -- this workspace
+ * type's dedicated report location, since there is no OpenSpec change to
+ * nest a `reports/` directory under). Flat and non-recursive by
+ * convention (unlike `scanArchivedChanges`'s per-change subdirectories),
+ * and shared by every PR review workspace of the project, so this alone
+ * is what makes a PR review's findings reachable to `ce retrieve` at
+ * all -- this workspace type never archives, and this directory sits
+ * outside `openspec/`, so neither `scanSpecs` nor `scanArchivedChanges`
+ * ever reaches it.
+ */
+async function scanReviewReports(durableRoot: string, signals: QuerySignals): Promise<InternalCandidate[]> {
+  const reviewsRoot = join(durableRoot, "reviews");
+  if (!existsSync(reviewsRoot)) return [];
+
+  let entries;
+  try {
+    entries = await readdir(reviewsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const candidates: InternalCandidate[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const file = join(reviewsRoot, entry.name);
+    let content: string;
+    try {
+      content = await readFile(file, "utf8");
+    } catch {
+      continue;
+    }
+    // The report's own filename embeds its date (see
+    // `ce review-report-path`'s `<date>-[pr-<n>-]adversarial-review.md`
+    // shape) -- preferred over mtime for the same reason
+    // `artifactDate` prefers it for archived-change reports.
+    const dateMatch = REPORT_FILENAME_PATTERN.exec(entry.name);
+    const date = dateMatch ? `${dateMatch[1]}T00:00:00.000Z` : await mtimeIso(file);
+    const matched = [
+      ...matchPaths(content, signals),
+      ...matchDomain(content, null, signals),
+      ...matchKeywords(content, signals),
+    ];
+    const candidate = buildCandidate({
+      path: relative(durableRoot, file),
+      root: "durableStore",
+      type: "review-report",
+      status: "historical",
+      date,
+      matched,
+      content,
+    });
+    if (candidate) candidates.push(candidate);
+  }
+  return candidates;
+}
+
 // ---------------------------------------------------------------------------
 // Git history scanning
 // ---------------------------------------------------------------------------
@@ -794,7 +859,8 @@ function stripScore(candidate: InternalCandidate): RetrievalCandidate {
 export async function retrieveCandidates(query: RetrievalQuery): Promise<RetrievalResult> {
   const warnings: string[] = [];
   const limit = query.limit ?? DEFAULT_LIMIT;
-  const sources = query.sources ?? (["specs", "archivedChanges", "gitHistory"] as RetrievalSource[]);
+  const sources =
+    query.sources ?? (["specs", "archivedChanges", "reviewReports", "gitHistory"] as RetrievalSource[]);
   const signals = buildQuerySignals(query);
 
   if (signals.keywordEntries.length === 0 && signals.paths.length === 0 && !signals.domain) {
@@ -816,6 +882,9 @@ export async function retrieveCandidates(query: RetrievalQuery): Promise<Retriev
   }
   if (sources.includes("archivedChanges") && durableRootExists) {
     candidates.push(...(await scanArchivedChanges(query.durableRoot, signals)));
+  }
+  if (sources.includes("reviewReports") && durableRootExists) {
+    candidates.push(...(await scanReviewReports(query.durableRoot, signals)));
   }
   if (sources.includes("gitHistory")) {
     if (query.repositoryPath) {
