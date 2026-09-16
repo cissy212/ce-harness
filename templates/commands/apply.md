@@ -157,15 +157,30 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
      silently implement it as one lump or half-implement part of it;
      tell the user which task and why, and recommend re-running
      `/propose` to split it in `tasks.md`
-   - The human says something that changes or adds to the agreed
-     requirement/scope -- not an implementation detail discovered while
+   - The agreed requirement/scope changed or was found to rest on a
+     wrong assumption -- not an implementation detail discovered while
      coding, not a bug fix needed to satisfy the existing spec, and not
      a clarification that leaves agreed behavior unchanged, but a real
-     change to what was agreed → **stop before writing any code for the
-     changed/new part.** Do not fold it in silently. Tell the user
-     plainly what changed, that continuing would mean implementing
-     against a stale agreed contract, and recommend: run `/enrich
-     <change>` to capture the new intent durably (it already detects
+     change to what was agreed. Two shapes of this count equally:
+     - **the human says something** that changes or adds to the agreed
+       requirement/scope; or
+     - **investigation (yours or the human's) revealed that a review
+       finding's own assumption about intended behavior was incorrect,
+       or that the actual behavior differs from what was previously
+       understood** -- e.g. you're implementing a fix for an
+       adversarial-review finding and, while investigating it (possibly
+       because the human challenged it), found evidence -- an existing
+       test, a comment, prior code -- that contradicts what the finding
+       (or the original plan) assumed. This is a change to the agreed
+       contract exactly the same as the human explicitly saying so, even
+       though no one stated it in those words.
+
+     Either way → **stop before writing any code for the changed/new
+     part.** Do not fold it in silently. Tell the user plainly what
+     changed (or what evidence was found and what it contradicts), that
+     continuing would mean implementing against a stale agreed contract,
+     and recommend: run `/enrich <change>` to capture the new
+     understanding and its evidence durably (it already detects
      in-progress implementation and treats this as blocking), then
      `/propose <change>` to realign `proposal.md`/`design.md`/
      `tasks.md`, then `/apply` again to resume -- already-completed
@@ -245,7 +260,7 @@ What would you like to do?
 - Record `<changeRoot>/.ce-implementation-base.yml` once, in step 4, the first time it's reached for a given change (the worktree's current `HEAD`, before any task's code changes) -- never write it if step 4's freshness gate didn't pass, and never overwrite it on a later resume. This is the only deterministic evidence a later `/verify`/`/adversarial-review` can trust that this change actually entered implementation through `/apply` itself -- never infer implementation from an OpenSpec change merely existing, from `/propose` having validated a plan, or from the worktree merely differing from some earlier state.
 - If task is ambiguous, pause and ask before implementing
 - If a task obviously bundles multiple independently completable responsibilities (more than one separately checkable success criterion), pause instead of silently implementing it as one lump -- judge this semantically, never by mechanically splitting on "and" -- and recommend re-running `/propose` to split it
-- Never implement against a known-stale agreed contract: if the human changes or adds to the requirement/scope (not an implementation detail, a spec-conforming bug fix, or a non-material clarification), stop before coding the changed/new part and recommend `/enrich` then `/propose` to realign the artifacts before resuming `/apply`
+- Never implement against a known-stale agreed contract: if the human changes or adds to the requirement/scope, or investigation reveals a review finding's own assumption was wrong (not an implementation detail, a spec-conforming bug fix, or a non-material clarification), stop before coding the changed/new part and recommend `/enrich` then `/propose` to realign the artifacts before resuming `/apply`
 - If implementation reveals issues, pause and suggest artifact updates
 - Keep code changes minimal and scoped to each task
 - Update task checkbox immediately after completing each task

@@ -2532,14 +2532,28 @@ describe("ce start (integration)", () => {
       const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
 
       expect(content).toMatch(
-        /The human says something that changes or adds to the agreed\s*\n\s*requirement\/scope/,
+        /\*\*the human says something\*\* that changes or adds to the agreed\s*\n\s*requirement\/scope/,
       );
-      expect(content).toMatch(/\*\*stop before writing any code for the\s*\n\s*changed\/new part\.\*\*/);
+      expect(content).toMatch(/\*\*stop before writing any code for the changed\/new\s*\n\s*part\.\*\*/);
       expect(content).toMatch(
-        /run `\/enrich\s*\n\s*<change>` to capture the new intent durably/,
+        /run `\/enrich <change>` to capture the new\s*\n\s*understanding and its evidence durably/,
       );
       expect(content).toMatch(/then\s*\n\s*`\/propose <change>` to realign `proposal\.md`\/`design\.md`\/\s*\n\s*`tasks\.md`/);
       expect(content).toMatch(/already-completed\s*\n\s*tasks that remain valid are preserved, not redone/);
+    });
+
+    it("also stops when investigation (not just an explicit human statement) revealed a review finding's assumption was wrong", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "apply.md"), "utf8");
+
+      expect(content).toMatch(
+        /investigation \(yours or the human's\) revealed that a review\s*\n\s*finding's own assumption about intended behavior was incorrect/,
+      );
+      expect(content).toMatch(
+        /This is a change to the agreed\s*\n\s*contract exactly the same as the human explicitly saying so/,
+      );
+      expect(content.toLowerCase()).toMatch(/known-stale agreed contract: if the human changes or adds to the requirement\/scope, or investigation reveals a review finding's own assumption was wrong/);
     });
 
     it("distinguishes a material requirement change from normal implementation discoveries that must not bounce back through the workflow", async () => {
