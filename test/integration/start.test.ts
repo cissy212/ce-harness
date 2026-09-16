@@ -5757,6 +5757,148 @@ describe("ce start (integration)", () => {
         );
       });
     });
+
+    describe("Fresh-context reviewer delegation (Step 8): parent gathers, one subagent judges, parent persists", () => {
+      const readAdversarialReview = async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { templatesRoot } = await import("../../src/core/templates.js");
+        return readFile(join(templatesRoot(), "commands", "adversarial-review.md"), "utf8");
+      };
+
+      it("Steps 4, 5, and 6 defer their actual execution to Step 8's delegation point", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /The actual challenge\/classification judgment this step\s*describes.*is carried out\s*wherever Step 8's delegation ends up running/s,
+        );
+        expect(normalized).toMatch(
+          /\*\*This step's actual execution happens wherever Step 8's delegation ends\s*up running\*\*/,
+        );
+        expect(normalized).toMatch(
+          /\*\*This step's execution is also deferred to Step 8's delegation point\*\*/,
+        );
+      });
+
+      it("Step 5's framing confirms ce diff-scope and git only ever touch $CE_WORKTREE, never the external store", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /`ce diff-scope` and every\s*`git` command below\s*touch only `\$CE_WORKTREE` and environment variables -- never the external\s*OpenSpec store -- so a delegated reviewer can safely run this step\s*itself/,
+        );
+      });
+
+      it("Step 8 composes a delegation prompt from verbatim artifacts, prior report, retrieval results, and the selected lens", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(content).toMatch(
+          /### Delegate the reasoning below \(together with Step 4's classification and Step 5\/6's work\) to a fresh reviewer context/,
+        );
+        expect(normalized).toMatch(
+          /The \*\*verbatim\*\* content of `proposal\.md`\/`design\.md`\/`specs`\/\s*`tasks\.md`.*copied in full, never summarized, paraphrased, or\s*characterized in your own words\./s,
+        );
+        expect(normalized).toMatch(/The retrieval results from Step 3, verbatim\./);
+        expect(normalized).toMatch(
+          /The \*\*verbatim\*\* content of the lens file\(s\) selected in Step 7, if\s*any -- the delegated reviewer cannot reach `\$CE_LENSES_DIR` itself/,
+        );
+      });
+
+      it("explicitly instructs the delegated reviewer never to ask about or reference the parent conversation", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*State plainly, in the prompt itself: do not ask about or reference\s*this conversation, any `\/apply` session, or any reasoning behind why\s*the implementation was built the way it was\./,
+        );
+        expect(normalized).toMatch(
+          /treat\s*that absence itself as evidence.*never as a reason to guess at unstated intent\.\*\*/s,
+        );
+      });
+
+      it("forbids forwarding the parent's own characterization of the implementation into the delegation prompt", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Never pass the delegation prompt anything beyond what's listed\s*above\*\* -- specifically, never forward your own characterization of the\s*implementation, why particular choices were made, or any other content\s*from earlier in this conversation\./,
+        );
+      });
+
+      it("delegates via the stock Task/subagent mechanism, naming both runners' equivalents, without a runner-specific custom agent", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*Delegate via the Task\/subagent-delegation tool available to you\*\* --\s*Claude Code: `Task`, `subagent_type: "general-purpose"`; OpenCode: its\s*equivalent built-in, broadly-capable subagent \(`general`\)/,
+        );
+        expect(normalized).toMatch(
+          /the same\s*kind of delegation `\/archive` already uses for `openspec-sync-specs`/,
+        );
+        expect(normalized).toMatch(
+          /Never define or rely on a\s*runner-specific named agent for this/,
+        );
+      });
+
+      it("on success, takes the returned content as-is without re-deriving or second-guessing it", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*If delegation succeeds:\*\* take the returned report content and any\s*proposed `knowledge\.md` entry as-is -- do not re-derive, re-summarize, or\s*second-guess the reasoning behind them/,
+        );
+      });
+
+      it("on failure, discloses the exact loss of independence and falls back inline -- never silently", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*If delegation is unavailable, refuses, errors, or the tool doesn't\s*exist for this runner:\*\* say so explicitly to the user/,
+        );
+        expect(normalized).toMatch(
+          /Delegating the adversarial pass to a fresh\s*reviewer context failed or is unavailable \(\[reason\]\); running the review\s*directly in this conversation instead\. Findings below may be less\s*independent of the implementation's own reasoning, since this\s*conversation already contains it\./,
+        );
+        expect(normalized).toMatch(/Never fall back silently\./);
+      });
+
+      it("Step 9 always persists in this conversation, sourcing report content from whichever path Step 8 took, and writes any proposed knowledge.md entry", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*This step always runs in this conversation, never delegated\*\* --\s*it\s*needs access to the external OpenSpec store, which a delegated reviewer\s*cannot reach\./,
+        );
+        expect(normalized).toMatch(
+          /If Step 8's classification \(Step 4\)\s*produced a proposed `knowledge\.md` entry, perform the read-before-\s*append\/update against the real `knowledge\.md` file now too/,
+        );
+      });
+
+      it("Step 4's knowledge.md note clarifies the delegated reviewer only proposes the entry -- it never writes knowledge.md itself", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /\*\*If this classification work was delegated \(Step 8\):\*\* the fresh\s*reviewer proposes the entry text above \(or decides none is eligible\) as\s*part of its return -- it never writes `knowledge\.md` itself/,
+        );
+      });
+
+      it("has guardrails against leaking parent narrative, silent fallback, and runner-specific workarounds", async () => {
+        const content = await readAdversarialReview();
+        const normalized = content.replace(/\s+/g, " ");
+
+        expect(normalized).toMatch(
+          /Step 8's delegation prompt.*must never contain this conversation's own\s*characterization of the implementation/s,
+        );
+        expect(normalized).toMatch(
+          /Never silently\s*fall back to an inline review when delegation is\s*unavailable or fails/,
+        );
+        expect(normalized).toMatch(
+          /Never define or rely on a\s*runner-specific custom agent for Step 8's\s*delegation, and never change OpenCode's `external_directory` \(or any\s*other\) permission configuration to work around it/,
+        );
+      });
+    });
   });
 
   describe("Runner selection (--runner)", () => {

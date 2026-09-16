@@ -161,6 +161,23 @@ under a command, or you're debugging something unexpected.
   adapter, never a change to the workflow itself. See [Choosing a
   coding-agent runner](cli-reference.md#choosing-a-coding-agent-runner)
   in the CLI reference.
+- **OpenCode's subagents cannot reach outside their launch directory
+  unattended.** Confirmed empirically (a real, isolated `ce start
+  --runner opencode` workspace, driven headlessly via `opencode run`):
+  OpenCode gates Read, Write, and Bash alike behind an `external_directory`
+  permission (`ask` by default) whenever a tool call's target falls
+  outside the directory OpenCode was launched in — and nothing can answer
+  `ask` when no human is attached, so the call is auto-rejected, for a
+  top-level turn and for a `general`-subagent delegation alike. Since
+  ce-harness's durable OpenSpec store, `CE_LENSES_DIR`, and every OpenCode
+  workspace config directory all live outside `$CE_WORKTREE` by design
+  (see [Directory layout reference](#directory-layout-reference) below),
+  any future delegation to an OpenCode subagent must treat those paths as
+  unreachable: gather their content in the parent turn first, and hand it
+  to the subagent as data, never as a path for the subagent to read
+  itself. Claude Code has no equivalent default restriction (its `tools:`
+  frontmatter, not a directory boundary, is what scopes a subagent) — this
+  is an OpenCode-specific constraint, not a general one.
 
 ## Project Identity
 

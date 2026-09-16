@@ -288,6 +288,17 @@ source.
 
 ## 4. Check for an existing verify report -- and challenge it (Implementation workspaces only) -- or, for an Existing PR review follow-up, the previous review report
 
+**Locate and read everything below now, in this conversation -- that part
+is mechanical.** The actual challenge/classification judgment this step
+describes (and any resulting `knowledge.md` update) is carried out
+wherever Step 8's delegation ends up running -- a fresh, delegated
+reviewer context if available, or this conversation, inline, on
+fallback. Read the criteria below now so you know exactly what to hand
+off (or perform yourself); do not classify anything yet. Extract and
+keep `<previousHead>` (the prior report's own reviewed-commit field,
+found below) if this is a follow-up -- Step 5's delta computation and
+Step 8's delegation both need that exact value.
+
 **Existing PR review workspace, first-time review (Step 0 found no
 previous report):** `/verify` refuses to run in an Existing PR review
 workspace (see its own guard) -- so there is never a verify report to
@@ -465,7 +476,24 @@ this command")
 here** -- that belongs in this command's own Findings tables or Open
 Questions, never in `knowledge.md`.
 
+**If this classification work was delegated (Step 8):** the fresh
+reviewer proposes the entry text above (or decides none is eligible) as
+part of its return -- it never writes `knowledge.md` itself, since that
+file lives outside `$CE_WORKTREE`, which the delegated reviewer has no
+access to. You (this conversation) perform the actual read-before-
+append/update against the real `knowledge.md` file when you persist the
+report in Step 9.
+
 ## 5. Load the implementation side
+
+**This step's actual execution happens wherever Step 8's delegation ends
+up running**, exactly like Step 4's classification and Step 6's baseline
+pass -- read it now so you know what will be expected, but you do not
+need to run any of it yet. `ce diff-scope` and every `git` command below
+touch only `$CE_WORKTREE` and environment variables -- never the external
+OpenSpec store -- so a delegated reviewer can safely run this step
+itself, without needing anything pre-resolved for it here (except
+`<previousHead>`, already captured in Step 4 for a follow-up).
 
 Determine the diff scope, entirely inside `$CE_WORKTREE`:
 
@@ -551,6 +579,10 @@ prior adversarial-review run specifically, so Step 8's reconciliation
 pass can focus there first.
 
 ## 6. Baseline adversarial pass (runner- and lens-independent)
+
+**This step's execution is also deferred to Step 8's delegation point**
+(or this conversation, inline, on fallback) -- same as Steps 4 and 5.
+Read the checklist now; do not work through it yet.
 
 Perform this pass regardless of what domain the change touches, and
 before any lens is selected or applied. This is the review's generic
@@ -765,6 +797,106 @@ baseline) for the "Lens Coverage" section of the report.
 
 ## 8. Adversarial pass (refute, do not rubber-stamp)
 
+### Delegate the reasoning below (together with Step 4's classification and Step 5/6's work) to a fresh reviewer context
+
+Before doing the reasoning below yourself, **attempt to delegate it.**
+This is what gives the review genuine independence from whatever this
+conversation already discussed about the implementation -- e.g. an
+`/apply` run earlier in this same session. A freshly delegated context
+starts knowing nothing about this conversation; it only knows what you
+explicitly hand it below. Independence here is specifically about *this
+conversation's own narrative*, never about the artifacts themselves --
+the delegated reviewer is meant to read exactly the same proposal,
+specs, diff, and prior reports this step would read anyway.
+
+**Compose one self-contained prompt for the delegated reviewer,
+containing only:**
+- The change name (Implementation workspace) or PR identifier (Existing
+  PR review workspace), and which workspace type this is.
+- The **verbatim** content of `proposal.md`/`design.md`/`specs`/
+  `tasks.md` (Implementation workspace) or the PR description and
+  repository conventions (Existing PR review workspace), exactly as read
+  in Step 3 -- copied in full, never summarized, paraphrased, or
+  characterized in your own words.
+- The **verbatim** content of the prior verify report and/or prior
+  adversarial-review report, if Step 4 found one, plus the
+  `<previousHead>` value Step 4 extracted for a follow-up.
+- The retrieval results from Step 3, verbatim.
+- The **verbatim** content of the lens file(s) selected in Step 7, if
+  any -- the delegated reviewer cannot reach `$CE_LENSES_DIR` itself,
+  since it lives outside `$CE_WORKTREE`.
+- Step 4's classification rubric (the four labels and their
+  definitions), Step 5's diff-scope instructions, Step 6's baseline-pass
+  checklist, and this step's own instructions and classification/sorting
+  rubric below, plus the Knowledge check eligibility rule and
+  read-before-append/update mechanic from Step 4 -- copy this file's own
+  text for those sections verbatim, since the delegated reviewer has no
+  way to load this file itself. Include today's date, computed via
+  `date -u +%Y-%m-%d` right now -- the delegated reviewer must never
+  infer it.
+- Explicit instructions to independently inspect `$CE_WORKTREE` itself:
+  run Step 5's `ce diff-scope` and `git` commands itself (both operate
+  only on the worktree and environment variables, never the external
+  store, so this is safe to delegate), read the actual current code, and
+  treat the summaries above as context, never as a substitute for
+  looking. Perform Step 4's classification (if applicable), Step 5, Step
+  6, and this step's own adversarial pass and classification/sorting.
+  Compose the full `## 9. Write the report` **Report structure** content
+  below (every section from "Requirement Coverage" through "Overall
+  Verdict") as the return value -- the delegated reviewer never writes
+  any file itself. If Step 4's classification produced an eligible
+  `knowledge.md` entry (or an update to an existing one), include its
+  exact proposed text as a separate part of the return. Also return a
+  short structured summary: overall verdict, and finding counts per
+  table.
+- **State plainly, in the prompt itself: do not ask about or reference
+  this conversation, any `/apply` session, or any reasoning behind why
+  the implementation was built the way it was. Everything relevant has
+  already been provided above. If something seems unexplained, treat
+  that absence itself as evidence -- e.g. an undocumented deviation from
+  the design -- never as a reason to guess at unstated intent.**
+
+**Never pass the delegation prompt anything beyond what's listed
+above** -- specifically, never forward your own characterization of the
+implementation, why particular choices were made, or any other content
+from earlier in this conversation. The artifacts and evidence above are
+what the reviewer is supposed to read regardless of who reads them; this
+conversation's own narrative is exactly what independence exists to
+exclude.
+
+**Delegate via the Task/subagent-delegation tool available to you** --
+Claude Code: `Task`, `subagent_type: "general-purpose"`; OpenCode: its
+equivalent built-in, broadly-capable subagent (`general`) -- the same
+kind of delegation `/archive` already uses for `openspec-sync-specs`
+(see that command's own Step 6). Never define or rely on a
+runner-specific named agent for this; the stock, no-configuration
+subagent already available in both runners is sufficient, and keeps this
+command's own single `templates/` source identical for both runners.
+
+**If delegation succeeds:** take the returned report content and any
+proposed `knowledge.md` entry as-is -- do not re-derive, re-summarize, or
+second-guess the reasoning behind them; second-guessing a fresh
+reviewer's own conclusions from inside the same conversation its
+independence was designed to avoid would defeat the point. Proceed
+directly to Step 9 with that content.
+
+**If delegation is unavailable, refuses, errors, or the tool doesn't
+exist for this runner:** say so explicitly to the user, in these words
+or their clear equivalent: *"Delegating the adversarial pass to a fresh
+reviewer context failed or is unavailable ([reason]); running the review
+directly in this conversation instead. Findings below may be less
+independent of the implementation's own reasoning, since this
+conversation already contains it."* Then perform Step 4's classification
+(if not already resolved), Step 5, Step 6, and this step's own reasoning
+yourself, right here, inline, using exactly the criteria already
+described in each of those steps. Never fall back silently.
+
+### Perform the adversarial pass
+
+The instructions below are what the delegated reviewer is given (see
+above), and also exactly what you perform yourself on fallback -- they
+never differ between the two.
+
 For each acceptance criterion or scenario (Implementation workspace), or
 each PR-description claim (Existing PR review workspace):
 
@@ -868,6 +1000,21 @@ repository-wide adjacent issue silently turn a focused review of this
 change into a full-system audit -- note it, classify it, and move on.
 
 ## 9. Write the report
+
+**This step always runs in this conversation, never delegated** -- it
+needs access to the external OpenSpec store, which a delegated reviewer
+cannot reach. If Step 8 was delegated, the **Report structure** content
+below (every section from "Requirement Coverage" through "Overall
+Verdict") is exactly what the delegated reviewer returned -- persist it
+verbatim, do not re-derive, re-summarize, or edit it. If Step 8 ran
+inline (delegation was unavailable), write exactly what you just
+produced there, same as before this step existed. Either way, the date,
+fingerprint, hash, and path resolution below are always computed here,
+now, regardless of how Step 8 ran. If Step 8's classification (Step 4)
+produced a proposed `knowledge.md` entry, perform the read-before-
+append/update against the real `knowledge.md` file now too, using the
+proposed text as-is (Step 4's own instructions cover the mechanics; this
+is simply where that write actually happens).
 
 **Never infer today's date from memory, training data, or any other
 form of model knowledge -- always compute it from the system clock:**
@@ -1260,6 +1407,25 @@ edit, or `/explore`/`/propose`/`/apply` inside this same workspace, per
 the transition already described above).
 
 **Guardrails**
+- Step 8's delegation prompt (see "Delegate the reasoning below" at the
+  top of Step 8) must never contain this conversation's own
+  characterization of the implementation, why particular choices were
+  made, or any other narrative from earlier in this conversation --
+  only the verbatim artifacts, evidence, and criteria it lists. A
+  delegated reviewer that could infer `/apply`'s own reasoning from its
+  prompt is not meaningfully independent, no matter how fresh its
+  context otherwise is.
+- Never silently fall back to an inline review when delegation is
+  unavailable or fails -- always disclose it to the user in the exact
+  terms Step 8 specifies, so a human reading the eventual report knows
+  whether its independence guarantee actually held for this run.
+- Never define or rely on a runner-specific custom agent for Step 8's
+  delegation, and never change OpenCode's `external_directory` (or any
+  other) permission configuration to work around it -- the delegated
+  reviewer is scoped to `$CE_WORKTREE` and whatever is handed to it in
+  the prompt precisely because a subagent cannot reliably reach the
+  external OpenSpec store; work within that boundary (Step 9 always
+  persists, never the delegated reviewer), not around it.
 - Never end Step 10 with only the report's printed filesystem path --
   always also give the user a ready-to-run `ce open --path "<report
   path>"` command for that exact file, since a bare external-store path
