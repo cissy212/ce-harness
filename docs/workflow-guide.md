@@ -25,7 +25,7 @@ automatically):
 | `/propose` | Creates a new OpenSpec change and generates **all** of its artifacts (proposal, design, tasks) in one step, grounded in what `/explore`/`/enrich` established. |
 | `/apply` | Implements the tasks from an OpenSpec change, one at a time, only inside the worktree — marking each task's checkbox as it completes it, and pausing on anything unclear or blocked. |
 | `/verify` | Checks the implementation against the change's proposal, design, specs, and tasks — the **conformance baseline**. Runs discovered test/lint/build commands and writes a report into the OpenSpec store. Never fixes code. **Refuses to run in an `Existing PR review` workspace** (there's no OpenSpec-driven implementation to check conformance against) — use `/adversarial-review` there instead. |
-| `/adversarial-review` | In an `Implementation` workspace: runs after `/verify` and independently hunts for defects, gaps, and risks the specification itself doesn't describe, challenging `/verify`'s report rather than duplicating it. In an `Existing PR review` workspace: the **only** review step — reviews the commit range directly against the PR description and repository conventions, with no OpenSpec change involved. Detects on its own whether this is a **follow-up review** of a workspace it already reviewed before (see [Follow-up PR reviews](cli-reference.md#follow-up-pr-reviews)), and if so, verifies each previous finding against the new code before looking for anything new. Never fixes code, either way. When a follow-up review's reconciliation confirms a finding's own assumption was wrong, with fresh evidence, it may record that observation to the project's shared `knowledge.md` — see [Retrieval Contract](#retrieval-contract-and-project-local-knowledge). |
+| `/adversarial-review` | In an `Implementation` workspace: runs after `/verify` and independently hunts for defects, gaps, and risks the specification itself doesn't describe, challenging `/verify`'s report rather than duplicating it. In an `Existing PR review` workspace: the **only** review step — reviews the commit range directly against the PR description and repository conventions, with no OpenSpec change involved. Detects on its own whether this is a **follow-up review** of a workspace it already reviewed before (see [Follow-up PR reviews](cli-reference.md#follow-up-pr-reviews)), and if so, verifies each previous finding against the new code before looking for anything new. Never fixes code, either way. When a follow-up review's reconciliation confirms a finding's own assumption was wrong, with fresh evidence, it may record that observation to the project's shared `knowledge.md` — see [Retrieval Contract](#retrieval-contract-and-project-local-knowledge). Its actual judgment runs in a fresh, delegated subagent context whenever possible, isolated from this conversation's own discussion of the implementation — see [Reviewer context isolation](#reviewer-context-isolation). |
 | `/archive` | Archives a completed change: checks artifact/task completion, runs a **Knowledge check** that reads (never writes) the project's shared `knowledge.md` and may recommend — never silently apply — a canonical-documentation update (see [Retrieval Contract](#retrieval-contract-and-project-local-knowledge)), offers to sync delta specs into the main specs, and moves the change into the store's archive. |
 | `/publish` | Ships the completed, archived change as a normal GitHub pull request: fetches and safely updates against the current base branch, shows the exact repository/branch/included commits/PR title/PR description, and only pushes and opens the PR after explicit confirmation. Never merges, never enables auto-merge. |
 
@@ -117,6 +117,52 @@ conversation — never captured by `/enrich` writing `enrich.md`, or by
 — isn't automatically written to `knowledge.md`. Nothing currently
 prompts for that case; it's lost unless you explicitly ask for it to be
 recorded.
+
+## Reviewer context isolation
+
+`/adversarial-review`'s actual judgment — reconciling prior findings,
+the baseline pass, and the adversarial pass itself — is delegated to a
+fresh subagent context whenever the runner supports it (both do today).
+This exists specifically for the case where `/adversarial-review` runs
+in the same conversation as an earlier `/apply` (an Implementation
+workspace's normal order): without isolation, the review would inherit
+everything that conversation already discussed about the implementation
+— including the implementer's own self-justification — which is exactly
+what an adversarial review is supposed to check independently of, not
+defer to.
+
+This conversation (never the delegated subagent) still does everything
+that needs access outside the worktree or a human's input: loading
+proposal/design/specs/tasks, locating prior reports, running `ce
+retrieve`, and [lens selection](#reasoning-lenses) below — including the
+same interactive prompt when several lenses match, completely unchanged.
+It then hands the delegated reviewer only verbatim artifacts, evidence,
+and review criteria — never its own account of what `/apply` did or why
+— and the reviewer independently inspects the current worktree and diff
+itself before returning its findings as data, never as a file it wrote.
+This conversation persists that data using the same
+reporting/reconciliation/`knowledge.md` mechanics described
+[above](#retrieval-contract-and-project-local-knowledge), unchanged.
+Handing over data rather than file paths is deliberate, not just
+cautious: OpenCode subagents in particular cannot reach paths outside
+the worktree at all (see [Directory layout
+reference](concepts.md#directory-layout-reference) and the note on
+OpenCode's `external_directory` permission there), so the durable
+OpenSpec store, `CE_LENSES_DIR`, and any prior report are never
+something the delegated reviewer is asked to go read itself.
+
+**If delegation is unavailable or fails, the review still runs** —
+inline, in this conversation, exactly as it would without this
+mechanism — but ce-harness tells you so explicitly, since the review's
+independence guarantee didn't hold for that run. It never fails the
+review outright, and never falls back silently.
+
+The delegation itself uses each runner's own stock, general-purpose
+subagent (Claude Code: `Task`/`subagent_type: "general-purpose"`;
+OpenCode: `general`) — the same primitive `/archive` already uses to
+invoke `openspec-sync-specs` (see [Skills](#skills) below) — never a
+custom, ce-harness-defined agent, so this stays part of the same
+single-source `templates/` this command family already is.
 
 ## Reasoning lenses
 
@@ -250,7 +296,9 @@ ce-harness also ships two [Agent Skills](https://agentskills.io)
 - **`openspec-sync-specs`** — an internal workflow skill. `/archive`
   invokes it (as a subagent, keeping it out of your main conversation)
   when you choose to sync a change's delta specs into the main specs
-  before archiving.
+  before archiving. `/adversarial-review` uses the same underlying
+  subagent-delegation primitive for a different reason — see [Reviewer
+  context isolation](#reviewer-context-isolation) above.
 - **`composition-patterns`** — a vendored, third-party reference skill
   (React/TypeScript composition patterns: avoiding boolean-prop
   proliferation, compound components, context-based state design, React
