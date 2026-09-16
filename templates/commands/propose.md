@@ -170,6 +170,11 @@ below includes `--store "$CE_OPENSPEC_STORE"`.
         - `resolvedOutputPath`: Resolved path or pattern to write the artifact -- always inside the external store
         - `dependencies`: Completed artifacts to read for context
       - Read any completed dependency files for context, plus `explore.md` and (if its Status is `ready`) `enrich.md` from step 3, if they exist
+      - Query the Retrieval Contract for relevant prior project knowledge before drafting this artifact, the first time through this loop:
+        ```bash
+        ce retrieve --task "<task text>" --paths "<comma-separated paths, if any>" --domain "<domain, if known>" --keywords "<comma-separated terms, if any>"
+        ```
+        Same discipline as `/enrich`'s own Step 5 (open every `"strong"`-confidence candidate in full, `"moderate"` ones too only if fewer than 3 strong ones, never more than 5 in full); a candidate is additional context for this draft, never authoritative over the current proposal/design being written. Skip re-running this on later loop iterations for the same change -- once is enough per `/propose` invocation. If `ce retrieve` reports a warning, proceed without that source.
       - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
       - **For `tasks.md` specifically**: write each task so it has exactly
         one clear, independently verifiable success criterion. If a task

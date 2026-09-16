@@ -268,6 +268,24 @@ for this PR to be correct, and what's underspecified -- just sourced from
 the PR description and repository conventions instead of OpenSpec
 artifacts.
 
+**Either workspace type: query the Retrieval Contract** for relevant
+prior project knowledge -- a past decision, a past finding, a past spec
+-- before moving on to the baseline/adversarial passes below:
+
+```bash
+ce retrieve --task "<task text, from the proposal/PR description>" --paths "<comma-separated paths, if any>" --domain "<domain, if known>" --keywords "<comma-separated terms, if any>"
+```
+
+Same discipline as `/enrich`'s own Step 5: open every `"strong"`-confidence
+candidate in full; open `"moderate"`-confidence ones too only if there
+are fewer than 3 strong ones; never open more than 5 in full; every
+other candidate is metadata-only, never opened. A candidate is
+additional baseline context, never a substitute for the adversarial
+reasoning below, and never authoritative on its own -- a past decision
+can itself turn out to be wrong; engage with it, don't defer to it
+blindly. If `ce retrieve` reports a warning, proceed without that
+source.
+
 ## 4. Check for an existing verify report -- and challenge it (Implementation workspaces only) -- or, for an Existing PR review follow-up, the previous review report
 
 **Existing PR review workspace, first-time review (Step 0 found no

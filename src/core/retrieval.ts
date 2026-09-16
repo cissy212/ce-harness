@@ -4,11 +4,13 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import { commitChangedPaths, pathHistory, searchCommitMessages } from "./git.js";
 
 /**
- * Retrieval Contract: one small, deterministic mechanism future workflow
- * stages (/explore, /enrich, /propose) can call to discover relevant
- * *prior* project knowledge, without each one inventing its own search
- * logic. This module answers exactly one question -- "what already-known
- * artifacts might be relevant to this task?" -- and nothing more:
+ * Retrieval Contract: one small, deterministic mechanism workflow stages
+ * (/explore, /enrich, /propose, /verify, /adversarial-review -- see
+ * commands/retrieve.ts for the exact current caller list) can call to
+ * discover relevant *prior* project knowledge, without each one
+ * inventing its own search logic. This module answers exactly one
+ * question -- "what already-known artifacts might be relevant to this
+ * task?" -- and nothing more:
  *
  *   - It never judges whether a historical artifact is still true. A
  *     result's `status: "historical"` plus its `date` is the entire

@@ -1712,6 +1712,15 @@ describe("ce start (integration)", () => {
       expect(content).toContain("CE_OPENSPEC_STORE");
     });
 
+    it("documents consuming the Retrieval Contract via `ce retrieve`, as advisory context rather than authority", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "explore.md"), "utf8");
+
+      expect(content).toMatch(/ce retrieve/);
+      expect(content).toMatch(/never a substitute\s*\n?\s*for it/i);
+    });
+
     it("passes --store \"$CE_OPENSPEC_STORE\" on every documented openspec invocation", async () => {
       const { readFile } = await import("node:fs/promises");
       const { templatesRoot } = await import("../../src/core/templates.js");
@@ -2067,6 +2076,15 @@ describe("ce start (integration)", () => {
 
       expect(content).toContain("CE_OPENSPEC_STORE");
       expect(content.toLowerCase()).toMatch(/if `ce_openspec_store` is empty or unset, stop/);
+    });
+
+    it("documents consuming the Retrieval Contract via `ce retrieve`, as advisory context rather than authority", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "propose.md"), "utf8");
+
+      expect(content).toMatch(/ce retrieve/);
+      expect(content).toMatch(/never authoritative over the current proposal\/design being written/i);
     });
 
     it("passes --store \"$CE_OPENSPEC_STORE\" on every concrete openspec invocation (new change, status, instructions)", async () => {
@@ -3396,6 +3414,15 @@ describe("ce start (integration)", () => {
       );
     });
 
+    it("documents consuming the Retrieval Contract via `ce retrieve`, as advisory context rather than authority", async () => {
+      const { readFile } = await import("node:fs/promises");
+      const { templatesRoot } = await import("../../src/core/templates.js");
+      const content = await readFile(join(templatesRoot(), "commands", "verify.md"), "utf8");
+
+      expect(content).toMatch(/ce retrieve/);
+      expect(content).toMatch(/never as a reason to skip verifying something yourself/i);
+    });
+
     describe("refuses to run in an existing-PR-review workspace that has NOT transitioned to implementation", () => {
       it("checks the store/worktree guard first, then CE_DIFF_BASE/CE_DIFF_HEAD via a `ce diff-scope` reviewTransition check, and stops entirely when not detected", async () => {
         const { readFile } = await import("node:fs/promises");
@@ -4329,6 +4356,14 @@ describe("ce start (integration)", () => {
       expect(content.toLowerCase()).toMatch(
         /if `ce_openspec_store` or `ce_worktree` is empty or unset, stop/,
       );
+    });
+
+    it("documents consuming the Retrieval Contract via `ce retrieve`, for both workspace types, as advisory context rather than authority", async () => {
+      const content = await readTemplate();
+
+      expect(content).toMatch(/ce retrieve/);
+      expect(content).toMatch(/Either workspace type: query the Retrieval Contract/);
+      expect(content).toMatch(/a past decision\s*\n?\s*can itself turn out to be wrong/i);
     });
 
     it("passes --store \"$CE_OPENSPEC_STORE\" on every concrete openspec invocation (list, status)", async () => {

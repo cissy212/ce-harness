@@ -4,8 +4,8 @@ import { readActivePointer, readWorkspace, resolveTrustedOpenSpec } from "../cor
 
 /**
  * Thin CLI surface over core/retrieval.ts's `retrieveCandidates`, for
- * markdown-driven workflow stages (currently `/enrich`; `/explore` and
- * `/propose` are not wired to it yet) to invoke via a plain shell call,
+ * markdown-driven workflow stages (`/explore`, `/enrich`, `/propose`,
+ * `/verify`, `/adversarial-review`) to invoke via a plain shell call,
  * exactly the way they already call `openspec ... --json` and parse the
  * result. No new state: `durableRoot` and `repositoryPath` are resolved
  * from the same active-workspace pointer and cross-checked OpenSpec

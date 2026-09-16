@@ -92,9 +92,37 @@ openspec status --change "<name>" --store "$CE_OPENSPEC_STORE" --json
 Resolve `changeRoot` from the `status` JSON -- never construct it by
 hand. This command does not call `openspec instructions proposal`: it
 never writes a schema-tracked artifact, only its own findings file (see
-step 7).
+step 8).
 
-## 6. Explore the codebase (read-only)
+## 6. Query the Retrieval Contract
+
+Before exploring the repository yourself, check whether relevant prior
+project knowledge already exists -- a past decision, a past finding, a
+past spec -- so you don't rediscover from scratch what an earlier change
+already established. Build one retrieval query from what's known so far
+(the task text from step 1, any domain/capability name already implied,
+and any keywords/identifiers already in view):
+
+```bash
+ce retrieve --task "<task text>" --paths "<comma-separated paths, if any>" --domain "<domain, if known>" --keywords "<comma-separated terms, if any>"
+```
+
+This prints a small ranked JSON list of candidates (never full artifact
+bodies) from this project's durable OpenSpec store and Git history,
+strictly scoped to this project. Parse it and inspect only materially
+relevant candidates, the same discipline `/enrich`'s own Step 5 uses:
+open every `"strong"`-confidence candidate in full; open
+`"moderate"`-confidence ones too only if there are fewer than 3 strong
+ones; never open more than 5 in full regardless of confidence; every
+other candidate is referenced by its metadata only, never opened. A
+candidate is context for your own exploration below, never a substitute
+for it -- it may be outdated, and confirming or updating it against what
+you actually find in step 7 is exactly this command's job. If `ce
+retrieve` reports a warning (no durable store yet, or Git history
+couldn't be read), proceed without that source -- ordinary state for a
+new project, not a failure.
+
+## 7. Explore the codebase (read-only)
 
 Read and search the repository/worktree as needed to gather concrete
 evidence: what currently exists, what's missing, relevant files/paths,
@@ -103,7 +131,7 @@ tools/commands only (read, grep, `git log`, `git show`, etc.). Do not
 write, edit, move, or delete anything in the repository or the worktree.
 Do not draft what should change or how -- that is out of scope here.
 
-## 7. Write the findings artifact
+## 8. Write the findings artifact
 
 Write your findings directly to `<changeRoot>/explore.md` (resolve
 `changeRoot` from step 5's `status` JSON -- never construct it by hand).
@@ -124,7 +152,7 @@ Structure:
 ## Findings
 
 <what currently exists, what's missing, grounded in what you actually
-read in step 6>
+read in step 7>
 
 ## Relevant Locations
 
@@ -135,7 +163,7 @@ read in step 6>
 <anything unclear that /enrich or /propose should pick up -- or "None.">
 ```
 
-Every claim in it must be grounded in what you actually found in step 6
+Every claim in it must be grounded in what you actually found in step 7
 -- do not invent conclusions you don't have code evidence for, and do
 not draft proposed changes, designs, or acceptance criteria here.
 
@@ -147,7 +175,7 @@ repository. A short, well-scoped `explore.md` is the goal -- a much
 longer file for a small issue is a sign the exploration wandered, not
 that more detail is better.
 
-## 8. Record provenance
+## 9. Record provenance
 
 `explore.md`'s findings are only as trustworthy as the worktree state
 they were drawn from -- and this durable store outlives any one
@@ -175,7 +203,7 @@ tracks, and never part of `applyRequires`) -- never mentioned in this
 command's own output. Write/refresh it unconditionally after writing
 `explore.md`, even on a re-run.
 
-## 9. Report back
+## 10. Report back
 
 Reply in the conversation (not only in the file) with a concise summary
 of:
@@ -198,7 +226,7 @@ directly) is the next step.
   require a formal issue tracker or GitHub issue for this -- a short
   free-form answer is enough. Never ask when the task is already
   reasonably clear from what's already been said.
-- Never skip step 8 (recording provenance) -- write/refresh
+- Never skip step 9 (recording provenance) -- write/refresh
   `.ce-provenance-explore.yml` every time `explore.md` is written,
   never only on first creation.
 - Never draft or write `proposal.md`, `design.md`, `tasks.md`, or any

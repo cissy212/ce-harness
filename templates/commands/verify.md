@@ -119,6 +119,23 @@ If the target repository has its own `AGENTS.md`, `README`, or similar
 top-level documentation, read it too for context on conventions -- this is
 optional and read-only; never assume any particular file exists.
 
+**Query the Retrieval Contract** for relevant prior project knowledge --
+a past decision, a past verify/adversarial-review finding, a past spec
+-- before inspecting the implementation yourself:
+
+```bash
+ce retrieve --task "<task text, from the proposal/change name>" --paths "<comma-separated paths, if any>" --domain "<domain, if known>" --keywords "<comma-separated terms, if any>"
+```
+
+Same discipline as `/enrich`'s own Step 5: open every `"strong"`-confidence
+candidate in full; open `"moderate"`-confidence ones too only if there
+are fewer than 3 strong ones; never open more than 5 in full; every
+other candidate is metadata-only, never opened. A candidate is
+additional context, never authoritative over what you actually find in
+this worktree -- treat it exactly as advisory as the rest of this
+step's reading, never as a reason to skip verifying something yourself.
+If `ce retrieve` reports a warning, proceed without that source.
+
 ## 3. Inspect the implementation in `$CE_WORKTREE`
 
 Use semantic code navigation first, but only when the workspace reports it
